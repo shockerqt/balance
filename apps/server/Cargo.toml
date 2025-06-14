@@ -1,0 +1,22 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+resolver = "3"
+
+[dependencies]
+axum = "0.8.1"
+bigdecimal = { version = "0.4.8", features = ["serde"] }
+chrono = { version = "0.4.41", features = ["serde"] }
+dotenv = "0.15.0"
+serde = { version = "1.0.217", features = ["derive"] }
+sqlx = { version = "0.8.6", features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "macros",
+  "chrono",
+  "bigdecimal",
+] }
+tokio = { version = "1.43.0", features = ["rt-multi-thread"] }
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["cors"] }

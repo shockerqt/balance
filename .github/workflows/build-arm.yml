@@ -1,0 +1,51 @@
+name: Build & Deploy Rust for ARM (OCI)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install cross
+        run: cargo install cross
+
+      - name: Build with cross for ARM64
+        run: cross build --target=aarch64-unknown-linux-gnu --release --manifest-path apps/server/Cargo.toml
+
+      - name: Upload binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-arm
+          path: apps/server/target/aarch64-unknown-linux-gnu/release/server
+
+    deploy:
+      needs: build-arm
+      runs-on: ubuntu-latest
+      steps:
+        - name: Download compiled binary
+          uses: actions/download-artifact@v4
+          with:
+            name: binary-arm
+            path: ./deploy
+
+        - name: Setup SSH
+          run: |
+            mkdir -p ~/.ssh
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+        - name: Upload binary to server
+          run: scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server
+
+        - name: Move binary to /opt and set permissions
+          run: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "sudo mv /home/${{ secrets.SERVER_USER }}/balance-server /opt/balance-server && sudo chmod +x /opt/balance-server"
+
+        - name: Restart service on server
+          run: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "sudo systemctl restart balance-server"
