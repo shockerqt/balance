@@ -7,7 +7,7 @@ use crate::shared::response::ApiResponse;
 
 use super::dto::{CreateFoodDto, FoodDto, GetFoodsDto, UpdateFoodDto};
 
-pub async fn get_foods(
+pub async fn find_user_by_email(
     Extension(db): Extension<Arc<Database>>,
 ) -> Result<Json<ApiResponse<GetFoodsDto>>, StatusCode> {
     let foods = sqlx::query_as!(

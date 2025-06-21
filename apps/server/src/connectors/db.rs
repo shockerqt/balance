@@ -1,9 +1,12 @@
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
+use super::user::UserDatasource;
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: PgPool,
+    pub user: UserDatasource,
 }
 
 impl Database {
@@ -12,6 +15,10 @@ impl Database {
             .max_connections(5)
             .connect(database_url)
             .await?;
-        Ok(Self { pool })
+
+        Ok(Self {
+            user: UserDatasource { pool: pool.clone() },
+            pool,
+        })
     }
 }

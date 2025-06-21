@@ -1,24 +1,19 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@workspace/ui/components/button";
 import {
   Dialog,
-  DialogClose,
+  DialogTrigger,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { PropsWithChildren } from "react";
-import { Food } from "./queries";
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from "@workspace/ui/components/dialog";
+import { Input } from "@workspace/ui/components/input";
+import { Label } from "@workspace/ui/components/label";
+import { type PropsWithChildren } from "react";
 
-interface Props extends PropsWithChildren {
-  food: Food;
-}
-
-export function UpdateFoodDialog(props: Props) {
+export function CreateFoodDialog(props: PropsWithChildren) {
   return (
     <Dialog>
       <form>
@@ -35,7 +30,12 @@ export function UpdateFoodDialog(props: Props) {
             </div>
             <div className="grid gap-3">
               <Label htmlFor="username-1">Calories</Label>
-              <Input id="username-1" name="username" defaultValue="@peduarte" />
+              <Input
+                type="number"
+                id="username-1"
+                name="username"
+                defaultValue="12"
+              />
             </div>
           </div>
           <DialogFooter>

@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev:dashboard": "pnpm --filter apps/dashboard dev",
-    "dev:landing": "pnpm --filter apps/landing dev",
+    "dev:dashboard": "pnpm --filter dashboard dev",
+    "dev:landing": "pnpm --filter landing dev",
     "dev:server": "cargo watch -x run -p server",
     "dev": "concurrently \"pnpm dev:dashboard\" \"pnpm dev:server\""
   },
@@ -14,6 +14,8 @@
   "license": "ISC",
   "packageManager": "pnpm@10.12.1",
   "devDependencies": {
+    "@workspace/eslint-config": "workspace:*",
+    "@workspace/typescript-config": "workspace:*",
     "concurrently": "^9.1.2"
   }
 }

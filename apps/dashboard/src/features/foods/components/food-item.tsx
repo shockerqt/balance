@@ -1,8 +1,13 @@
-import { Button } from "@/components/ui/button";
-import { type Food } from "./queries";
+import { Button } from "@workspace/ui/components/button";
+import { FC } from "react";
 import { UpdateFoodDialog } from "./update-food-dialog";
+import { Food } from "../types";
 
-export function FoodItem({ food }: { food: Food }) {
+interface Props {
+  food: Food;
+}
+
+export const FoodItem: FC<Props> = ({ food }) => {
   return (
     <li className="border-1">
       <div>{food.id}</div>
@@ -15,4 +20,4 @@ export function FoodItem({ food }: { food: Food }) {
       </UpdateFoodDialog>
     </li>
   );
-}
+};

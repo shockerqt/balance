@@ -1,5 +1,5 @@
 {
-  "name": "apps/dashboard",
+  "name": "dashboard",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,24 +10,30 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.80.7",
     "@tanstack/react-router": "^1.121.2",
     "@tanstack/react-router-devtools": "^1.121.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "@workspace/ui": "workspace:*",
+    "react": "^19",
+    "react-dom": "^19",
+    "zod": "3.26.0-canary.20250612T071714"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.10",
+    "@tanstack/router-plugin": "^1.121.13",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.2.0",
-    "@types/react": "^19.0.8",
-    "@types/react-dom": "^19.0.3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.3.4",
+    "@workspace/eslint-config": "workspace:^",
+    "@workspace/typescript-config": "workspace:*",
     "jsdom": "^26.0.0",
-    "typescript": "^5.7.2",
+    "tailwindcss": "^4.1",
+    "typescript": "^5",
     "vite": "^6.1.0",
     "vitest": "^3.0.5",
     "web-vitals": "^4.2.4"
-  },
-  "overrides": {
-    "@tanstack/react-router": "^1.121.2"
   }
 }

@@ -2,10 +2,11 @@
   "projectName": "apps/dashboard",
   "mode": "code-router",
   "typescript": true,
-  "tailwind": false,
+  "tailwind": true,
   "packageManager": "pnpm",
   "git": true,
   "version": 1,
   "framework": "react-cra",
   "chosenAddOns": []
 }
+

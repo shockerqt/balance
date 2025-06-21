@@ -1,6 +1,13 @@
-use axum::{extract::Extension, http::Method, Router};
+use axum::{
+    Router,
+    extract::Extension,
+    http::{
+        Method,
+        header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
+    },
+};
 use connectors::db::Database;
-use modules::{food::routes::food_routes, meal::routes::meal_routes};
+use modules::{auth::routes::auth_routes, food::routes::food_routes, meal::routes::meal_routes};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -21,6 +28,7 @@ async fn main() {
     let shared_db = Arc::new(db);
 
     let app = Router::new()
+        .nest("/auth", auth_routes())
         .nest("/meals", meal_routes())
         .nest("/foods", food_routes())
         .layer(
@@ -28,6 +36,7 @@ async fn main() {
             ServiceBuilder::new().layer(Extension(shared_db)).layer(
                 CorsLayer::new()
                     .allow_methods([Method::GET, Method::POST])
+                    .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
                     .allow_origin(Any),
             ),
         );
