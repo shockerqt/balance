@@ -31,6 +31,7 @@ pub struct OAuthState {
 
 pub fn google_routes(state: OAuthState) -> Router {
     Router::new()
+        .route("/logout", get(logout))
         .route("/google", get(login_with_google))
         .route("/google/callback", get(google_callback))
         .with_state(Arc::new(state))
@@ -51,6 +52,18 @@ async fn login_with_google(State(state): State<Arc<OAuthState>>) -> impl IntoRes
     *state.verifier.lock().unwrap() = Some((pkce_verifier, csrf_token));
 
     Redirect::temporary(auth_url.as_ref())
+}
+
+// GET /auth/logout
+async fn logout() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        SET_COOKIE,
+        "token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+            .parse()
+            .unwrap(),
+    );
+    (headers, StatusCode::NO_CONTENT)
 }
 
 // GET /auth/google/callback?code=...&state=...
@@ -107,6 +120,8 @@ async fn google_callback(
                 .json::<GoogleUserInfo>()
                 .await
                 .unwrap();
+
+            println!("USER INFO {:?}", user_info);
 
             let (user_id, email) = if let Some(existing_user) = db
                 .user

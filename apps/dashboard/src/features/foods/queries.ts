@@ -1,4 +1,4 @@
-import { apiFetch } from "@/utils/api-fetch";
+import { get } from "@/utils/api-fetch";
 import { Food } from "./types";
 
 export type GetFoodsOutput = {
@@ -6,6 +6,6 @@ export type GetFoodsOutput = {
 };
 
 export const getFoods = async () => {
-  const response = await apiFetch<GetFoodsOutput>("/foods");
+  const response = await get<GetFoodsOutput>("/foods");
   return response.data;
 };

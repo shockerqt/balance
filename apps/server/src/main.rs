@@ -2,7 +2,7 @@ use axum::{
     Router,
     extract::Extension,
     http::{
-        Method,
+        HeaderValue, Method,
         header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
     },
     middleware,
@@ -37,14 +37,18 @@ async fn main() {
         .nest("/me", user_routes().route_layer(middleware::from_fn(auth)))
         .nest("/auth", auth_routes())
         .nest("/meals", meal_routes())
-        .nest("/foods", food_routes())
+        .nest(
+            "/foods",
+            food_routes().route_layer(middleware::from_fn(auth)),
+        )
         .layer(
             // https://docs.rs/axum/latest/axum/middleware/index.html
             ServiceBuilder::new().layer(Extension(shared_db)).layer(
                 CorsLayer::new()
                     .allow_methods([Method::GET, Method::POST])
                     .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
-                    .allow_origin(Any),
+                    .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+                    .allow_credentials(true),
             ),
         );
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();

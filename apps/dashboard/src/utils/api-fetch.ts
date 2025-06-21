@@ -4,19 +4,15 @@ export type ApiResponse<T> = {
   data: T;
 };
 
-export async function apiFetch<T>(
+export async function apiFetch(
   path: string,
   options?: RequestInit,
-): Promise<ApiResponse<T>> {
+): Promise<Response> {
   const url = new URL(path, BASE_URL);
-  const res = await fetch(url.toString(), options);
-
-  if (!res.ok) {
-    const errorBody = await res.text();
-    throw new Error(`API error: ${res.status} - ${errorBody}`);
-  }
-
-  return res.json();
+  return await fetch(url.toString(), {
+    credentials: "include",
+    ...options,
+  });
 }
 
 export async function get<T>(
@@ -31,7 +27,7 @@ export async function get<T>(
     );
   }
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { credentials: "include" });
 
   if (!res.ok) {
     const errorText = await res.text();
@@ -53,6 +49,7 @@ export async function post<T>(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    credentials: "include",
   });
 
   if (!res.ok) {

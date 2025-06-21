@@ -1,14 +1,16 @@
+import { apiFetch } from "@/utils/api-fetch";
 import {
   QueryErrorResetBoundary,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Suspense, type FC } from "react";
-import { getMe } from "../queries";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Button } from "@workspace/ui/components/button";
+import { Suspense, type FC } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import { Link } from "@tanstack/react-router";
+import { getMe } from "../queries";
 
 const Component = () => {
+  const navigate = useNavigate();
   const { data } = useSuspenseQuery({
     queryKey: ["me"],
     queryFn: getMe,
@@ -20,6 +22,14 @@ const Component = () => {
       HOLA
       {data.user.name}
       <img src={data.user.picture} />
+      <Button
+        onClick={async () => {
+          await apiFetch("/auth/logout");
+          navigate({ to: "/", reloadDocument: true });
+        }}
+      >
+        Logout
+      </Button>
     </div>
   );
 };

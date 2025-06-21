@@ -1,4 +1,4 @@
-import { apiFetch } from "@/utils/api-fetch";
+import { get } from "@/utils/api-fetch";
 import { type User } from "./types";
 
 export type GetMeResponse = {
@@ -6,6 +6,6 @@ export type GetMeResponse = {
 };
 
 export const getMe = async () => {
-  const response = await apiFetch<GetMeResponse>("/me");
+  const response = await get<GetMeResponse>("/me");
   return response.data;
 };
