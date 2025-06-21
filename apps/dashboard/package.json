@@ -16,6 +16,7 @@
     "@workspace/ui": "workspace:*",
     "react": "^19",
     "react-dom": "^19",
+    "react-error-boundary": "^6.0.0",
     "zod": "3.26.0-canary.20250612T071714"
   },
   "devDependencies": {

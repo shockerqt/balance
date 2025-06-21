@@ -11,17 +11,12 @@ use oauth2::{
 };
 use reqwest::header::SET_COOKIE;
 use serde::{Deserialize, Serialize};
-use sqlx::types::JsonValue;
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     connectors::{
         db::Database,
-        user::{self, NewUser, UpdateUser, User},
+        user::{NewUser, UpdateUser},
     },
     modules::auth::jwt::create_jwt_for_user,
 };
@@ -113,7 +108,7 @@ async fn google_callback(
                 .await
                 .unwrap();
 
-            let user_id = if let Some(existing_user) = db
+            let (user_id, email) = if let Some(existing_user) = db
                 .user
                 .get_by_email(user_info.email.as_str())
                 .await
@@ -136,7 +131,7 @@ async fn google_callback(
                         .await
                         .unwrap();
                 }
-                existing_user.id
+                (existing_user.id, existing_user.email)
             } else {
                 let new_user = NewUser {
                     email: user_info.email.clone(),
@@ -146,10 +141,10 @@ async fn google_callback(
                     picture: Some(user_info.picture.clone()),
                 };
                 let user = db.user.create(&new_user).await.unwrap();
-                user.id
+                (user.id, user.email)
             };
 
-            let jwt = create_jwt_for_user(user_id).unwrap();
+            let jwt = create_jwt_for_user(user_id, email).unwrap();
 
             let redirect_url = "http://localhost:3000/";
             let cookie = format!(

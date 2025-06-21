@@ -36,6 +36,20 @@ pub struct UserDatasource {
 }
 
 impl UserDatasource {
+    pub async fn get(&self, id: i32) -> Result<User, sqlx::Error> {
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            SELECT id, email, name, created_at, family_name, given_name, picture
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(user)
+    }
+
     pub async fn get_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
         let user = sqlx::query_as::<_, User>(
             r#"

@@ -5,9 +5,15 @@ use axum::{
         Method,
         header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
     },
+    middleware,
 };
 use connectors::db::Database;
-use modules::{auth::routes::auth_routes, food::routes::food_routes, meal::routes::meal_routes};
+use modules::{
+    auth::{middleware::auth, routes::auth_routes},
+    food::routes::food_routes,
+    meal::routes::meal_routes,
+    user::routes::user_routes,
+};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
@@ -28,6 +34,7 @@ async fn main() {
     let shared_db = Arc::new(db);
 
     let app = Router::new()
+        .nest("/me", user_routes().route_layer(middleware::from_fn(auth)))
         .nest("/auth", auth_routes())
         .nest("/meals", meal_routes())
         .nest("/foods", food_routes())

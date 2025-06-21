@@ -1,88 +1,29 @@
+use axum::{Extension, Json, http::StatusCode};
 use std::sync::Arc;
 
-use axum::{Extension, Json, http::StatusCode};
-
-use crate::connectors::db::Database;
+use crate::modules::user::dto::{GetMeResponse, UserDto};
 use crate::shared::response::ApiResponse;
+use crate::{connectors::db::Database, modules::auth::middleware::CurrentUser};
 
-use super::dto::{CreateFoodDto, FoodDto, GetFoodsDto, UpdateFoodDto};
-
-pub async fn find_user_by_email(
+pub async fn get_me(
+    Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
-) -> Result<Json<ApiResponse<GetFoodsDto>>, StatusCode> {
-    let foods = sqlx::query_as!(
-        FoodDto,
-        r#"
-        SELECT id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-        FROM foods
-        ORDER BY id
-        "#
-    )
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<Json<ApiResponse<GetMeResponse>>, StatusCode> {
+    println!("GET ME");
+    let user = db.user.get(current_user.id).await.unwrap();
+    let user_dto = UserDto {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        family_name: user.family_name,
+        given_name: user.given_name,
+        picture: user.picture,
+        created_at: user.created_at,
+    };
 
     let response = ApiResponse {
-        data: GetFoodsDto { foods },
+        data: GetMeResponse { user: user_dto },
     };
 
     Ok(Json(response))
-}
-
-pub async fn create_food(
-    Extension(db): Extension<Arc<Database>>,
-    Json(payload): Json<CreateFoodDto>,
-) -> Result<Json<ApiResponse<FoodDto>>, StatusCode> {
-    let row = sqlx::query_as!(
-        FoodDto,
-        r#"
-        INSERT INTO foods (name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-        "#,
-        payload.name,
-        payload.calories,
-        payload.protein,
-        payload.carbs,
-        payload.fat,
-        payload.sodium,
-        payload.cholesterol,
-        payload.user_id,
-        payload.is_public.unwrap_or(true)
-    )
-    .fetch_one(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(ApiResponse { data: row }))
-}
-
-pub async fn update_food(
-    Extension(db): Extension<Arc<Database>>,
-    Json(payload): Json<UpdateFoodDto>,
-) -> Result<Json<ApiResponse<FoodDto>>, StatusCode> {
-    let row = sqlx::query_as!(
-        FoodDto,
-        r#"
-        UPDATE foods
-        SET name = $2, calories = $3, protein = $4, carbs = $5, fat = $6, sodium = $7, cholesterol = $8, user_id = $9, is_public = COALESCE($10, is_public)
-        WHERE id = $1
-        RETURNING id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-        "#,
-        payload.id,
-        payload.name,
-        payload.calories,
-        payload.protein,
-        payload.carbs,
-        payload.fat,
-        payload.sodium,
-        payload.cholesterol,
-        payload.user_id,
-        payload.is_public
-    )
-    .fetch_one(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(ApiResponse { data: row }))
 }

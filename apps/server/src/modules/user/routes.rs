@@ -1,12 +1,6 @@
-use super::handlers::{create_food, get_foods, update_food};
-use axum::{
-    routing::{get, post},
-    Router,
-};
+use super::handlers::get_me;
+use axum::{Router, routing::get};
 
-pub fn food_routes() -> Router {
-    Router::new()
-        .route("/", get(get_foods))
-        .route("/create", post(create_food))
-        .route("/update", post(update_food))
+pub fn user_routes() -> Router {
+    Router::new().route("/", get(get_me))
 }

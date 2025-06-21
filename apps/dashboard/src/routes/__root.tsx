@@ -1,3 +1,4 @@
+import { UserMenu } from "@features/user-menu/components/foods-list";
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
@@ -18,7 +19,7 @@ export const Route = createRootRoute({
             </Link>
           </div>
           <div className="p-2 flex gap-2">
-            <div>user</div>
+            <UserMenu />
           </div>
         </div>
         <hr />

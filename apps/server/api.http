@@ -1,0 +1,65 @@
+### Obtener usuario actual
+GET http://localhost:8080/me
+accept: application/json
+Cookie: token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImZtanU5NkBnbWFpbC5jb20iLCJleHAiOjE3NTExMjE0NzIsImlhdCI6MTc1MDUxNjY3Mn0.JlDzF3s0JqcUqgmcbIHV0g68JGwGfHRQ3QhcQd88s5o; theme=dark
+
+###
+
+### Autenticación Google (inicia flujo OAuth)
+GET http://localhost:8080/auth/google
+
+###
+
+### Obtener todas las comidas
+GET http://localhost:8080/meals/
+
+###
+
+### Crear una comida
+POST http://localhost:8080/meals/create
+Content-Type: application/json
+
+{
+  "name": "Ejemplo de comida",
+  "description": "Descripción de ejemplo"
+}
+
+###
+
+### Actualizar una comida
+POST http://localhost:8080/meals/update
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Comida actualizada",
+  "description": "Descripción actualizada"
+}
+
+###
+
+### Obtener todos los alimentos
+GET http://localhost:8080/foods/
+
+###
+
+### Crear un alimento
+POST http://localhost:8080/foods/create
+Content-Type: application/json
+
+{
+  "name": "Ejemplo de alimento",
+  "calories": 100
+}
+
+###
+
+### Actualizar un alimento
+POST http://localhost:8080/foods/update
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Alimento actualizado",
+  "calories": 150
+}
