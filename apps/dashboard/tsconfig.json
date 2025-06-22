@@ -7,7 +7,9 @@
     "paths": {
       "@features/*": ["./src/features/*"],
       "@/*": ["./src/*"],
+      "@workspace/ui/globals.css": ["../../packages/ui/src/styles/globals.css"],
       "@workspace/ui/*": ["../../packages/ui/src/*"]
     }
-  }
+  },
+  "exclude": ["node_modules"]
 }

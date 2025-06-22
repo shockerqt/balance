@@ -14,6 +14,7 @@
     "@tanstack/react-router": "^1.121.2",
     "@tanstack/react-router-devtools": "^1.121.2",
     "@workspace/ui": "workspace:*",
+    "lucide-react": "^0.475.0",
     "react": "^19",
     "react-dom": "^19",
     "react-error-boundary": "^6.0.0",

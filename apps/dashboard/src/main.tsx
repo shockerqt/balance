@@ -1,5 +1,4 @@
 import "@workspace/ui/globals.css";
-import "./globals.css";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
 import reportWebVitals from "./reportWebVitals";

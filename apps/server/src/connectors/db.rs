@@ -1,12 +1,14 @@
 use sqlx::postgres::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
+use super::food::FoodDatasource;
 use super::user::UserDatasource;
 
 #[derive(Clone)]
 pub struct Database {
     pub pool: PgPool,
     pub user: UserDatasource,
+    pub food: FoodDatasource,
 }
 
 impl Database {
@@ -18,6 +20,7 @@ impl Database {
 
         Ok(Self {
             user: UserDatasource { pool: pool.clone() },
+            food: FoodDatasource { pool: pool.clone() },
             pool,
         })
     }

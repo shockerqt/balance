@@ -16,7 +16,7 @@ use modules::{
 };
 use std::sync::Arc;
 use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 mod connectors;
 mod modules;
@@ -42,7 +42,6 @@ async fn main() {
             food_routes().route_layer(middleware::from_fn(auth)),
         )
         .layer(
-            // https://docs.rs/axum/latest/axum/middleware/index.html
             ServiceBuilder::new().layer(Extension(shared_db)).layer(
                 CorsLayer::new()
                     .allow_methods([Method::GET, Method::POST])

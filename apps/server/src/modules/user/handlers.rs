@@ -9,7 +9,6 @@ pub async fn get_me(
     Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
 ) -> Result<Json<ApiResponse<GetMeResponse>>, StatusCode> {
-    println!("GET ME");
     let user = db.user.get(current_user.id).await.unwrap();
     let user_dto = UserDto {
         id: user.id,
