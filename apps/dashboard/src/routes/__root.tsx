@@ -14,6 +14,9 @@ export const Route = createRootRoute({
             <Link to="/foods" className="[&.active]:font-bold">
               Foods
             </Link>
+            <Link to="/test" className="[&.active]:font-bold">
+              Test
+            </Link>
           </div>
           <div className="p-2 flex gap-2">
             <UserMenu />

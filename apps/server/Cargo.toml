@@ -5,6 +5,7 @@ edition = "2024"
 resolver = "3"
 
 [dependencies]
+anyhow = "1.0.98"
 axum = "0.8.1"
 bigdecimal = { version = "0.4.8", features = ["serde"] }
 chrono = { version = "0.4.41", features = ["serde"] }

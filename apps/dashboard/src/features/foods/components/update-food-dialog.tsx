@@ -35,8 +35,6 @@ const updateSchema = z.object({
   cholesterol: z.coerce.number(),
 });
 
-type FormState = z.infer<typeof updateSchema>;
-
 export const useUpdateFoodDialogForm = (defaultValues: Food) => {
   const queryClient = useQueryClient();
   const [state, formAction, isPending] = useActionState(
@@ -48,7 +46,9 @@ export const useUpdateFoodDialogForm = (defaultValues: Food) => {
         console.log("RESPONSE", response.food);
         return toDefaultValues(response.food);
       } catch (e) {
-        console.log(e.message);
+        if (e instanceof Error) {
+          console.log(e.message);
+        }
       }
       return state;
     },

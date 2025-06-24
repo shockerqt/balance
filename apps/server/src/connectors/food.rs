@@ -1,50 +1,88 @@
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
+use serde::Deserialize;
+use serde::Serialize;
 use sqlx::FromRow;
 use sqlx::PgPool;
+use sqlx::Type;
 
 use crate::modules::food::dto::CreateFoodDto;
 use crate::modules::food::dto::UpdateFoodDto;
 use crate::shared::error::AppError;
 use crate::shared::validate::Validate;
 
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize)]
+#[sqlx(type_name = "serving_unit_type")] // only for PostgreSQL to match a type definition
+#[sqlx(rename_all = "lowercase")]
+pub enum ServingUnitType {
+    Weight,
+    Volume,
+}
+
 #[derive(FromRow, Debug, Clone)]
 pub struct Food {
     pub id: i32,
     pub name: String,
-    pub calories: BigDecimal,
-    pub protein: BigDecimal,
-    pub carbs: BigDecimal,
+    pub created_by: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub calories: i32,
     pub fat: BigDecimal,
-    pub sodium: Option<BigDecimal>,
-    pub cholesterol: Option<BigDecimal>,
-    pub user_id: Option<i32>,
-    pub is_public: Option<bool>,
-    pub created_at: Option<NaiveDateTime>,
+    pub proteins: BigDecimal,
+    pub carbs: BigDecimal,
+    pub saturated_fat: Option<BigDecimal>,
+    pub monounsaturated_fat: Option<BigDecimal>,
+    pub polyunsaturated_fat: Option<BigDecimal>,
+    pub trans_fat: Option<BigDecimal>,
+    pub fiber: Option<BigDecimal>,
+    pub sugars: Option<BigDecimal>,
+    pub sodium: Option<i32>,
+    pub cholesterol: Option<i32>,
+    pub version: i32,
+    pub serving_name: String,
+    pub serving_quantity: BigDecimal,
+    pub serving_unit_type: ServingUnitType,
+    pub is_verified: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct NewFood {
     pub name: String,
-    pub calories: BigDecimal,
-    pub protein: BigDecimal,
-    pub carbs: BigDecimal,
+    pub calories: i32,
     pub fat: BigDecimal,
-    pub sodium: Option<BigDecimal>,
-    pub cholesterol: Option<BigDecimal>,
-    pub is_public: Option<bool>,
+    pub proteins: BigDecimal,
+    pub carbs: BigDecimal,
+    pub saturated_fat: Option<BigDecimal>,
+    pub monounsaturated_fat: Option<BigDecimal>,
+    pub polyunsaturated_fat: Option<BigDecimal>,
+    pub trans_fat: Option<BigDecimal>,
+    pub fiber: Option<BigDecimal>,
+    pub sugars: Option<BigDecimal>,
+    pub sodium: Option<i32>,
+    pub cholesterol: Option<i32>,
+    pub serving_name: String,
+    pub serving_quantity: BigDecimal,
+    pub serving_unit_type: ServingUnitType,
 }
 
 #[derive(Debug, Clone)]
 pub struct UpdateFood {
     pub id: i32,
-    pub name: String,
-    pub calories: BigDecimal,
-    pub protein: BigDecimal,
-    pub carbs: BigDecimal,
+    pub calories: i32,
     pub fat: BigDecimal,
-    pub sodium: Option<BigDecimal>,
-    pub cholesterol: Option<BigDecimal>,
+    pub proteins: BigDecimal,
+    pub carbs: BigDecimal,
+    pub saturated_fat: Option<BigDecimal>,
+    pub monounsaturated_fat: Option<BigDecimal>,
+    pub polyunsaturated_fat: Option<BigDecimal>,
+    pub trans_fat: Option<BigDecimal>,
+    pub fiber: Option<BigDecimal>,
+    pub sugars: Option<BigDecimal>,
+    pub sodium: Option<i32>,
+    pub cholesterol: Option<i32>,
+    pub serving_name: String,
+    pub serving_quantity: BigDecimal,
+    pub serving_unit_type: ServingUnitType,
 }
 
 #[derive(Clone)]
@@ -58,11 +96,34 @@ impl FoodDatasource {
             sqlx::query_as!(
                 Food,
                 r#"
-                SELECT id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-                FROM foods
-                WHERE user_id = $1 OR is_public = true
-                ORDER BY id
-                "#,
+            SELECT
+                f.id,
+                f.name,
+                f.created_by,
+                f.created_at,
+                f.updated_at,
+                fv.calories,
+                fv.fat,
+                fv.proteins,
+                fv.carbs,
+                fv.saturated_fat,
+                fv.monounsaturated_fat,
+                fv.polyunsaturated_fat,
+                fv.trans_fat,
+                fv.fiber,
+                fv.sugars,
+                fv.sodium,
+                fv.cholesterol,
+                fv.version,
+                fv.serving_name,
+                fv.serving_quantity,
+                fv.serving_unit_type AS "serving_unit_type: ServingUnitType",
+                fv.is_verified
+            FROM foods f
+            JOIN food_versions fv ON f.current_version_id = fv.id
+            WHERE f.created_by = $1 OR f.created_by = 1
+            ORDER BY f.id
+            "#,
                 uid
             )
             .fetch_all(&self.pool)
@@ -71,11 +132,34 @@ impl FoodDatasource {
             sqlx::query_as!(
                 Food,
                 r#"
-                SELECT id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-                FROM foods
-                WHERE is_public = true
-                ORDER BY id
-                "#
+            SELECT
+                f.id,
+                f.name,
+                f.created_by,
+                f.created_at,
+                f.updated_at,
+                fv.calories,
+                fv.fat,
+                fv.proteins,
+                fv.carbs,
+                fv.saturated_fat,
+                fv.monounsaturated_fat,
+                fv.polyunsaturated_fat,
+                fv.trans_fat,
+                fv.fiber,
+                fv.sugars,
+                fv.sodium,
+                fv.cholesterol,
+                fv.version,
+                fv.serving_name,
+                fv.serving_quantity,
+                fv.serving_unit_type AS "serving_unit_type: ServingUnitType",
+                fv.is_verified
+            FROM foods f
+            JOIN food_versions fv ON f.current_version_id = fv.id
+            WHERE f.created_by = 1
+            ORDER BY f.id
+            "#
             )
             .fetch_all(&self.pool)
             .await?
@@ -83,59 +167,195 @@ impl FoodDatasource {
         Ok(foods)
     }
 
-    pub async fn create(&self, user_id: &i32, food: &NewFood) -> Result<Food, sqlx::Error> {
-        let rec = sqlx::query_as!(
+    pub async fn get_by_id(&self, food_id: i32) -> Result<Food, sqlx::Error> {
+        let food = sqlx::query_as!(
             Food,
             r#"
-            INSERT INTO foods (name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
+            SELECT
+                f.id,
+                f.name,
+                f.created_by,
+                f.created_at,
+                f.updated_at,
+                fv.calories,
+                fv.fat,
+                fv.proteins,
+                fv.carbs,
+                fv.saturated_fat,
+                fv.monounsaturated_fat,
+                fv.polyunsaturated_fat,
+                fv.trans_fat,
+                fv.fiber,
+                fv.sugars,
+                fv.sodium,
+                fv.cholesterol,
+                fv.version,
+                fv.serving_name,
+                fv.serving_quantity,
+                fv.serving_unit_type AS "serving_unit_type: ServingUnitType",
+                fv.is_verified
+            FROM foods f
+            JOIN food_versions fv ON f.current_version_id = fv.id
+            WHERE f.id = $1
             "#,
-            food.name,
-            &food.calories,
-            &food.protein,
-            &food.carbs,
-            &food.fat,
-            food.sodium.as_ref(),
-            food.cholesterol.as_ref(),
-            user_id,
-            food.is_public
+            food_id
         )
         .fetch_one(&self.pool)
         .await?;
+        Ok(food)
+    }
 
-        Ok(rec)
+    pub async fn create(&self, user_id: &i32, new_food: &NewFood) -> Result<i32, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Insertar en food_versions
+        let food_version_id: i32 = sqlx::query_scalar!(
+            r#"
+        INSERT INTO food_versions (
+            calories, fat, proteins, carbs,
+            saturated_fat, monounsaturated_fat, polyunsaturated_fat, trans_fat,
+            fiber, sugars, sodium, cholesterol,
+            version, created_by, serving_name, serving_quantity, serving_unit_type,
+            is_verified
+        )
+        VALUES (
+            $1, $2, $3, $4,
+            $5, $6, $7, $8,
+            $9, $10, $11, $12,
+            1, $13, $14, $15, $16,
+            false
+        )
+        RETURNING id
+        "#,
+            new_food.calories,
+            new_food.fat,
+            new_food.proteins,
+            new_food.carbs,
+            new_food.saturated_fat,
+            new_food.monounsaturated_fat,
+            new_food.polyunsaturated_fat,
+            new_food.trans_fat,
+            new_food.fiber,
+            new_food.sugars,
+            new_food.sodium,
+            new_food.cholesterol,
+            user_id,
+            new_food.serving_name,
+            new_food.serving_quantity,
+            new_food.serving_unit_type.clone() as ServingUnitType,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // 2. Insertar en foods
+        let food_id: i32 = sqlx::query_scalar!(
+            r#"
+        INSERT INTO foods (name, created_by, current_version_id)
+        VALUES ($1, $2, $3)
+        RETURNING id
+        "#,
+            new_food.name,
+            user_id,
+            food_version_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(food_id)
     }
 
     pub async fn update(&self, user_id: &i32, food: &UpdateFood) -> Result<Food, sqlx::Error> {
-        let rec = sqlx::query_as!(
-            Food,
-            r#"
-            UPDATE foods
-            SET name = $1,
-                calories = $2,
-                protein = $3,
-                carbs = $4,
-                fat = $5,
-                sodium = $6,
-                cholesterol = $7
-            WHERE id = $8
-            AND user_id = $9
-            RETURNING id, name, calories, protein, carbs, fat, sodium, cholesterol, user_id, is_public, created_at
-            "#,
-            food.name,
-            &food.calories,
-            &food.protein,
-            &food.carbs,
-            &food.fat,
-            food.sodium.as_ref(),
-            food.cholesterol.as_ref(),
+        let mut tx = self.pool.begin().await?;
+
+        let prev = sqlx::query!(
+            "SELECT current_version_id FROM foods WHERE id = $1 AND created_by = $2",
             food.id,
-            user_id,
+            user_id
         )
         .fetch_one(&self.pool)
         .await?;
 
+        let version = sqlx::query!(
+        r#"
+        INSERT INTO food_versions (
+            calories, fat, proteins, carbs, saturated_fat, monounsaturated_fat, polyunsaturated_fat, trans_fat,
+            fiber, sugars, sodium, cholesterol, version, previous_version_id, created_by, serving_name, serving_quantity, serving_unit_type, is_verified
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, false
+        )
+        RETURNING id
+        "#,
+        food.calories,
+        food.fat,
+        food.proteins,
+        food.carbs,
+        food.saturated_fat.clone(),
+        food.monounsaturated_fat.clone(),
+        food.polyunsaturated_fat.clone(),
+        food.trans_fat.clone(),
+        food.fiber.clone(),
+        food.sugars.clone(),
+        food.sodium,
+        food.cholesterol,
+        prev.current_version_id + 1, // version, puedes ajustar si tienes lógica de versionado
+        prev.current_version_id,
+        user_id,
+        food.serving_name.clone(),
+        food.serving_quantity.clone(),
+        food.serving_unit_type.clone() as ServingUnitType
+    )
+        .fetch_one(&mut *tx)
+    .await?;
+
+        // 3. Actualizar foods.current_version_id
+        sqlx::query!(
+        "UPDATE foods SET current_version_id = $1, updated_at = now() WHERE id = $2 AND created_by = $3",
+        version.id,
+        food.id,
+        user_id
+    )
+        .execute(&mut *tx)
+    .await?;
+
+        // 4. Retornar el nuevo estado del food
+        let rec = sqlx::query_as!(
+            Food,
+            r#"
+        SELECT
+            f.id,
+            f.name,
+            f.created_by,
+            f.created_at,
+            f.updated_at,
+            fv.calories,
+            fv.fat,
+            fv.proteins,
+            fv.carbs,
+            fv.saturated_fat,
+            fv.monounsaturated_fat,
+            fv.polyunsaturated_fat,
+            fv.trans_fat,
+            fv.fiber,
+            fv.sugars,
+            fv.sodium,
+            fv.cholesterol,
+            fv.version,
+            fv.serving_name,
+            fv.serving_quantity,
+            fv.serving_unit_type AS "serving_unit_type:ServingUnitType",
+            fv.is_verified
+        FROM foods f
+        JOIN food_versions fv ON f.current_version_id = fv.id
+        WHERE f.id = $1
+        "#,
+            food.id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
         Ok(rec)
     }
 }
@@ -146,12 +366,12 @@ impl Validate for NewFood {
             return Err(AppError::BadRequest("Name cannot be empty".into()));
         }
 
-        if self.calories < 0.into() {
+        if self.calories < 0 {
             return Err(AppError::BadRequest("Calories must be non-negative".into()));
         }
 
-        if self.protein < 0.into() {
-            return Err(AppError::BadRequest("Protein must be non-negative".into()));
+        if self.proteins < 0.into() {
+            return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
         if self.carbs < 0.into() {
@@ -163,13 +383,13 @@ impl Validate for NewFood {
         }
 
         if let Some(sodium) = &self.sodium {
-            if *sodium < 0.into() {
+            if *sodium < 0 {
                 return Err(AppError::BadRequest("Sodium must be non-negative".into()));
             }
         }
 
         if let Some(cholesterol) = &self.cholesterol {
-            if *cholesterol < 0.into() {
+            if *cholesterol < 0 {
                 return Err(AppError::BadRequest(
                     "Cholesterol must be non-negative".into(),
                 ));
@@ -186,16 +406,12 @@ impl Validate for UpdateFood {
             return Err(AppError::BadRequest("Invalid food ID".into()));
         }
 
-        if self.name.trim().is_empty() {
-            return Err(AppError::BadRequest("Name cannot be empty".into()));
-        }
-
-        if self.calories < 0.into() {
+        if self.calories < 0 {
             return Err(AppError::BadRequest("Calories must be non-negative".into()));
         }
 
-        if self.protein < 0.into() {
-            return Err(AppError::BadRequest("Protein must be non-negative".into()));
+        if self.proteins < 0.into() {
+            return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
         if self.carbs < 0.into() {
@@ -207,13 +423,13 @@ impl Validate for UpdateFood {
         }
 
         if let Some(sodium) = &self.sodium {
-            if *sodium < 0.into() {
+            if *sodium < 0 {
                 return Err(AppError::BadRequest("Sodium must be non-negative".into()));
             }
         }
 
         if let Some(cholesterol) = &self.cholesterol {
-            if *cholesterol < 0.into() {
+            if *cholesterol < 0 {
                 return Err(AppError::BadRequest(
                     "Cholesterol must be non-negative".into(),
                 ));
@@ -231,12 +447,20 @@ impl TryFrom<CreateFoodDto> for NewFood {
         let food = NewFood {
             name: dto.name,
             calories: dto.calories,
-            protein: dto.protein,
-            carbs: dto.carbs,
             fat: dto.fat,
-            sodium: dto.sodium,
-            cholesterol: dto.cholesterol,
-            is_public: Some(false),
+            proteins: dto.proteins,
+            carbs: dto.carbs,
+            saturated_fat: dto.saturated_fat,
+            monounsaturated_fat: dto.monounsaturated_fat,
+            polyunsaturated_fat: dto.polyunsaturated_fat,
+            trans_fat: dto.trans_fat,
+            fiber: dto.fiber,
+            sugars: dto.sugars,
+            sodium: dto.sodium.map(|v| v.try_into().ok()).flatten(),
+            cholesterol: dto.cholesterol.map(|v| v.try_into().ok()).flatten(),
+            serving_name: dto.serving_name,
+            serving_quantity: dto.serving_quantity,
+            serving_unit_type: dto.serving_unit_type,
         };
         food.validate()?;
         Ok(food)
@@ -249,13 +473,21 @@ impl TryFrom<UpdateFoodDto> for UpdateFood {
     fn try_from(dto: UpdateFoodDto) -> Result<Self, Self::Error> {
         let food = UpdateFood {
             id: dto.id,
-            name: dto.name,
             calories: dto.calories,
-            protein: dto.protein,
-            carbs: dto.carbs,
             fat: dto.fat,
+            proteins: dto.proteins,
+            carbs: dto.carbs,
+            saturated_fat: dto.saturated_fat,
+            monounsaturated_fat: dto.monounsaturated_fat,
+            polyunsaturated_fat: dto.polyunsaturated_fat,
+            trans_fat: dto.trans_fat,
+            fiber: dto.fiber,
+            sugars: dto.sugars,
             sodium: dto.sodium,
             cholesterol: dto.cholesterol,
+            serving_name: dto.serving_name,
+            serving_quantity: dto.serving_quantity,
+            serving_unit_type: dto.serving_unit_type,
         };
         food.validate()?;
         Ok(food)

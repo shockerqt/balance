@@ -32,7 +32,8 @@ pub async fn create_food(
     let user_id = &current_user.id;
     let new_food = NewFood::try_from(dto)?;
 
-    let row = db.food.create(user_id, &new_food).await?;
+    let food_id = db.food.create(user_id, &new_food).await?;
+    let row = db.food.get_by_id(food_id).await?;
 
     let food_dto = FoodDto::from(row);
 
