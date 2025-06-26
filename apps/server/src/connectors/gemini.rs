@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Debug, Clone)]
 pub struct GeminiClient {

@@ -1,17 +1,19 @@
 use bigdecimal::BigDecimal;
+use bigdecimal::FromPrimitive;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::FromRow;
 use sqlx::PgPool;
 use sqlx::Type;
+use utoipa::ToSchema;
 
 use crate::modules::food::dto::CreateFoodDto;
 use crate::modules::food::dto::UpdateFoodDto;
 use crate::shared::error::AppError;
 use crate::shared::validate::Validate;
 
-#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Type, Serialize, Deserialize, ToSchema)]
 #[sqlx(type_name = "serving_unit_type")] // only for PostgreSQL to match a type definition
 #[sqlx(rename_all = "lowercase")]
 pub enum ServingUnitType {
@@ -47,6 +49,7 @@ pub struct Food {
 
 #[derive(Debug, Clone)]
 pub struct NewFood {
+    pub created_by: i32,
     pub name: String,
     pub calories: i32,
     pub fat: BigDecimal,
@@ -68,6 +71,7 @@ pub struct NewFood {
 #[derive(Debug, Clone)]
 pub struct UpdateFood {
     pub id: i32,
+    pub name: String,
     pub calories: i32,
     pub fat: BigDecimal,
     pub proteins: BigDecimal,
@@ -98,7 +102,7 @@ impl FoodDatasource {
                 r#"
             SELECT
                 f.id,
-                f.name,
+                fv.name,
                 f.created_by,
                 f.created_at,
                 f.updated_at,
@@ -134,7 +138,7 @@ impl FoodDatasource {
                 r#"
             SELECT
                 f.id,
-                f.name,
+                fv.name,
                 f.created_by,
                 f.created_at,
                 f.updated_at,
@@ -173,7 +177,7 @@ impl FoodDatasource {
             r#"
             SELECT
                 f.id,
-                f.name,
+                fv.name,
                 f.created_by,
                 f.created_at,
                 f.updated_at,
@@ -205,7 +209,7 @@ impl FoodDatasource {
         Ok(food)
     }
 
-    pub async fn create(&self, user_id: &i32, new_food: &NewFood) -> Result<i32, sqlx::Error> {
+    pub async fn create(&self, new_food: &NewFood) -> Result<i32, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
         // 1. Insertar en food_versions
@@ -239,7 +243,7 @@ impl FoodDatasource {
             new_food.sugars,
             new_food.sodium,
             new_food.cholesterol,
-            user_id,
+            new_food.created_by,
             new_food.serving_name,
             new_food.serving_quantity,
             new_food.serving_unit_type.clone() as ServingUnitType,
@@ -250,12 +254,11 @@ impl FoodDatasource {
         // 2. Insertar en foods
         let food_id: i32 = sqlx::query_scalar!(
             r#"
-        INSERT INTO foods (name, created_by, current_version_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO foods (created_by, current_version_id)
+        VALUES ($1, $2)
         RETURNING id
         "#,
-            new_food.name,
-            user_id,
+            new_food.created_by,
             food_version_id
         )
         .fetch_one(&mut *tx)
@@ -280,13 +283,14 @@ impl FoodDatasource {
         let version = sqlx::query!(
         r#"
         INSERT INTO food_versions (
-            calories, fat, proteins, carbs, saturated_fat, monounsaturated_fat, polyunsaturated_fat, trans_fat,
+            name, calories, fat, proteins, carbs, saturated_fat, monounsaturated_fat, polyunsaturated_fat, trans_fat,
             fiber, sugars, sodium, cholesterol, version, previous_version_id, created_by, serving_name, serving_quantity, serving_unit_type, is_verified
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, false
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, false
         )
         RETURNING id
         "#,
+        food.name,
         food.calories,
         food.fat,
         food.proteins,
@@ -325,7 +329,7 @@ impl FoodDatasource {
             r#"
         SELECT
             f.id,
-            f.name,
+            fv.name,
             f.created_by,
             f.created_at,
             f.updated_at,
@@ -440,56 +444,50 @@ impl Validate for UpdateFood {
     }
 }
 
-impl TryFrom<CreateFoodDto> for NewFood {
-    type Error = AppError;
-
-    fn try_from(dto: CreateFoodDto) -> Result<Self, Self::Error> {
-        let food = NewFood {
+impl NewFood {
+    pub fn from_dto(dto: CreateFoodDto, user_id: i32) -> Result<Self, AppError> {
+        Ok(NewFood {
+            created_by: user_id,
             name: dto.name,
             calories: dto.calories,
-            fat: dto.fat,
-            proteins: dto.proteins,
-            carbs: dto.carbs,
-            saturated_fat: dto.saturated_fat,
-            monounsaturated_fat: dto.monounsaturated_fat,
-            polyunsaturated_fat: dto.polyunsaturated_fat,
-            trans_fat: dto.trans_fat,
-            fiber: dto.fiber,
-            sugars: dto.sugars,
-            sodium: dto.sodium.map(|v| v.try_into().ok()).flatten(),
-            cholesterol: dto.cholesterol.map(|v| v.try_into().ok()).flatten(),
-            serving_name: dto.serving_name,
-            serving_quantity: dto.serving_quantity,
-            serving_unit_type: dto.serving_unit_type,
-        };
-        food.validate()?;
-        Ok(food)
-    }
-}
-
-impl TryFrom<UpdateFoodDto> for UpdateFood {
-    type Error = AppError;
-
-    fn try_from(dto: UpdateFoodDto) -> Result<Self, Self::Error> {
-        let food = UpdateFood {
-            id: dto.id,
-            calories: dto.calories,
-            fat: dto.fat,
-            proteins: dto.proteins,
-            carbs: dto.carbs,
-            saturated_fat: dto.saturated_fat,
-            monounsaturated_fat: dto.monounsaturated_fat,
-            polyunsaturated_fat: dto.polyunsaturated_fat,
-            trans_fat: dto.trans_fat,
-            fiber: dto.fiber,
-            sugars: dto.sugars,
+            fat: BigDecimal::from_f64(dto.fat).unwrap_or_default(),
+            proteins: BigDecimal::from_f64(dto.proteins).unwrap_or_default(),
+            carbs: BigDecimal::from_f64(dto.carbs).unwrap_or_default(),
+            saturated_fat: dto.saturated_fat.and_then(BigDecimal::from_f64),
+            monounsaturated_fat: dto.monounsaturated_fat.and_then(BigDecimal::from_f64),
+            polyunsaturated_fat: dto.polyunsaturated_fat.and_then(BigDecimal::from_f64),
+            trans_fat: dto.trans_fat.and_then(BigDecimal::from_f64),
+            fiber: dto.fiber.and_then(BigDecimal::from_f64),
+            sugars: dto.sugars.and_then(BigDecimal::from_f64),
             sodium: dto.sodium,
             cholesterol: dto.cholesterol,
             serving_name: dto.serving_name,
-            serving_quantity: dto.serving_quantity,
+            serving_quantity: BigDecimal::from_f64(dto.serving_quantity).unwrap_or_default(),
             serving_unit_type: dto.serving_unit_type,
-        };
-        food.validate()?;
-        Ok(food)
+        })
+    }
+}
+
+impl UpdateFood {
+    pub fn from_dto(dto: UpdateFoodDto) -> Result<Self, AppError> {
+        Ok(UpdateFood {
+            id: dto.id,
+            name: dto.name,
+            calories: dto.calories,
+            fat: BigDecimal::from_f64(dto.fat).unwrap_or_default(),
+            proteins: BigDecimal::from_f64(dto.proteins).unwrap_or_default(),
+            carbs: BigDecimal::from_f64(dto.carbs).unwrap_or_default(),
+            saturated_fat: dto.saturated_fat.and_then(BigDecimal::from_f64),
+            monounsaturated_fat: dto.monounsaturated_fat.and_then(BigDecimal::from_f64),
+            polyunsaturated_fat: dto.polyunsaturated_fat.and_then(BigDecimal::from_f64),
+            trans_fat: dto.trans_fat.and_then(BigDecimal::from_f64),
+            fiber: dto.fiber.and_then(BigDecimal::from_f64),
+            sugars: dto.sugars.and_then(BigDecimal::from_f64),
+            sodium: dto.sodium,
+            cholesterol: dto.cholesterol,
+            serving_name: dto.serving_name,
+            serving_quantity: BigDecimal::from_f64(dto.serving_quantity).unwrap_or_default(),
+            serving_unit_type: dto.serving_unit_type,
+        })
     }
 }

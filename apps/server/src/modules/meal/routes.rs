@@ -1,7 +1,7 @@
 use super::handlers::{create_meal, get_meals, update_meal};
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 
 pub fn meal_routes() -> Router {

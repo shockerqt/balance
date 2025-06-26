@@ -7,6 +7,7 @@ use axum::{
     },
     middleware,
 };
+use config::openapi::ApiDoc;
 use connectors::db::Database;
 use modules::{
     auth::{middleware::auth, routes::auth_routes},
@@ -17,7 +18,10 @@ use modules::{
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
+mod config;
 mod connectors;
 mod modules;
 mod shared;
@@ -49,7 +53,9 @@ async fn main() {
                     .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
                     .allow_credentials(true),
             ),
-        );
+        )
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
+
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

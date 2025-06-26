@@ -1,86 +1,49 @@
 use std::sync::Arc;
 
-use axum::{http::StatusCode, Extension, Json};
+use axum::{Extension, Json};
 
-use crate::connectors::db::Database;
+use crate::connectors::meal::{NewMeal, UpdateMeal};
+use crate::shared::error::AppError;
 use crate::shared::response::ApiResponse;
+use crate::{connectors::db::Database, modules::auth::middleware::CurrentUser};
 
-use super::dto::{CreateMealDto, MealResponse, UpdateMealDto};
-use super::model::Meal;
+use super::dto::{CreateMealDto, GetMealsResponse, MealDto, UpdateMealDto};
 
 pub async fn get_meals(
+    Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
-) -> Result<Json<ApiResponse<Vec<MealResponse>>>, StatusCode> {
-    let meals = sqlx::query_as!(
-        MealResponse,
-        r#"
-        SELECT id, user_id, name, eaten_at, created_at
-        FROM meals
-        "#
-    )
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+) -> Result<Json<ApiResponse<GetMealsResponse>>, AppError> {
+    let rows = db.meal.get_all(current_user.id).await?;
 
-    Ok(Json(ApiResponse { data: meals }))
+    let dtos: Vec<MealDto> = rows.into_iter().map(MealDto::from).collect();
+
+    let response = ApiResponse {
+        data: GetMealsResponse { meals: dtos },
+    };
+
+    Ok(Json(response))
 }
 
 pub async fn create_meal(
+    Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
-    Json(payload): Json<CreateMealDto>,
-) -> Result<Json<ApiResponse<MealResponse>>, StatusCode> {
-    let row = sqlx::query_as!(
-        Meal,
-        r#"
-        INSERT INTO meals (user_id, name, eaten_at)
-        VALUES ($1, $2, $3)
-        RETURNING id, user_id, name, eaten_at, created_at
-        "#,
-        payload.user_id,
-        payload.name,
-        payload.eaten_at
-    )
-    .fetch_one(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(ApiResponse {
-        data: MealResponse {
-            id: row.id,
-            user_id: row.user_id,
-            name: row.name,
-            eaten_at: row.eaten_at,
-            created_at: row.created_at,
-        },
-    }))
+    Json(dto): Json<CreateMealDto>,
+) -> Result<Json<ApiResponse<MealDto>>, AppError> {
+    let user_id = current_user.id;
+    let new_record = NewMeal::from_dto(dto, user_id.clone())?;
+    let row = db.meal.create(&new_record).await?;
+    let response_dto = MealDto::from(row);
+    Ok(Json(ApiResponse { data: response_dto }))
 }
-pub async fn update_meal(
-    Extension(db): Extension<Arc<Database>>,
-    Json(payload): Json<UpdateMealDto>,
-) -> Result<Json<ApiResponse<MealResponse>>, StatusCode> {
-    let row = sqlx::query_as!(
-        Meal,
-        r#"
-        UPDATE meals
-        SET name = $2, eaten_at = $3
-        WHERE id = $1
-        RETURNING id, user_id, name, eaten_at, created_at
-        "#,
-        payload.id,
-        payload.name,
-        payload.eaten_at
-    )
-    .fetch_one(&db.pool)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(ApiResponse {
-        data: MealResponse {
-            id: row.id,
-            user_id: row.user_id,
-            name: row.name,
-            eaten_at: row.eaten_at,
-            created_at: row.created_at,
-        },
-    }))
+pub async fn update_meal(
+    Extension(current_user): Extension<CurrentUser>,
+    Extension(db): Extension<Arc<Database>>,
+    Json(dto): Json<UpdateMealDto>,
+) -> Result<Json<ApiResponse<MealDto>>, AppError> {
+    let user_id = current_user.id;
+    let update_record = UpdateMeal::from_dto(dto, user_id.clone())?;
+    let row = db.meal.update(&update_record).await?;
+    let response_dto = MealDto::from(row);
+    Ok(Json(ApiResponse { data: response_dto }))
 }
