@@ -5,6 +5,8 @@ use axum::{
 };
 use serde::Serialize;
 
+use super::response::ApiResponse;
+
 #[derive(Debug)]
 pub enum AppError {
     Db(sqlx::Error),
@@ -22,19 +24,23 @@ pub struct ErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            AppError::Db(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.as_str()),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.as_str()),
+        let (status, message, code) = match &self {
+            AppError::Db(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error", "db"),
+            AppError::NotFound(_) => (StatusCode::NOT_FOUND, "Resource not found", "not_found"),
+            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "Bad request", "bad_request"),
+            AppError::Internal(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal error",
+                "internal",
+            ),
         };
 
-        let body = Json(ErrorResponse {
-            error: format!("{:?}", self).to_lowercase(),
+        let response = ApiResponse::error(ErrorResponse {
             message: message.to_string(),
+            error: code.to_string(),
         });
 
-        (status, body).into_response()
+        (status, Json(response)).into_response()
     }
 }
 

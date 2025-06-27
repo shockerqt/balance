@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::{Extension, Json};
 
 use crate::connectors::food::{NewFood, UpdateFood};

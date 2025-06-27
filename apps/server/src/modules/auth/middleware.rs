@@ -29,6 +29,8 @@ pub async fn auth(mut req: Request, next: Next) -> Result<Response, StatusCode> 
             })
         });
 
+    println!("COOKIE {:?}", token_cookie);
+
     let auth_token = if let Some(token) = token_cookie {
         token
     } else {

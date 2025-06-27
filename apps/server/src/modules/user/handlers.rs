@@ -1,14 +1,33 @@
 use axum::{Extension, Json, http::StatusCode};
 use std::sync::Arc;
 
-use crate::modules::user::dto::{GetMeResponse, UserDto};
-use crate::shared::response::ApiResponse;
+use crate::modules::user::dto::UserDto;
 use crate::{connectors::db::Database, modules::auth::middleware::CurrentUser};
 
+/// Gets information about the authenticated user.
+///
+/// Requires authentication via cookie.
+///
+/// # Responses
+/// - 200: Returns the authenticated user's data as a [`UserDto`].
+///
+/// # Security
+/// Requires the `cookieAuth` authentication scheme.
+#[utoipa::path(
+    get,
+    path = "/me",
+    tag = "user",
+    responses(
+        (status = 200, description = "Authenticated user data", body = UserDto)
+    ),
+    security(
+        ("cookieAuth" = [])
+    )
+)]
 pub async fn get_me(
     Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
-) -> Result<Json<ApiResponse<GetMeResponse>>, StatusCode> {
+) -> Result<Json<UserDto>, StatusCode> {
     let user = db.user.get(current_user.id).await.unwrap();
     let user_dto = UserDto {
         id: user.id,
@@ -20,9 +39,5 @@ pub async fn get_me(
         created_at: user.created_at,
     };
 
-    let response = ApiResponse {
-        data: GetMeResponse { user: user_dto },
-    };
-
-    Ok(Json(response))
+    Ok(Json(user_dto))
 }

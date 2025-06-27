@@ -1,4 +1,5 @@
 use bigdecimal::ToPrimitive;
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::connectors::food::{Food, ServingUnitType};
@@ -71,7 +72,8 @@ pub struct FoodDto {
     pub serving_unit_type: ServingUnitType,
     pub created_by: i32,
     pub is_verified: bool,
-    pub created_at: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 impl From<Food> for FoodDto {
@@ -96,7 +98,8 @@ impl From<Food> for FoodDto {
             serving_unit_type: food.serving_unit_type.clone(),
             created_by: food.created_by,
             is_verified: food.is_verified,
-            created_at: Some(food.created_at.to_string()),
+            created_at: food.created_at,
+            updated_at: food.updated_at,
         }
     }
 }
