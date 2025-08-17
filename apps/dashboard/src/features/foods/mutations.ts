@@ -1,20 +1,11 @@
-import { post } from "@/utils/api-fetch";
-import { Food } from "./types";
-
-export type UpdateFoodInput = {
-  id: number;
-  name?: string;
-  calories?: number;
-  protein?: number;
-  carbs?: number;
-  fat?: number;
-};
+import { FoodDto, UpdateFoodDto } from "@/dto/food";
+import { patch } from "@/utils/api-fetch";
 
 export type UpdateFoodOutput = {
-  food: Food;
+  food: FoodDto;
 };
 
-export const updateFood = async (input: UpdateFoodInput) => {
-  const response = await post<UpdateFoodOutput>("/foods/update", input);
+export const updateFood = async (input: UpdateFoodDto) => {
+  const response = await patch<UpdateFoodOutput>("/foods/update", input);
   return response.data;
 };

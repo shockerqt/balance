@@ -1,18 +1,18 @@
 import "@workspace/ui/globals.css";
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
-import reportWebVitals from "./reportWebVitals";
+import { GlobalContext } from "./config/global-context";
 import { RouterConfig } from "./config/router";
-import { QueryConfig } from "./config/query";
+import reportWebVitals from "./reportWebVitals";
 
 const rootElement = document.getElementById("app");
 if (rootElement && !rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement);
   root.render(
     <StrictMode>
-      <QueryConfig>
+      <GlobalContext>
         <RouterConfig />
-      </QueryConfig>
+      </GlobalContext>
     </StrictMode>,
   );
 }

@@ -59,3 +59,26 @@ export async function post<T>(
 
   return res.json();
 }
+
+export async function patch<T>(
+  path: string,
+  body: unknown,
+): Promise<ApiResponse<T>> {
+  const url = new URL(path, BASE_URL);
+
+  const res = await fetch(url.toString(), {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`PATCH ${url} failed: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}

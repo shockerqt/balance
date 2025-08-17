@@ -1,4 +1,4 @@
-import { UserMenu } from "@features/user-menu/components/foods-list";
+import { UserMenu } from "@features/user-menu/components/user-menu";
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 

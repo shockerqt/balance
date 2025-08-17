@@ -1,3 +1,5 @@
+import { FoodDto, ServingUnitType, UpdateFoodDto } from "@/dto/food";
+import { toDefaultValues } from "@/utils/to-default-values";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@workspace/ui/components/button";
 import {
@@ -14,28 +16,58 @@ import { Input } from "@workspace/ui/components/input";
 import { Label } from "@workspace/ui/components/label";
 import { useActionState, type FC, type PropsWithChildren } from "react";
 import { z } from "zod/v4";
-import { updateFood, UpdateFoodInput } from "../mutations";
-import { Food } from "../types";
-import { toDefaultValues } from "@/utils/to-default-values";
-import { isPromise } from "util/types";
-import { Update } from "vite";
+import { updateFood } from "../mutations";
+
+const preprocessNumber = (value: unknown) => {
+  if (typeof value === "string") {
+    if (value) {
+      const number = Number(value);
+      if (Number.isNaN(number)) {
+        return null;
+      } else {
+        return value;
+      }
+    }
+  } else if (typeof value === "number") {
+    return value;
+  }
+  return null;
+};
 
 interface Props extends PropsWithChildren {
-  food: Food;
+  food: FoodDto;
 }
 
 const updateSchema = z.object({
-  id: z.coerce.number(),
-  name: z.string(),
-  calories: z.coerce.number(),
-  protein: z.coerce.number(),
-  carbs: z.coerce.number(),
-  fat: z.coerce.number(),
-  sodium: z.coerce.number(),
-  cholesterol: z.coerce.number(),
-});
+  id: z.preprocess(preprocessNumber, z.int().positive()),
+  name: z.string().min(1),
+  calories: z.preprocess(preprocessNumber, z.int().nonnegative()),
+  fat: z.preprocess(preprocessNumber, z.number().nonnegative()),
+  proteins: z.preprocess(preprocessNumber, z.number().nonnegative()),
+  carbs: z.preprocess(preprocessNumber, z.number().nonnegative()),
+  saturatedFat: z.preprocess(
+    preprocessNumber,
+    z.number().nonnegative().nullable(),
+  ),
+  monounsaturatedFat: z.preprocess(
+    preprocessNumber,
+    z.number().nonnegative().nullable(),
+  ),
+  polyunsaturatedFat: z.preprocess(
+    preprocessNumber,
+    z.number().nonnegative().nullable(),
+  ),
+  transFat: z.preprocess(preprocessNumber, z.number().nonnegative().nullable()),
+  fiber: z.preprocess(preprocessNumber, z.number().nonnegative().nullable()),
+  sugars: z.preprocess(preprocessNumber, z.number().nonnegative().nullable()),
+  sodium: z.preprocess(preprocessNumber, z.int().nonnegative().nullable()),
+  cholesterol: z.preprocess(preprocessNumber, z.int().nonnegative().nullable()),
+  servingName: z.string().min(1),
+  servingQuantity: z.preprocess(preprocessNumber, z.number().nonnegative()),
+  servingUnitType: z.enum(ServingUnitType),
+}) satisfies z.ZodType<UpdateFoodDto>;
 
-export const useUpdateFoodDialogForm = (defaultValues: Food) => {
+export const useUpdateFoodDialogForm = (defaultValues: FoodDto) => {
   const queryClient = useQueryClient();
   const [state, formAction, isPending] = useActionState(
     async (state: Record<string, string>, form: FormData) => {
@@ -73,7 +105,14 @@ export const useUpdateFoodDialogForm = (defaultValues: Food) => {
   };
 };
 
-const fields = ["calories", "protein", "carbs", "fat", "sodium", "cholesterol"];
+const fields = [
+  "calories",
+  "proteins",
+  "carbs",
+  "fat",
+  "sodium",
+  "cholesterol",
+];
 
 export const UpdateFoodDialog: FC<Props> = ({ children, food }) => {
   const { state, formAction } = useUpdateFoodDialogForm(food);
@@ -81,7 +120,7 @@ export const UpdateFoodDialog: FC<Props> = ({ children, food }) => {
   return (
     <Dialog>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-2xl w-full">
         <form action={formAction}>
           <input type="hidden" name="id" value={food.id} />
           <DialogHeader>
@@ -92,6 +131,25 @@ export const UpdateFoodDialog: FC<Props> = ({ children, food }) => {
             <div className="grid gap-3">
               <Label htmlFor="name">Name</Label>
               <Input id="name" name="name" defaultValue={state.name} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3">
+                <Label htmlFor="servingName">Serving name</Label>
+                <Input
+                  id="servingName"
+                  name="servingName"
+                  defaultValue={state.servingName}
+                />
+              </div>
+              <div className="grid gap-3">
+                <Label htmlFor="servingQuantity">Serving quantity</Label>
+                <Input
+                  id="servingQuantity"
+                  name="servingQuantity"
+                  defaultValue={state.servingQuantity}
+                />
+              </div>
             </div>
 
             {fields.map((key) => (

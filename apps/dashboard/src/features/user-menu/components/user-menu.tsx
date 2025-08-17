@@ -20,8 +20,8 @@ const Component = () => {
   return (
     <div>
       HOLA
-      {data.user.name}
-      <img src={data.user.picture} />
+      {data.name}
+      <img src={data.picture} />
       <Button
         onClick={async () => {
           await apiFetch("/auth/logout");
@@ -40,7 +40,7 @@ export const UserMenu: FC = () => {
       {({ reset }) => (
         <ErrorBoundary
           onReset={reset}
-          fallbackRender={({ resetErrorBoundary }) => (
+          fallbackRender={() => (
             <div>
               Hola invitado
               <Button asChild>

@@ -1,5 +1,5 @@
 export const toDefaultValues = (
-  data: Record<string, string | number | null>,
+  data: Record<string, string | number | boolean | null>,
 ): Record<string, string> => {
   return Object.fromEntries(
     Object.entries(data).map(([key, value]) => {

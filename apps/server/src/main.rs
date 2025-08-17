@@ -48,7 +48,7 @@ async fn main() {
         .layer(
             ServiceBuilder::new().layer(Extension(shared_db)).layer(
                 CorsLayer::new()
-                    .allow_methods([Method::GET, Method::POST])
+                    .allow_methods([Method::GET, Method::POST, Method::PATCH])
                     .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
                     .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
                     .allow_credentials(true),
@@ -57,5 +57,9 @@ async fn main() {
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+
+    println!("SERVER RUNNING ON http://localhost:8080");
+    println!("VIEW DOCS ON http://localhost:8080/docs");
+
     axum::serve(listener, app).await.unwrap();
 }
