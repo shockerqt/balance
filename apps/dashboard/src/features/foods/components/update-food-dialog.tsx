@@ -17,6 +17,7 @@ import { Label } from "@workspace/ui/components/label";
 import { useActionState, type FC, type PropsWithChildren } from "react";
 import { z } from "zod/v4";
 import { updateFood } from "../mutations";
+import { useAlert } from "@features/alert/hooks/use-alert";
 
 const preprocessNumber = (value: unknown) => {
   if (typeof value === "string") {
@@ -69,17 +70,23 @@ const updateSchema = z.object({
 
 export const useUpdateFoodDialogForm = (defaultValues: FoodDto) => {
   const queryClient = useQueryClient();
+  const { showAlert } = useAlert();
+
   const [state, formAction, isPending] = useActionState(
     async (state: Record<string, string>, form: FormData) => {
-      const objectData = Object.fromEntries(form.entries());
-      const parsedInput = updateSchema.parse(objectData);
       try {
+        const objectData = Object.fromEntries(form.entries());
+        const parsedInput = updateSchema.parse(objectData);
         const response = await mutation.mutateAsync(parsedInput);
         console.log("RESPONSE", response.food);
         return toDefaultValues(response.food);
       } catch (e) {
         if (e instanceof Error) {
           console.log(e.message);
+          showAlert({
+            variant: "destructive",
+            title: e.message,
+          });
         }
       }
       return state;

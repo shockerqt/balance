@@ -1,5 +1,5 @@
 import { FC, PropsWithChildren, useState } from "react";
-import { AlertContext, Alert } from "../contexts/alertContext";
+import { AlertContext, Alert } from "../contexts/alert-context";
 
 export const AlertProvider: FC<PropsWithChildren> = ({ children }) => {
   const [alert, setAlert] = useState<Alert | null>(null);

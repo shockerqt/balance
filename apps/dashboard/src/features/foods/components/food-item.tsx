@@ -1,11 +1,11 @@
 import { Button } from "@workspace/ui/components/button";
 import { Pen } from "lucide-react";
 import { FC } from "react";
-import { Food } from "../types";
 import { UpdateFoodDialog } from "./update-food-dialog";
+import { FoodDto } from "@/dto/food";
 
 interface Props {
-  food: Food;
+  food: FoodDto;
 }
 
 const formatNumber = (value: number, digits = 2) => {
@@ -18,7 +18,7 @@ const formatNumber = (value: number, digits = 2) => {
 export const FoodItem: FC<Props> = ({ food }) => {
   return (
     <li>
-      <div className="border border-black rounded-lg px-4 p-2">
+      <div className="border rounded-lg px-4 p-2">
         <div className="flex justify-between gap-2">
           <h2>{food.name}</h2>
           <div>
