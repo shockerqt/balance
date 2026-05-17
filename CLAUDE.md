@@ -4,8 +4,7 @@ Guía para que Claude Code trabaje en este repositorio. Mantenla actualizada cua
 
 ## Resumen del proyecto
 
-`balance` es un monorepo que combina una API en Rust y un dashboard web en React.
-El dominio gira en torno a usuarios, alimentos (`foods`) y comidas (`meals`), con autenticación vía Google OAuth y un conector a Gemini.
+`balance` es un monorepo para tracking nutricional. El usuario inicia sesión con Google, registra **foods** (alimentos con macros, micros y datos de serving — nombre, cantidad, unidad peso/volumen) y **meals** (comidas con `meal_type` y `eaten_at`). La API está en Rust (Axum + Postgres) y el dashboard en React (Vite + TanStack). Hay un conector a Gemini en `connectors/gemini.rs`, presente pero todavía no montado en rutas (WIP).
 
 ## Layout del repositorio
 
@@ -102,6 +101,20 @@ ssh -L 5433:localhost:5432 ubuntu@146.235.245.221
 
 Luego apunta `DATABASE_URL` a `postgres://...@localhost:5433/...`.
 
+## Modelo de autenticación
+
+- Flujo OAuth: `GET /auth/google` → consent screen → `GET /auth/google/callback` setea una cookie `token` (HttpOnly, SameSite=Lax) con un JWT firmado por el server.
+- `GET /auth/logout` borra la cookie (`Max-Age=0`).
+- El middleware `auth` (`modules/auth/middleware.rs`) valida el JWT en cada request y expone `Extension<CurrentUser>` a los handlers.
+- El frontend usa `credentials: "include"` en todas las llamadas (`apps/dashboard/src/utils/api-fetch.ts`) para que la cookie viaje cross-origin (server en :8080, dashboard en :3000).
+
+## Modelo de datos (notas)
+
+- **Foods versionados**: la tabla `foods` apunta a `food_versions` vía `current_version_id`. Cada update inserta una nueva versión y actualiza el puntero. Los `SELECT` hacen `JOIN food_versions fv ON f.current_version_id = fv.id` — los campos nutricionales viven en `food_versions`, no en `foods`.
+- **Catálogo público**: `get_foods` devuelve los del usuario actual **más** los de `created_by = 1` (`WHERE f.created_by = $1 OR f.created_by = 1`). El user id `1` actúa como semilla de alimentos compartidos.
+- **No hay migraciones versionadas en el repo**: el esquema vive solo en la DB remota. Para arrancar desde cero hay que dumpearlo (`pg_dump --schema-only`).
+- **`sqlx` valida queries en compile-time**: `cargo build`/`check` necesitan la DB accesible. No hay `.sqlx/` cacheada para modo offline; si lo necesitas, genera el cache con `cargo sqlx prepare` y setea `SQLX_OFFLINE=true`.
+
 ## Dashboard (`apps/dashboard`)
 
 - Vite + React 19 + TypeScript estricto. Entry en `src/main.tsx`, monta `GlobalContext` y `RouterConfig`.
@@ -144,3 +157,4 @@ Luego apunta `DATABASE_URL` a `postgres://...@localhost:5433/...`.
 
 - El server espera el `.env` en `apps/server/.env` (ruta hardcodeada en `main.rs`), no en la raíz.
 - El dashboard asume el server en `http://localhost:8080` y el server asume el dashboard en `http://localhost:3000` (CORS). Mantener esos puertos al levantar ambos.
+- El esquema de DB no está versionado en el repo (ver "Modelo de datos"). Restaurar desde cero requiere dumpearlo desde la DB remota.

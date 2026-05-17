@@ -1,6 +1,6 @@
 # balance
 
-Monorepo con una API en Rust (Axum + Postgres) y un dashboard web en React (Vite + TanStack), más una librería de UI compartida basada en shadcn.
+App de tracking nutricional: registra alimentos con macros/micros y comidas con tipo y fecha. Monorepo con una API en Rust (Axum + Postgres) y un dashboard web en React (Vite + TanStack), más una librería de UI compartida basada en shadcn.
 
 ## Estructura
 
@@ -31,6 +31,15 @@ Crear `apps/server/.env` con las variables que necesita la API:
 
 - `DATABASE_URL` — cadena de conexión a Postgres
 - `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` — credenciales OAuth de Google
+
+En la Google Cloud Console, registra la redirect URI exactamente como `http://localhost:8080/auth/google/callback`.
+
+> ⚠️ El esquema de DB **no está versionado en el repo**. Para arrancar desde cero, hay que dumpearlo desde la DB remota:
+>
+> ```bash
+> pg_dump --schema-only -h localhost -p 5433 -U <user> <db> > schema.sql
+> psql <local-db> < schema.sql
+> ```
 
 ## Desarrollo
 
