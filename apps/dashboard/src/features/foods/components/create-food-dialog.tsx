@@ -1,4 +1,5 @@
 import { CreateFoodDto, ServingUnitType } from "@/dto/food";
+import { queryKeys } from "@/lib/query-keys";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@workspace/ui/components/button";
 import {
@@ -97,7 +98,7 @@ export const CreateFoodDialog: FC<PropsWithChildren> = ({ children }) => {
   const mutation = useMutation({
     mutationFn: createFood,
     onSuccess() {
-      queryClient.invalidateQueries({ queryKey: ["foods"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.foods.all() });
     },
   });
 
@@ -121,7 +122,7 @@ export const CreateFoodDialog: FC<PropsWithChildren> = ({ children }) => {
   return (
     <Dialog>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="sm:max-w-2xl w-full">
+      <DialogContent className="w-full sm:max-w-2xl">
         <form action={formAction}>
           <DialogHeader>
             <DialogTitle>Add food</DialogTitle>

@@ -61,4 +61,7 @@ next-env.d.ts
 /.cargo/
 
 # Misc
-Cargo.lock
+# Note: Cargo.lock IS committed for binaries (reproducible builds).
+# Build artifacts only:
+apps/dashboard/dist/
+**/dist/

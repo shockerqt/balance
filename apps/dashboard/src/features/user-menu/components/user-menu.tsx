@@ -1,3 +1,4 @@
+import { queryKeys } from "@/lib/query-keys";
 import { apiFetch } from "@/utils/api-fetch";
 import {
   QueryErrorResetBoundary,
@@ -14,7 +15,7 @@ const Component = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data } = useSuspenseQuery({
-    queryKey: ["me"],
+    queryKey: queryKeys.me(),
     queryFn: getMe,
     retry: false,
   });

@@ -18,7 +18,7 @@ const formatNumber = (value: number, digits = 2) => {
 export const FoodItem: FC<Props> = ({ food }) => {
   return (
     <li>
-      <div className="border rounded-lg px-4 p-2">
+      <div className="rounded-lg border p-2 px-4">
         <div className="flex justify-between gap-2">
           <h2>{food.name}</h2>
           <div>

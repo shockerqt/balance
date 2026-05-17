@@ -7,7 +7,9 @@
     "dev:dashboard": "pnpm --filter dashboard dev",
     "dev:landing": "pnpm --filter landing dev",
     "dev:server": "cargo watch -x run -p server",
-    "dev": "concurrently \"pnpm dev:dashboard\" \"pnpm dev:server\""
+    "dev": "concurrently \"pnpm dev:dashboard\" \"pnpm dev:server\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "",
@@ -16,6 +18,8 @@
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "prettier": "^3.8.3",
+    "prettier-plugin-tailwindcss": "^0.8.0"
   }
 }
