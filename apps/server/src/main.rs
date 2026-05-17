@@ -28,7 +28,14 @@ mod shared;
 
 #[tokio::main]
 async fn main() {
-    dotenv::from_path("apps/server/.env").ok();
+    dotenv::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env")).ok();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    let cors_origin = std::env::var("CORS_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db = Database::new(&database_url)
@@ -48,9 +55,9 @@ async fn main() {
         .layer(
             ServiceBuilder::new().layer(Extension(shared_db)).layer(
                 CorsLayer::new()
-                    .allow_methods([Method::GET, Method::POST, Method::PATCH])
+                    .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
                     .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
-                    .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+                    .allow_origin(cors_origin.parse::<HeaderValue>().expect("invalid CORS_ORIGIN"))
                     .allow_credentials(true),
             ),
         )
@@ -58,8 +65,8 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
 
-    println!("SERVER RUNNING ON http://localhost:8080");
-    println!("VIEW DOCS ON http://localhost:8080/docs");
+    tracing::info!("server running on http://localhost:8080");
+    tracing::info!("docs available at http://localhost:8080/docs");
 
     axum::serve(listener, app).await.unwrap();
 }

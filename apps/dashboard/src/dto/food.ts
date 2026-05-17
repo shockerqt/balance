@@ -1,6 +1,6 @@
 export enum ServingUnitType {
-  Weight = "Weight",
-  Volume = "Volume",
+  Weight = "weight",
+  Volume = "volume",
 }
 
 export type GetFoodsResponse = {

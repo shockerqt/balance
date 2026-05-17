@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use super::google::{OAuthState, google_routes};
 use axum::Router;
@@ -33,8 +36,9 @@ pub fn auth_routes() -> Router {
     let google_token_url = TokenUrl::new("https://www.googleapis.com/oauth2/v3/token".to_string())
         .expect("Invalid token endpoint URL");
 
-    let redirect_url = RedirectUrl::new("http://localhost:8080/auth/google/callback".to_string())
-        .expect("Invalid redirect URL");
+    let redirect_url =
+        RedirectUrl::new("http://localhost:8080/auth/google/callback".to_string())
+            .expect("Invalid redirect URL");
 
     let client = BasicClient::new(google_client_id)
         .set_client_secret(google_client_secret)
@@ -44,6 +48,6 @@ pub fn auth_routes() -> Router {
 
     google_routes(OAuthState {
         client,
-        verifier: Arc::new(Mutex::new(None)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
     })
 }

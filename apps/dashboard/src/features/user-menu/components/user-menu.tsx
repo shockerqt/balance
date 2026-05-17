@@ -1,6 +1,7 @@
 import { apiFetch } from "@/utils/api-fetch";
 import {
   QueryErrorResetBoundary,
+  useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -11,25 +12,25 @@ import { getMe } from "../queries";
 
 const Component = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data } = useSuspenseQuery({
     queryKey: ["me"],
     queryFn: getMe,
     retry: false,
   });
 
+  const handleLogout = async () => {
+    await apiFetch("/auth/logout");
+    queryClient.clear();
+    navigate({ to: "/login" });
+  };
+
   return (
     <div>
       HOLA
       {data.name}
       <img src={data.picture} />
-      <Button
-        onClick={async () => {
-          await apiFetch("/auth/logout");
-          navigate({ to: "/", reloadDocument: true });
-        }}
-      >
-        Logout
-      </Button>
+      <Button onClick={handleLogout}>Logout</Button>
     </div>
   );
 };
