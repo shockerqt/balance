@@ -1,4 +1,5 @@
 import { FoodDto, ServingUnitType, UpdateFoodDto } from "@/dto/food";
+import { queryKeys } from "@/lib/query-keys";
 import { toDefaultValues } from "@/utils/to-default-values";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@workspace/ui/components/button";
@@ -101,7 +102,7 @@ export const useUpdateFoodDialogForm = (defaultValues: FoodDto) => {
   const mutation = useMutation({
     mutationFn: updateFood,
     onSuccess() {
-      queryClient.invalidateQueries({ queryKey: ["foods"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.foods.all() });
     },
   });
 
@@ -127,7 +128,7 @@ export const UpdateFoodDialog: FC<Props> = ({ children, food }) => {
   return (
     <Dialog>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="sm:max-w-2xl w-full">
+      <DialogContent className="w-full sm:max-w-2xl">
         <form action={formAction}>
           <input type="hidden" name="id" value={food.id} />
           <DialogHeader>

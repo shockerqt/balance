@@ -25,19 +25,26 @@ pub struct ErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message, code) = match &self {
-            AppError::Db(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error", "db"),
-            AppError::NotFound(_) => (StatusCode::NOT_FOUND, "Resource not found", "not_found"),
-            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "Bad request", "bad_request"),
+        // Always log the full error server-side so operators can diagnose.
+        tracing::error!(error = ?self, "request failed");
+
+        let (status, code, message) = match self {
+            AppError::Db(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "db",
+                "Database error".to_string(),
+            ),
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg),
             AppError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal error",
                 "internal",
+                "Internal error".to_string(),
             ),
         };
 
         let response = ApiResponse::error(ErrorResponse {
-            message: message.to_string(),
+            message,
             error: code.to_string(),
         });
 

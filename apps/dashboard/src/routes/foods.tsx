@@ -1,3 +1,4 @@
+import { queryKeys } from "@/lib/query-keys";
 import { FoodsHeader } from "@features/foods/components/foods-headers";
 import { FoodsList } from "@features/foods/components/foods-list";
 import { getMe } from "@features/user-menu/queries";
@@ -8,7 +9,7 @@ export const Route = createFileRoute("/foods")({
   beforeLoad: async ({ context }) => {
     try {
       await context.queryClient.ensureQueryData({
-        queryKey: ["me"],
+        queryKey: queryKeys.me(),
         queryFn: getMe,
         retry: false,
       });

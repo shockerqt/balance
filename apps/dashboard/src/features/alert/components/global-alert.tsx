@@ -16,7 +16,7 @@ export const GlobalAlert: FC = () => {
     alert.variant === "destructive" ? AlertCircleIcon : CheckCircle2Icon;
 
   return (
-    <div className="absolute max-w-xl top-4 z-[60] left-4 right-4 mx-auto">
+    <div className="absolute top-4 right-4 left-4 z-[60] mx-auto max-w-xl">
       <Alert variant={alert.variant}>
         <Icon />
         <AlertTitle>{alert.title}</AlertTitle>
