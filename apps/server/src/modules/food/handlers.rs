@@ -28,7 +28,10 @@ pub async fn get_foods(
     Extension(db): Extension<Arc<Database>>,
 ) -> ApiResult<GetFoodsResponse> {
     let rows = db.food.get_all(Some(current_user.id)).await?;
-    let food_dtos: Vec<FoodDto> = rows.into_iter().map(FoodDto::from).collect();
+    let food_dtos: Vec<FoodDto> = rows
+        .into_iter()
+        .map(FoodDto::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     let response = GetFoodsResponse { foods: food_dtos };
     Ok(Json(ApiResponse::success(response)))
 }
@@ -58,7 +61,7 @@ pub async fn create_food(
     let food_id = db.food.create(&new_food).await?;
     let row = db.food.get_by_id(food_id).await?;
 
-    let food_dto = FoodDto::from(row);
+    let food_dto = FoodDto::try_from(row)?;
 
     Ok((StatusCode::CREATED, Json(ApiResponse::success(food_dto))))
 }
@@ -86,7 +89,7 @@ pub async fn update_food(
     let user_id = &current_user.id;
     let update_food = UpdateFood::from_dto(dto)?;
     let row = db.food.update(user_id, &update_food).await?;
-    let food_dto = FoodDto::from(row);
+    let food_dto = FoodDto::try_from(row)?;
 
     Ok(Json(ApiResponse::success(food_dto)))
 }

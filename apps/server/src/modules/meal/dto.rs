@@ -3,16 +3,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::connectors::meal::Meal;
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MealType {
+    Breakfast,
+    Lunch,
+    Dinner,
+    Snack,
+}
+
+impl MealType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Breakfast => "breakfast",
+            Self::Lunch => "lunch",
+            Self::Dinner => "dinner",
+            Self::Snack => "snack",
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct CreateMealDto {
-    pub meal_type: String,
+    pub meal_type: MealType,
     pub eaten_at: NaiveDateTime,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateMealDto {
     pub id: i32,
-    pub meal_type: String,
+    pub meal_type: MealType,
     pub eaten_at: NaiveDateTime,
 }
 

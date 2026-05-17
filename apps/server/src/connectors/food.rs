@@ -272,12 +272,14 @@ impl FoodDatasource {
     pub async fn update(&self, user_id: &i32, food: &UpdateFood) -> Result<Food, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
+        // FOR UPDATE locks the row until the tx commits, preventing two concurrent
+        // updates from inserting two versions racing for current_version_id.
         let prev = sqlx::query!(
-            "SELECT current_version_id FROM foods WHERE id = $1 AND created_by = $2",
+            "SELECT current_version_id FROM foods WHERE id = $1 AND created_by = $2 FOR UPDATE",
             food.id,
             user_id
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
 
         let version = sqlx::query!(
@@ -374,15 +376,16 @@ impl Validate for NewFood {
             return Err(AppError::BadRequest("Calories must be non-negative".into()));
         }
 
-        if self.proteins < 0.into() {
+        let zero = BigDecimal::from(0);
+        if self.proteins < zero {
             return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
-        if self.carbs < 0.into() {
+        if self.carbs < BigDecimal::from(0) {
             return Err(AppError::BadRequest("Carbs must be non-negative".into()));
         }
 
-        if self.fat < 0.into() {
+        if self.fat < BigDecimal::from(0) {
             return Err(AppError::BadRequest("Fat must be non-negative".into()));
         }
 
@@ -414,15 +417,16 @@ impl Validate for UpdateFood {
             return Err(AppError::BadRequest("Calories must be non-negative".into()));
         }
 
-        if self.proteins < 0.into() {
+        let zero = BigDecimal::from(0);
+        if self.proteins < zero {
             return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
-        if self.carbs < 0.into() {
+        if self.carbs < BigDecimal::from(0) {
             return Err(AppError::BadRequest("Carbs must be non-negative".into()));
         }
 
-        if self.fat < 0.into() {
+        if self.fat < BigDecimal::from(0) {
             return Err(AppError::BadRequest("Fat must be non-negative".into()));
         }
 
@@ -470,24 +474,25 @@ impl NewFood {
 
 impl UpdateFood {
     pub fn from_dto(dto: UpdateFoodDto) -> Result<Self, AppError> {
+        let UpdateFoodDto { id, data } = dto;
         Ok(UpdateFood {
-            id: dto.id,
-            name: dto.name,
-            calories: dto.calories,
-            fat: BigDecimal::from_f64(dto.fat).unwrap_or_default(),
-            proteins: BigDecimal::from_f64(dto.proteins).unwrap_or_default(),
-            carbs: BigDecimal::from_f64(dto.carbs).unwrap_or_default(),
-            saturated_fat: dto.saturated_fat.and_then(BigDecimal::from_f64),
-            monounsaturated_fat: dto.monounsaturated_fat.and_then(BigDecimal::from_f64),
-            polyunsaturated_fat: dto.polyunsaturated_fat.and_then(BigDecimal::from_f64),
-            trans_fat: dto.trans_fat.and_then(BigDecimal::from_f64),
-            fiber: dto.fiber.and_then(BigDecimal::from_f64),
-            sugars: dto.sugars.and_then(BigDecimal::from_f64),
-            sodium: dto.sodium,
-            cholesterol: dto.cholesterol,
-            serving_name: dto.serving_name,
-            serving_quantity: BigDecimal::from_f64(dto.serving_quantity).unwrap_or_default(),
-            serving_unit_type: dto.serving_unit_type,
+            id,
+            name: data.name,
+            calories: data.calories,
+            fat: BigDecimal::from_f64(data.fat).unwrap_or_default(),
+            proteins: BigDecimal::from_f64(data.proteins).unwrap_or_default(),
+            carbs: BigDecimal::from_f64(data.carbs).unwrap_or_default(),
+            saturated_fat: data.saturated_fat.and_then(BigDecimal::from_f64),
+            monounsaturated_fat: data.monounsaturated_fat.and_then(BigDecimal::from_f64),
+            polyunsaturated_fat: data.polyunsaturated_fat.and_then(BigDecimal::from_f64),
+            trans_fat: data.trans_fat.and_then(BigDecimal::from_f64),
+            fiber: data.fiber.and_then(BigDecimal::from_f64),
+            sugars: data.sugars.and_then(BigDecimal::from_f64),
+            sodium: data.sodium,
+            cholesterol: data.cholesterol,
+            serving_name: data.serving_name,
+            serving_quantity: BigDecimal::from_f64(data.serving_quantity).unwrap_or_default(),
+            serving_unit_type: data.serving_unit_type,
         })
     }
 }
