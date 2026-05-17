@@ -111,9 +111,6 @@ impl MealDatasource {
 
 impl Validate for NewMeal {
     fn validate(&self) -> Result<(), AppError> {
-        if self.meal_type.trim().is_empty() {
-            return Err(AppError::BadRequest("Meal type cannot be empty".into()));
-        }
         Ok(())
     }
 }
@@ -123,9 +120,6 @@ impl Validate for UpdateMeal {
         if self.id <= 0 {
             return Err(AppError::BadRequest("Invalid meal ID".into()));
         }
-        if self.meal_type.trim().is_empty() {
-            return Err(AppError::BadRequest("Meal type cannot be empty".into()));
-        }
         Ok(())
     }
 }
@@ -134,7 +128,7 @@ impl NewMeal {
     pub fn from_dto(dto: CreateMealDto, user_id: i32) -> Result<Self, AppError> {
         Ok(NewMeal {
             user_id,
-            meal_type: dto.meal_type,
+            meal_type: dto.meal_type.as_str().to_string(),
             eaten_at: dto.eaten_at,
         })
     }
@@ -145,7 +139,7 @@ impl UpdateMeal {
         Ok(UpdateMeal {
             id: dto.id,
             user_id,
-            meal_type: dto.meal_type,
+            meal_type: dto.meal_type.as_str().to_string(),
             eaten_at: dto.eaten_at,
         })
     }
