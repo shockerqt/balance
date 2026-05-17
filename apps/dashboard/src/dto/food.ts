@@ -31,8 +31,7 @@ export type FoodDto = {
   updatedAt: string;
 };
 
-export type UpdateFoodDto = {
-  id: number;
+export type CreateFoodDto = {
   name: string;
   calories: number;
   fat: number;
@@ -49,4 +48,8 @@ export type UpdateFoodDto = {
   servingName: string;
   servingQuantity: number;
   servingUnitType: ServingUnitType;
+};
+
+export type UpdateFoodDto = CreateFoodDto & {
+  id: number;
 };

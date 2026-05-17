@@ -1,9 +1,21 @@
 import { FoodsHeader } from "@features/foods/components/foods-headers";
 import { FoodsList } from "@features/foods/components/foods-list";
-import { createFileRoute } from "@tanstack/react-router";
+import { getMe } from "@features/user-menu/queries";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Suspense } from "react";
 
 export const Route = createFileRoute("/foods")({
+  beforeLoad: async ({ context }) => {
+    try {
+      await context.queryClient.ensureQueryData({
+        queryKey: ["me"],
+        queryFn: getMe,
+        retry: false,
+      });
+    } catch {
+      throw redirect({ to: "/login" });
+    }
+  },
   component: RouteComponent,
 });
 
