@@ -6,6 +6,11 @@ use crate::connectors::food::{Food, ServingUnitType};
 use crate::shared::error::AppError;
 
 #[derive(Deserialize, utoipa::ToSchema)]
+pub struct SearchFoodQuery {
+    pub q: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateFoodDto {
     pub name: String,

@@ -171,6 +171,48 @@ impl FoodDatasource {
         Ok(foods)
     }
 
+    pub async fn search(&self, user_id: i32, query: &str) -> Result<Vec<Food>, sqlx::Error> {
+        let pattern = format!("%{}%", query);
+        let foods = sqlx::query_as!(
+            Food,
+            r#"
+            SELECT
+                f.id,
+                fv.name,
+                f.created_by,
+                f.created_at,
+                f.updated_at,
+                fv.calories,
+                fv.fat,
+                fv.proteins,
+                fv.carbs,
+                fv.saturated_fat,
+                fv.monounsaturated_fat,
+                fv.polyunsaturated_fat,
+                fv.trans_fat,
+                fv.fiber,
+                fv.sugars,
+                fv.sodium,
+                fv.cholesterol,
+                fv.version,
+                fv.serving_name,
+                fv.serving_quantity,
+                fv.serving_unit_type AS "serving_unit_type: ServingUnitType",
+                fv.is_verified
+            FROM foods f
+            JOIN food_versions fv ON f.current_version_id = fv.id
+            WHERE fv.name ILIKE $1 AND (f.created_by = $2 OR fv.is_verified = true)
+            ORDER BY fv.name ASC
+            LIMIT 50
+            "#,
+            pattern,
+            user_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(foods)
+    }
+
     pub async fn get_by_id(&self, food_id: i32) -> Result<Food, sqlx::Error> {
         let food = sqlx::query_as!(
             Food,

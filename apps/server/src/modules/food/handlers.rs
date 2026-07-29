@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 
@@ -7,7 +8,7 @@ use crate::connectors::food::{NewFood, UpdateFood};
 use crate::shared::response::{ApiResponse, ApiResult, ApiResultWithCode};
 use crate::{connectors::db::Database, modules::auth::middleware::CurrentUser};
 
-use super::dto::{CreateFoodDto, FoodDto, GetFoodsResponse, UpdateFoodDto};
+use super::dto::{CreateFoodDto, FoodDto, GetFoodsResponse, SearchFoodQuery, UpdateFoodDto};
 
 /// Gets all foods for the authenticated user.
 ///
@@ -28,6 +29,35 @@ pub async fn get_foods(
     Extension(db): Extension<Arc<Database>>,
 ) -> ApiResult<GetFoodsResponse> {
     let rows = db.food.get_all(Some(current_user.id)).await?;
+    let food_dtos: Vec<FoodDto> = rows
+        .into_iter()
+        .map(FoodDto::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    let response = GetFoodsResponse { foods: food_dtos };
+    Ok(Json(ApiResponse::success(response)))
+}
+
+/// Searches foods by name for the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/foods/search",
+    tag = "food",
+    params(
+        ("q" = String, Query, description = "Search query string")
+    ),
+    responses(
+        (status = 200, description = "Search results", body = ApiResponse<GetFoodsResponse>)
+    ),
+    security(
+        ("cookieAuth" = [])
+    )
+)]
+pub async fn search_foods(
+    Extension(current_user): Extension<CurrentUser>,
+    Extension(db): Extension<Arc<Database>>,
+    Query(query): Query<SearchFoodQuery>,
+) -> ApiResult<GetFoodsResponse> {
+    let rows = db.food.search(current_user.id, &query.q).await?;
     let food_dtos: Vec<FoodDto> = rows
         .into_iter()
         .map(FoodDto::try_from)
