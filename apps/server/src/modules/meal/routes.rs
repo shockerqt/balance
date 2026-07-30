@@ -14,7 +14,7 @@ pub fn meal_routes() -> Router {
         .route("/compare-summary", get(compare_summary))
         .route("/create", post(create_meal))
         .route("/update", patch(update_meal))
-        .route("/:id", get(get_meal_by_id).delete(delete_meal))
-        .route("/:meal_id/items", post(add_meal_food))
-        .route("/:meal_id/items/:item_id", put(update_meal_food).delete(delete_meal_food))
+        .route("/{id}", get(get_meal_by_id).delete(delete_meal))
+        .route("/{meal_id}/items", post(add_meal_food))
+        .route("/{meal_id}/items/{item_id}", put(update_meal_food).delete(delete_meal_food))
 }
