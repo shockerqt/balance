@@ -3,17 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option C: Monochrome Chilean Octagons</title>
+  <title>Balance — Option C: Indigo Chilean Octagons</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #050505;
-      --card-bg: #141414;
-      --border: #2E2E2E;
+      --bg: #090C15;
+      --card-bg: #111726;
+      --border: #1E293B;
       --text: #FFFFFF;
-      --text-muted: #888888;
+      --text-muted: #94A3B8;
+      --indigo: #6366F1;
+      --indigo-light: #818CF8;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
@@ -77,7 +79,7 @@
       letter-spacing: -0.02em;
     }
 
-    /* Executive Hero Card */
+    /* Hero Card */
     .hero-card {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -94,18 +96,18 @@
       margin-top: 0.5rem;
     }
 
-    .macro-bar-mono {
+    .macro-bar-indigo {
       display: flex;
       height: 10px;
       border-radius: 9999px;
       overflow: hidden;
-      background: #262626;
+      background: #1E293B;
       margin-top: 1.25rem;
     }
 
     .macro-seg { height: 100%; }
 
-    .macro-legend-mono {
+    .macro-legend-indigo {
       display: flex;
       justify-content: space-between;
       font-size: 0.8rem;
@@ -113,8 +115,8 @@
       margin-top: 0.75rem;
     }
 
-    /* Food Editorial Cards */
-    .food-card-mono {
+    /* Food Cards */
+    .food-card {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 1rem;
@@ -130,9 +132,9 @@
       align-items: flex-start;
     }
 
-    .btn-action-bw {
-      background: #FFFFFF;
-      color: #000000;
+    .btn-action-indigo {
+      background: var(--indigo);
+      color: #FFFFFF;
       border: none;
       padding: 0.9rem 1.25rem;
       border-radius: 1rem;
@@ -145,6 +147,7 @@
       gap: 0.5rem;
       width: 100%;
       margin-top: auto;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
     }
   </style>
 </head>
@@ -155,7 +158,7 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Monochrome Editorial</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Monochrome Indigo</div>
           <div style="font-size: 1.35rem; font-weight: 800;">Balance Chile</div>
         </div>
         <div class="chilean-octagon-bw">
@@ -168,41 +171,41 @@
       <div class="hero-card">
         <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Consumo Nutricional Acumulado</span>
         <div class="hero-num">1,840</div>
-        <span style="font-size: 0.85rem; color: var(--text-muted);">de 2,200 kcal diaria</span>
+        <span style="font-size: 0.85rem; color: var(--indigo-light); font-weight: 600;">de 2,200 kcal recomendadas</span>
 
-        <div class="macro-bar-mono">
-          <div class="macro-seg" style="width: 40%; background: #FFFFFF;"></div>
-          <div class="macro-seg" style="width: 35%; background: #888888;"></div>
-          <div class="macro-seg" style="width: 15%; background: #444444;"></div>
+        <div class="macro-bar-indigo">
+          <div class="macro-seg" style="width: 40%; background: var(--indigo);"></div>
+          <div class="macro-seg" style="width: 35%; background: var(--indigo-light);"></div>
+          <div class="macro-seg" style="width: 15%; background: #334155;"></div>
         </div>
 
-        <div class="macro-legend-mono">
-          <span><strong>● Prot:</strong> 128g</span>
-          <span><strong>● Carbs:</strong> 190g</span>
-          <span><strong>● Fat:</strong> 52g</span>
+        <div class="macro-legend-indigo">
+          <span><strong style="color: #FFF;">● Prot:</strong> 128g</span>
+          <span><strong style="color: #FFF;">● Carbs:</strong> 190g</span>
+          <span><strong style="color: #FFF;">● Fat:</strong> 52g</span>
         </div>
       </div>
 
       <!-- Food List -->
-      <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Alimentos Registrados Hoy</div>
+      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Alimentos Registrados Hoy</div>
 
-      <div class="food-card-mono">
+      <div class="food-card">
         <div class="food-top">
           <div>
             <div style="font-weight: 700; font-size: 0.95rem;">Pechuga de Pollo Ariztía</div>
             <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">200g (1 porción) • P: 62g | C: 0g</div>
           </div>
-          <strong style="font-size: 1rem;">330 kcal</strong>
+          <strong style="font-size: 1rem; color: var(--indigo-light);">330 kcal</strong>
         </div>
       </div>
 
-      <div class="food-card-mono">
+      <div class="food-card">
         <div class="food-top">
           <div>
             <div style="font-weight: 700; font-size: 0.95rem;">Yogurt Protein Soprole (Chile)</div>
             <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">150g (1 envase) • P: 15g | C: 8g</div>
           </div>
-          <strong style="font-size: 1rem;">110 kcal</strong>
+          <strong style="font-size: 1rem; color: var(--indigo-light);">110 kcal</strong>
         </div>
         <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
           <span class="chilean-octagon-bw">ALTO EN AZÚCARES</span>
@@ -210,8 +213,8 @@
       </div>
 
       <!-- Action Button -->
-      <button class="btn-action-bw">
-        <svg class="icon" viewBox="0 0 24 24" style="stroke: #000;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <button class="btn-action-indigo">
+        <svg class="icon" viewBox="0 0 24 24" style="stroke: #FFF;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         Escanear Etiqueta Chilena con IA
       </button>
     </div>

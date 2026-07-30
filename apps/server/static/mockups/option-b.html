@@ -3,17 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option B: Monochrome Technical Data</title>
+  <title>Balance — Option B: Indigo Technical Precision</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0A0A0C;
-      --panel: #16161A;
-      --border: #27272A;
-      --text: #F4F4F5;
-      --text-muted: #71717A;
+      --bg: #0B0E17;
+      --panel: #141A29;
+      --border: #1E293B;
+      --text: #F8FAFC;
+      --text-muted: #94A3B8;
+      --indigo: #6366F1;
+      --indigo-light: #818CF8;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
@@ -48,7 +50,7 @@
       width: 18px;
       height: 18px;
       stroke: currentColor;
-      stroke-width: 1.8;
+      stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
       fill: none;
@@ -85,7 +87,7 @@
       cursor: pointer;
     }
 
-    /* Technical Macro Table */
+    /* Technical Panel */
     .tech-panel {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -110,16 +112,10 @@
       text-align: center;
     }
 
-    .tech-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
-    .tech-val { font-size: 0.9rem; font-weight: 700; color: #FFF; margin-top: 0.2rem; }
+    .tech-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; }
+    .tech-val { font-size: 0.9rem; font-weight: 700; color: var(--indigo-light); margin-top: 0.2rem; }
 
-    /* Timeline Table */
-    .timeline-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-    }
-
+    /* Timeline Cards */
     .timeline-card {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -149,7 +145,7 @@
 
     .item-sub { font-size: 0.75rem; color: var(--text-muted); }
 
-    /* Bottom Technical Nav */
+    /* Bottom Nav Bar */
     .nav-tech {
       margin-top: auto;
       background: var(--panel);
@@ -173,7 +169,7 @@
       cursor: pointer;
     }
 
-    .nav-item-tech.active { color: #FFF; }
+    .nav-item-tech.active { color: var(--indigo-light); }
   </style>
 </head>
 <body>
@@ -183,31 +179,31 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Balance Technical Engine</div>
-          <div class="header-title">Macro Metrics</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Balance Engine</div>
+          <div class="header-title">Technical Precision</div>
         </div>
-        <span class="num" style="font-size: 0.75rem; background: #27272A; color: #A1A1AA; padding: 0.2rem 0.5rem; border-radius: 0.25rem;">STATUS: OK</span>
+        <span class="num" style="font-size: 0.75rem; background: rgba(99, 102, 241, 0.15); color: var(--indigo-light); border: 1px solid rgba(99, 102, 241, 0.3); padding: 0.2rem 0.5rem; border-radius: 0.25rem;">INDIGO THEME</span>
       </div>
 
       <div class="date-strip num">
         <button>‹</button>
-        <span>2026-07-30 (THU)</span>
+        <span>2026-07-30 (JUEVES)</span>
         <button>›</button>
       </div>
 
-      <!-- Technical Macro Grid -->
+      <!-- Technical Grid -->
       <div class="tech-panel">
         <div style="display: flex; justify-content: space-between; align-items: baseline;">
           <div>
-            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Caloric Intake</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Consumo Energético</div>
             <div class="num" style="font-size: 1.8rem; font-weight: 700; color: #FFF;">1,840 <span style="font-size: 0.9rem; color: var(--text-muted);">KCAL</span></div>
           </div>
-          <div class="num" style="font-size: 0.8rem; color: var(--text-muted);">TARGET: 2,200 (83.6%)</div>
+          <div class="num" style="font-size: 0.8rem; color: var(--indigo-light);">META: 2,200 (83.6%)</div>
         </div>
 
         <div class="tech-grid">
           <div class="tech-cell">
-            <div class="tech-lbl">PROTEIN</div>
+            <div class="tech-lbl">PROTEÍNA</div>
             <div class="tech-val num">128.5g</div>
           </div>
           <div class="tech-cell">
@@ -215,28 +211,28 @@
             <div class="tech-val num">190.0g</div>
           </div>
           <div class="tech-cell">
-            <div class="tech-lbl">FAT</div>
+            <div class="tech-lbl">GRASA</div>
             <div class="tech-val num">52.0g</div>
           </div>
           <div class="tech-cell">
-            <div class="tech-lbl">FIBER</div>
+            <div class="tech-lbl">FIBRA</div>
             <div class="tech-val num">26.5g</div>
           </div>
         </div>
       </div>
 
       <!-- Timeline Items -->
-      <div class="timeline-group">
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
         <div class="timeline-card">
           <div class="timeline-head">
-            <span>MEAL #1 — LUNCH (13:30)</span>
-            <span class="num" style="color: #FFF;">740 KCAL</span>
+            <span>ALMUERZO (13:30)</span>
+            <span class="num" style="color: var(--indigo-light);">740 KCAL</span>
           </div>
 
           <div class="item-row">
             <div>
               <div style="font-weight: 600;">Pechuga de Pollo Cocida</div>
-              <div class="item-sub num">QTY: 200g • P:62.0g C:0g F:7.2g</div>
+              <div class="item-sub num">PORCIÓN: 200g • P:62.0g C:0g G:7.2g</div>
             </div>
             <span class="num" style="font-weight: 600;">330</span>
           </div>
@@ -244,7 +240,7 @@
           <div class="item-row">
             <div>
               <div style="font-weight: 600;">Arroz Integral Cocido</div>
-              <div class="item-sub num">QTY: 250g • P:6.0g C:58.0g Fib:4.5g</div>
+              <div class="item-sub num">PORCIÓN: 250g • P:6.0g C:58.0g Fib:4.5g</div>
             </div>
             <span class="num" style="font-weight: 600;">275</span>
           </div>
@@ -252,40 +248,35 @@
 
         <div class="timeline-card">
           <div class="timeline-head">
-            <span>MEAL #2 — SNACK (17:45)</span>
-            <span class="num" style="color: #FFF;">310 KCAL</span>
+            <span>SNACK (17:45)</span>
+            <span class="num" style="color: var(--indigo-light);">310 KCAL</span>
           </div>
 
           <div class="item-row">
             <div>
-              <div style="font-weight: 600;">Yogurt Protein Soprole (Chile)</div>
-              <div class="item-sub num">QTY: 150g • P:15.0g C:8.0g Na:65mg</div>
+              <div style="font-weight: 600;">Yogurt Protein Soprole</div>
+              <div class="item-sub num">PORCIÓN: 150g • P:15.0g C:8.0g Sodio:65mg</div>
             </div>
             <span class="num" style="font-weight: 600;">110</span>
           </div>
         </div>
       </div>
 
-      <!-- Technical Bottom Bar -->
+      <!-- Bottom Nav -->
       <div class="nav-tech">
         <button class="nav-item-tech active">
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span>LOG</span>
+          <span>DIARIO</span>
         </button>
 
         <button class="nav-item-tech">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span>SEARCH</span>
+          <span>BUSCAR</span>
         </button>
 
         <button class="nav-item-tech">
           <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          <span>SCAN IA</span>
-        </button>
-
-        <button class="nav-item-tech">
-          <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          <span>STATS</span>
+          <span>IA SCAN</span>
         </button>
       </div>
     </div>
