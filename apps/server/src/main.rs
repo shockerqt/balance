@@ -18,7 +18,7 @@ use modules::{
 };
 use std::sync::Arc;
 use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, services::ServeDir};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -57,6 +57,7 @@ async fn main() {
             food_routes().route_layer(middleware::from_fn(auth)),
         )
         .nest("/ai", ai_routes())
+        .nest_service("/mockups", ServeDir::new("static/mockups"))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(shared_db))
@@ -75,6 +76,7 @@ async fn main() {
 
     tracing::info!("server running on http://localhost:8080");
     tracing::info!("docs available at http://localhost:8080/docs");
+    tracing::info!("mockups available at http://localhost:8080/mockups/");
 
     axum::serve(listener, app).await.unwrap();
 }

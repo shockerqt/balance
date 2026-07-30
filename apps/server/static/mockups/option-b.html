@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Balance — Mockup B: Clean Minimalist Timeline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0F172A;
+      --card-bg: #1E293B;
+      --card-border: #334155;
+      --accent: #3B82F6;
+      --accent-emerald: #10B981;
+      --accent-purple: #8B5CF6;
+      --text: #F8FAFC;
+      --text-muted: #94A3B8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .phone-frame {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg);
+      border: 1px solid var(--card-border);
+      border-radius: 2.5rem;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      position: relative;
+    }
+
+    .top-link { text-align: center; margin-bottom: 0.5rem; }
+    .top-link a { color: var(--text-muted); font-size: 0.85rem; text-decoration: none; }
+
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .date-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+    }
+
+    /* Minimalist Bar Chart Header */
+    .summary-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.25rem;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.5rem;
+      text-align: center;
+    }
+
+    .macro-box {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      padding: 0.6rem 0.4rem;
+      border-radius: 0.75rem;
+    }
+
+    .macro-box .title { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+    .macro-box .val { font-size: 1rem; font-weight: 700; margin-top: 0.2rem; }
+
+    /* Timeline Structure */
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 1rem;
+      position: relative;
+    }
+
+    .timeline-time {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      width: 50px;
+      text-align: right;
+      padding-top: 0.2rem;
+    }
+
+    .timeline-content {
+      flex: 1;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .unit-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      background: rgba(59, 130, 246, 0.2);
+      color: #60A5FA;
+      font-size: 0.75rem;
+      border-radius: 0.4rem;
+      font-weight: 600;
+    }
+
+    /* Bottom Navigation Bar */
+    .nav-bar {
+      margin-top: auto;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.5rem;
+      padding: 0.75rem;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+    }
+
+    .nav-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+      cursor: pointer;
+    }
+
+    .nav-btn.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .fab-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #FFF;
+      font-size: 1.5rem;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5);
+      cursor: pointer;
+      margin-top: -1.25rem;
+    }
+  </style>
+</head>
+<body>
+  <div style="width: 100%; max-width: 420px;">
+    <div class="top-link"><a href="/mockups/">← Volver al Explorador de Mockups</a></div>
+
+    <div class="phone-frame">
+      <div class="header-bar">
+        <div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Balance Minimal</div>
+          <div style="font-size: 1.2rem; font-weight: 700;">Línea de Tiempo</div>
+        </div>
+        <span style="font-size: 0.85rem; color: var(--accent-emerald); font-weight: 600;">● Sincronizado</span>
+      </div>
+
+      <div class="date-nav">
+        <span>‹ Miércoles 29</span>
+        <span style="color: var(--accent);">Jueves 30 de Julio</span>
+        <span>Viernes 31 ›</span>
+      </div>
+
+      <!-- Quick Stats Grid -->
+      <div class="summary-card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-weight: 600;">Resumen del Día</span>
+          <span style="font-size: 0.9rem; color: var(--accent); font-weight: 700;">1,950 / 2,100 kcal</span>
+        </div>
+        <div class="summary-grid">
+          <div class="macro-box">
+            <div class="title">Prot</div>
+            <div class="val" style="color: var(--accent-purple);">135g</div>
+          </div>
+          <div class="macro-box">
+            <div class="title">Carb</div>
+            <div class="val" style="color: var(--accent-emerald);">210g</div>
+          </div>
+          <div class="macro-box">
+            <div class="title">Fat</div>
+            <div class="val" style="color: #F59E0B;">48g</div>
+          </div>
+          <div class="macro-box">
+            <div class="title">Fibra</div>
+            <div class="val" style="color: #06B6D4;">29g</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline Items -->
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="timeline-time">08:30</div>
+          <div class="timeline-content">
+            <div style="display: flex; justify-content: space-between; font-weight: 600;">
+              <span>🥣 Desayuno Proteico</span>
+              <span>450 kcal</span>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted);">
+              • Avena Instantánea <span class="unit-badge">80 gramos</span><br>
+              • Proteína Whey Scoop <span class="unit-badge">30g</span><br>
+              • Plátano Mediano <span class="unit-badge">1 unidad</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-time">13:15</div>
+          <div class="timeline-content">
+            <div style="display: flex; justify-content: space-between; font-weight: 600;">
+              <span>🍲 Almuerzo Saludable</span>
+              <span>760 kcal</span>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted);">
+              • Pechuga de Pavo <span class="unit-badge">220 gramos</span><br>
+              • Quinoa Cocida <span class="unit-badge">200 cc</span><br>
+              • Ensalada Mixta <span class="unit-badge">1.5 tazas</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-time">17:00</div>
+          <div class="timeline-content">
+            <div style="display: flex; justify-content: space-between; font-weight: 600;">
+              <span>🍎 Snack Tarde</span>
+              <span>240 kcal</span>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted);">
+              • Manzana Verde <span class="unit-badge">1 unidad</span><br>
+              • Almendras Mente <span class="unit-badge">15 cucharadas / 30g</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Navigation -->
+      <div class="nav-bar">
+        <button class="nav-btn active">
+          <span>📅</span>
+          <span>Diario</span>
+        </button>
+        <button class="nav-btn">
+          <span>🔍</span>
+          <span>Buscar DB</span>
+        </button>
+
+        <button class="fab-btn">+</button>
+
+        <button class="nav-btn">
+          <span>📊</span>
+          <span>Comparar</span>
+        </button>
+        <button class="nav-btn">
+          <span>👤</span>
+          <span>Perfil</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

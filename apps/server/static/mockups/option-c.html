@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Balance — Mockup C: High-Impact & Chilean Label Warning Badges</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #070A11;
+      --card-bg: #131A29;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366F1;
+      --accent-pink: #EC4899;
+      --accent-cyan: #06B6D4;
+      --text: #F3F4F6;
+      --text-muted: #9CA3AF;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .phone-frame {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg);
+      border: 1px solid var(--card-border);
+      border-radius: 2.5rem;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .top-link { text-align: center; margin-bottom: 0.5rem; }
+    .top-link a { color: var(--text-muted); font-size: 0.85rem; text-decoration: none; }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Chilean Warning Octagons Preview */
+    .chilean-seal {
+      background: #000;
+      color: #FFF;
+      border: 2px solid #FFF;
+      font-size: 0.65rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    /* Big Calorie Metric */
+    .hero-metric {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(236, 72, 153, 0.2));
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      border-radius: 1.5rem;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .hero-cal {
+      font-size: 3rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #FFF, #A5B4FC);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1;
+      margin-top: 0.4rem;
+    }
+
+    .macro-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .macro-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 0.75rem;
+      text-align: center;
+    }
+
+    .macro-card .val { font-size: 1.1rem; font-weight: 700; }
+    .macro-card .lbl { font-size: 0.75rem; color: var(--text-muted); }
+
+    /* Comparison Bar Widget */
+    .compare-box {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.25rem;
+      padding: 1rem;
+    }
+
+    .compare-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .chart-bar-container {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.5rem;
+      height: 70px;
+      padding-top: 0.5rem;
+    }
+
+    .chart-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .chart-bar {
+      width: 100%;
+      border-radius: 0.4rem;
+      background: rgba(99, 102, 241, 0.3);
+    }
+
+    .chart-bar.active {
+      background: linear-gradient(180deg, #818CF8, #6366F1);
+    }
+
+    .day-lbl { font-size: 0.65rem; color: var(--text-muted); }
+
+    /* Floating Bar */
+    .quick-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: auto;
+    }
+
+    .action-btn {
+      flex: 1;
+      padding: 1rem;
+      border-radius: 1.25rem;
+      border: none;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .action-btn.ai {
+      background: linear-gradient(135deg, #EC4899, #8B5CF6);
+      color: #FFF;
+      box-shadow: 0 4px 20px rgba(236, 72, 153, 0.4);
+    }
+
+    .action-btn.db {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: #FFF;
+    }
+  </style>
+</head>
+<body>
+  <div style="width: 100%; max-width: 420px;">
+    <div class="top-link"><a href="/mockups/">← Volver al Explorador de Mockups</a></div>
+
+    <div class="phone-frame">
+      <div class="header">
+        <div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Bienvenido a</div>
+          <div style="font-size: 1.25rem; font-weight: 800;">Balance AI Executive</div>
+        </div>
+        <div style="display: flex; gap: 0.3rem;">
+          <div class="chilean-seal">ALTO EN CALORÍAS</div>
+        </div>
+      </div>
+
+      <!-- Hero Calorie Display -->
+      <div class="hero-metric">
+        <span style="font-size: 0.85rem; color: #A5B4FC; text-transform: uppercase; font-weight: 600;">Consumo Nutricional de Hoy</span>
+        <div class="hero-cal">1,940</div>
+        <span style="font-size: 0.85rem; color: var(--text-muted);">de 2,200 kcal recomendadas</span>
+
+        <div class="macro-row">
+          <div class="macro-card">
+            <div class="val" style="color: #A5B4FC;">142g</div>
+            <div class="lbl">Proteínas</div>
+          </div>
+          <div class="macro-card">
+            <div class="val" style="color: #34D399;">215g</div>
+            <div class="lbl">Carbohidratos</div>
+          </div>
+          <div class="macro-card">
+            <div class="val" style="color: #FBBF24;">54g</div>
+            <div class="lbl">Grasas</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Comparison Chart -->
+      <div class="compare-box">
+        <div class="compare-header">
+          <span>Comparativa de los Últimos 7 Días</span>
+          <span style="color: #34D399;">Prom: 2,010 kcal</span>
+        </div>
+
+        <div class="chart-bar-container">
+          <div class="chart-col"><div class="chart-bar" style="height: 60%;"></div><span class="day-lbl">Vie</span></div>
+          <div class="chart-col"><div class="chart-bar" style="height: 85%;"></div><span class="day-lbl">Sáb</span></div>
+          <div class="chart-col"><div class="chart-bar" style="height: 70%;"></div><span class="day-lbl">Dom</span></div>
+          <div class="chart-col"><div class="chart-bar" style="height: 90%;"></div><span class="day-lbl">Lun</span></div>
+          <div class="chart-col"><div class="chart-bar" style="height: 65%;"></div><span class="day-lbl">Mar</span></div>
+          <div class="chart-col"><div class="chart-bar" style="height: 80%;"></div><span class="day-lbl">Mié</span></div>
+          <div class="chart-col"><div class="chart-bar active" style="height: 78%;"></div><span class="day-lbl" style="color: #818CF8; font-weight: bold;">Hoy</span></div>
+        </div>
+      </div>
+
+      <!-- Food DB Quick List -->
+      <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 1.25rem; padding: 1rem;">
+        <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 0.75rem;">Últimos Alimentos Registrados (Chile DB)</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 0.4rem 0;">
+          <div>
+            <strong>Pechuga de Pollo Ariztía</strong>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">200g (1.0 porción)</div>
+          </div>
+          <span style="font-weight: 700; color: #A5B4FC;">330 kcal</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding: 0.4rem 0; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+          <div>
+            <strong>Yogurt Protein Soprole</strong>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">150g (1.0 envase)</div>
+          </div>
+          <span style="font-weight: 700; color: #A5B4FC;">110 kcal</span>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="quick-actions">
+        <button class="action-btn ai">
+          <span>✨ Gemini Scan IA</span>
+        </button>
+        <button class="action-btn db">
+          <span>🔍 Buscar DB</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
