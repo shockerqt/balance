@@ -3,7 +3,10 @@ use utoipa::{
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 
-use crate::modules::food::handlers::{__path_create_food, __path_get_foods, __path_update_food};
+use crate::modules::{
+    ai::handlers::{__path_parse_food_text, __path_scan_nutrition_label},
+    food::handlers::{__path_create_food, __path_get_foods, __path_update_food},
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -11,6 +14,8 @@ use crate::modules::food::handlers::{__path_create_food, __path_get_foods, __pat
         get_foods,
         create_food,
         update_food,
+        parse_food_text,
+        scan_nutrition_label,
     ),
     modifiers(&SecurityAddon),
     tags(
@@ -18,6 +23,7 @@ use crate::modules::food::handlers::{__path_create_food, __path_get_foods, __pat
         (name = "food", description = "Food endpoints"),
         (name = "meal", description = "Meal endpoints"),
         (name = "auth", description = "Auth endpoints"),
+        (name = "ai", description = "AI Nutritional Assistant endpoints"),
     )
 )]
 pub struct ApiDoc;

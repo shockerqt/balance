@@ -8,8 +8,9 @@ use axum::{
     middleware,
 };
 use config::openapi::ApiDoc;
-use connectors::db::Database;
+use connectors::{db::Database, gemini::GeminiClient};
 use modules::{
+    ai::routes::ai_routes,
     auth::{middleware::auth, routes::auth_routes},
     food::routes::food_routes,
     meal::routes::meal_routes,
@@ -44,6 +45,9 @@ async fn main() {
 
     let shared_db = Arc::new(db);
 
+    let gemini_api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    let gemini_client = Arc::new(GeminiClient::new(gemini_api_key));
+
     let app = Router::new()
         .nest("/me", user_routes().route_layer(middleware::from_fn(auth)))
         .nest("/auth", auth_routes())
@@ -52,14 +56,18 @@ async fn main() {
             "/foods",
             food_routes().route_layer(middleware::from_fn(auth)),
         )
+        .nest("/ai", ai_routes())
         .layer(
-            ServiceBuilder::new().layer(Extension(shared_db)).layer(
-                CorsLayer::new()
-                    .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-                    .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
-                    .allow_origin(cors_origin.parse::<HeaderValue>().expect("invalid CORS_ORIGIN"))
-                    .allow_credentials(true),
-            ),
+            ServiceBuilder::new()
+                .layer(Extension(shared_db))
+                .layer(Extension(gemini_client))
+                .layer(
+                    CorsLayer::new()
+                        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+                        .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
+                        .allow_origin(cors_origin.parse::<HeaderValue>().expect("invalid CORS_ORIGIN"))
+                        .allow_credentials(true),
+                ),
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
