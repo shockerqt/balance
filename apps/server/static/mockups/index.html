@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Compact Mobile UI Design System</title>
+  <title>Balance — UI Design System Theme Switcher</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      /* Colors */
+      /* Theme 1: Cyber Neon (Default) */
       --bg: #0A0B10;
       --card-bg: #141622;
       --card-border: rgba(255, 255, 255, 0.08);
@@ -17,35 +17,76 @@
       --pill-border: rgba(255, 255, 255, 0.12);
       --text-primary: #FFFFFF;
       --text-secondary: #8F96AB;
-      --text-muted: #5C6275;
-      --accent-purple: #C084FC;
-      --accent-cyan: #38BDF8;
-      --accent-green: #4ADE80;
+      --accent-primary: #38BDF8;
+      --accent-secondary: #C084FC;
+      --accent-success: #4ADE80;
 
-      /* Compact Scaling */
       --radius-sm: 0.35rem;  /* 6px */
       --radius-md: 0.75rem;  /* 12px */
       --radius-lg: 1rem;     /* 16px */
       --radius-full: 9999px;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
+    /* Theme 2: Monochrome OLED Black */
+    body.theme-monochrome {
+      --bg: #000000;
+      --card-bg: #121212;
+      --card-border: #262626;
+      --pill-bg: #1C1C1C;
+      --pill-border: #333333;
+      --text-primary: #FFFFFF;
+      --text-secondary: #A3A3A3;
+      --accent-primary: #FFFFFF;
+      --accent-secondary: #E5E5E5;
+      --accent-success: #FFFFFF;
+    }
+
+    /* Theme 3: Signature Indigo */
+    body.theme-indigo {
+      --bg: #090C15;
+      --card-bg: #111726;
+      --card-border: #1E293B;
+      --pill-bg: #1C2438;
+      --pill-border: rgba(99, 102, 241, 0.3);
+      --text-primary: #F8FAFC;
+      --text-secondary: #94A3B8;
+      --accent-primary: #818CF8;
+      --accent-secondary: #6366F1;
+      --accent-success: #A5B4FC;
+    }
+
+    /* Theme 4: Emerald Green & Charcoal */
+    body.theme-emerald {
+      --bg: #0D1117;
+      --card-bg: #161B22;
+      --card-border: #21262D;
+      --pill-bg: #1F292E;
+      --pill-border: rgba(16, 185, 129, 0.3);
+      --text-primary: #F0F6FC;
+      --text-secondary: #8B949E;
+      --accent-primary: #34D399;
+      --accent-secondary: #10B981;
+      --accent-success: #A7F3D0;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
 
     body {
       background: var(--bg);
       color: var(--text-primary);
       min-height: 100vh;
       padding: 1.5rem 1rem;
-      font-size: 14px; /* Standard Compact Base Size */
+      font-size: 14px;
     }
 
     .num { font-family: 'JetBrains Mono', monospace; }
 
-    .container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+    .container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }
 
     header {
       border-bottom: 1px solid var(--card-border);
       padding-bottom: 1rem;
+      text-align: center;
     }
 
     .header-badge {
@@ -53,7 +94,7 @@
       padding: 0.2rem 0.6rem;
       background: var(--pill-bg);
       border: 1px solid var(--pill-border);
-      color: var(--accent-cyan);
+      color: var(--accent-primary);
       border-radius: var(--radius-full);
       font-size: 0.7rem;
       font-weight: 700;
@@ -65,16 +106,44 @@
     h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
     p.subtitle { color: var(--text-secondary); font-size: 0.85rem; }
 
+    /* Theme Switcher Bar */
+    .theme-switcher-bar {
+      display: flex;
+      justify-content: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.5rem;
+    }
+
+    .theme-btn {
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius-full);
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: var(--pill-bg);
+      border: 1px solid var(--pill-border);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .theme-btn.active {
+      background: var(--text-primary);
+      color: var(--bg);
+      border-color: var(--text-primary);
+    }
+
     /* Mobile Frame Preview Container */
     .mobile-frame-wrapper {
       display: flex;
       justify-content: center;
-      margin-bottom: 1rem;
     }
 
     .mobile-frame {
       width: 100%;
-      max-width: 390px; /* Standard Mobile Viewport Width */
+      max-width: 390px;
       background: var(--bg);
       border: 1px solid var(--card-border);
       border-radius: 1.75rem;
@@ -84,23 +153,6 @@
       gap: 1rem;
       box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
     }
-
-    /* Section Specimen */
-    .section { display: flex; flex-direction: column; gap: 0.85rem; }
-
-    .section-header {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      border-bottom: 1px solid var(--card-border);
-      padding-bottom: 0.35rem;
-    }
-
-    .section-title { font-size: 0.95rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-primary); }
-    .section-desc { font-size: 0.75rem; color: var(--text-secondary); }
-
-    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
-    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.85rem; }
 
     /* Compact Surfaces */
     .surface-card {
@@ -113,12 +165,11 @@
       gap: 0.5rem;
     }
 
-    .surface-card.sm { border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; }
     .surface-card.md { border-radius: var(--radius-md); padding: 0.75rem 0.85rem; }
 
     .surface-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.05em; }
 
-    /* Compact Buttons (36px Height Standard) */
+    /* Compact Buttons */
     .btn-group { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
     .btn {
@@ -134,7 +185,6 @@
       cursor: pointer;
       border: 1px solid transparent;
       transition: all 0.15s ease;
-      text-decoration: none;
     }
 
     .btn-pill-dark {
@@ -142,17 +192,16 @@
       border-color: var(--pill-border);
       color: var(--text-primary);
     }
-    .btn-pill-dark:hover { background: #FFFFFF; color: var(--bg); }
+    .btn-pill-dark:hover { background: var(--text-primary); color: var(--bg); }
 
-    .btn-solid-white {
-      background: #FFFFFF;
+    .btn-solid-accent {
+      background: var(--accent-primary);
       color: var(--bg);
     }
-    .btn-solid-white:hover { background: var(--text-secondary); color: #FFF; }
 
     .btn-outline {
       background: transparent;
-      border-color: rgba(255, 255, 255, 0.2);
+      border-color: var(--card-border);
       color: var(--text-primary);
     }
 
@@ -168,8 +217,6 @@
 
     /* Compact Typography */
     .t-display { font-size: 1.8rem; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
-    .t-h1 { font-size: 1.25rem; font-weight: 800; }
-    .t-h2 { font-size: 1rem; font-weight: 700; }
     .t-body { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; }
     .t-mono { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 700; }
 
@@ -189,8 +236,7 @@
     }
 
     .badge-pill-dark { background: var(--pill-bg); border: 1px solid var(--pill-border); color: var(--text-secondary); }
-    .badge-neon-purple { background: rgba(192, 132, 252, 0.15); border: 1px solid rgba(192, 132, 252, 0.3); color: var(--accent-purple); }
-    .badge-neon-cyan { background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--accent-cyan); }
+    .badge-accent { background: var(--pill-bg); border: 1px solid var(--pill-border); color: var(--accent-primary); }
     
     .chilean-octagon-badge {
       background: #000000;
@@ -216,7 +262,7 @@
       outline: none;
     }
 
-    /* Compact SVG Icons (16px x 16px) */
+    /* Compact SVG Icons */
     .icon-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; }
     .icon-box {
       width: 36px;
@@ -233,27 +279,46 @@
     .svg-icon { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
   </style>
 </head>
-<body>
+<body class="theme-cyber">
   <div class="container">
     <header>
-      <div class="header-badge">Compact Mobile UI System (390px Scale)</div>
-      <h1>COMPACT COMPONENT LIBRARY</h1>
-      <p class="subtitle">Tamaños estandarizados y compactos optimizados para pantallas de teléfonos móviles.</p>
+      <div class="header-badge">Interactive Theme Switcher</div>
+      <h1>UI COLOR PALETTE COMPARISON</h1>
+      <p class="subtitle">Selecciona un tema abajo para comparar la paleta de colores en tiempo real sobre los componentes compactos.</p>
     </header>
 
-    <!-- MOBILE FRAME SIMULATION -->
+    <!-- THEME SWITCHER BAR -->
+    <div class="theme-switcher-bar">
+      <button class="theme-btn active" onclick="setTheme('cyber', this)">
+        <span>🟣 Cyber Neon</span>
+      </button>
+
+      <button class="theme-btn" onclick="setTheme('monochrome', this)">
+        <span>⬛ Monocromático Negro</span>
+      </button>
+
+      <button class="theme-btn" onclick="setTheme('indigo', this)">
+        <span>🔵 Signature Indigo</span>
+      </button>
+
+      <button class="theme-btn" onclick="setTheme('emerald', this)">
+        <span>🟢 Emerald Green</span>
+      </button>
+    </div>
+
+    <!-- MOBILE FRAME PREVIEW -->
     <div class="mobile-frame-wrapper">
       <div class="mobile-frame">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 0.7rem; font-weight: 700; color: var(--text-secondary);">390px Mobile Viewport</span>
-          <span class="badge badge-pill-dark">COMPACT SCALE</span>
+          <span style="font-size: 0.7rem; font-weight: 700; color: var(--text-secondary);" id="theme-name-label">Tema Actual: Cyber Neon</span>
+          <span class="badge badge-accent">390px SCALE</span>
         </div>
 
         <!-- 1. COMPACT SURFACES -->
         <div class="surface-card">
-          <span class="surface-label">Surface Card (16px Radius • 14px Padding)</span>
-          <div style="font-size: 0.95rem; font-weight: 700;">Contenedor Compacto</div>
-          <p class="t-body">Tarjeta ajustada para evitar sobrecargar la pantalla en dispositivos móviles.</p>
+          <span class="surface-label">Surface Card (16px Radius)</span>
+          <div style="font-size: 0.95rem; font-weight: 700;">Contenedor Muestra</div>
+          <p class="t-body">Evaluación visual de contraste y elevación en pantallas móviles.</p>
         </div>
 
         <!-- 2. COMPACT BUTTONS -->
@@ -264,7 +329,7 @@
               <svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
               Escanear IA
             </button>
-            <button class="btn btn-solid-white">Aceptar</button>
+            <button class="btn btn-solid-accent">Aceptar</button>
             <button class="btn btn-icon">
               <svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
@@ -277,10 +342,10 @@
           <div class="t-display num">1,840 <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">/ 2,200 kcal</span></div>
           
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35rem; margin-top: 0.35rem;" class="t-mono">
-            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">P:128g</div>
-            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">C:190g</div>
-            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">G:52g</div>
-            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">F:26g</div>
+            <div style="background: var(--bg); border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem; color: var(--accent-primary);">P:128g</div>
+            <div style="background: var(--bg); border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem; color: var(--accent-secondary);">C:190g</div>
+            <div style="background: var(--bg); border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem; color: var(--accent-success);">G:52g</div>
+            <div style="background: var(--bg); border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem; color: var(--text-primary);">F:26g</div>
           </div>
         </div>
 
@@ -288,7 +353,7 @@
         <div class="surface-card md">
           <span class="surface-label">Badges & Octágonos Chilenos</span>
           <div class="badge-group">
-            <span class="badge badge-neon-purple">PROTEÍNA ALTA</span>
+            <span class="badge badge-accent">PROTEÍNA ALTA</span>
             <span class="chilean-octagon-badge">ALTO EN SODIO</span>
             <span class="chilean-octagon-badge">ALTO EN AZÚCARES</span>
           </div>
@@ -297,12 +362,12 @@
         <!-- 5. INPUT & SEARCH FIELD -->
         <div class="surface-card md">
           <span class="surface-label">Campo de Búsqueda (38px Height)</span>
-          <input type="text" class="input-field" placeholder="Buscar alimento (ej. Pechuga Pollo)..." value="Pechuga de Pollo Ariztía">
+          <input type="text" class="input-field" placeholder="Buscar alimento..." value="Pechuga de Pollo Ariztía">
         </div>
 
         <!-- 6. SVG ICONS -->
         <div class="surface-card md">
-          <span class="surface-label">Íconos Vectoriales SVG (16px x 16px)</span>
+          <span class="surface-label">Íconos Vectoriales SVG (16px)</span>
           <div class="icon-grid">
             <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
             <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
@@ -314,5 +379,26 @@
       </div>
     </div>
   </div>
+
+  <script>
+    function setTheme(name, btn) {
+      document.body.className = '';
+      if (name !== 'cyber') {
+        document.body.classList.add('theme-' + name);
+      }
+      
+      const buttons = document.querySelectorAll('.theme-btn');
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const labels = {
+        'cyber': 'Tema Actual: 🟣 Cyber Neon',
+        'monochrome': 'Tema Actual: ⬛ Monocromático Negro',
+        'indigo': 'Tema Actual: 🔵 Signature Indigo',
+        'emerald': 'Tema Actual: 🟢 Emerald Green'
+      };
+      document.getElementById('theme-name-label').innerText = labels[name] || 'Tema Actual';
+    }
+  </script>
 </body>
 </html>
