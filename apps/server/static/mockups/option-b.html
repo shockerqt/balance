@@ -3,19 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option B: Synthwave Scanline Grid</title>
+  <title>Balance — Option B: Bio-Thermal Scanner & Chilean Nutrients</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #030305;
-      --panel: #0A0A10;
-      --panel-border: rgba(255, 255, 255, 0.15);
-      --red: #FF0055;
-      --cyan: #00FFFF;
-      --text: #F8FAFC;
-      --text-muted: #8E8E9F;
+      --bg: #0A0B10;
+      --card-bg: #141622;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --pill-bg: #1F2233;
+      --text: #FFFFFF;
+      --text-muted: #8F96AB;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
@@ -27,28 +26,20 @@
       display: flex;
       justify-content: center;
       padding: 1rem;
-      /* Scanlines effect */
-      background-image: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.4) 50%);
-      background-size: 100% 4px;
     }
 
     .num { font-family: 'JetBrains Mono', monospace; }
-
-    .chroma-text {
-      text-shadow: -2px 0 0 var(--red), 2px 0 0 var(--cyan);
-    }
 
     .phone-frame {
       width: 100%;
       max-width: 420px;
       background: var(--bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 2rem;
-      padding: 1.25rem;
+      border: 1px solid var(--card-border);
+      border-radius: 2.5rem;
+      padding: 1.5rem;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
-      box-shadow: -3px 0 12px rgba(255, 0, 85, 0.2), 3px 0 12px rgba(0, 255, 255, 0.2);
+      gap: 1.25rem;
     }
 
     .top-link { text-align: center; margin-bottom: 0.25rem; }
@@ -68,109 +59,67 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--panel-border);
-      padding-bottom: 0.75rem;
     }
 
-    .header-title { font-size: 1.1rem; font-weight: 800; }
-
-    .date-strip {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.4rem;
-      padding: 0.5rem 0.75rem;
-      font-size: 0.85rem;
-      font-weight: 700;
+    .chile-seal-black {
+      background: #000;
+      color: #FFF;
+      border: 1.5px solid #FFF;
+      font-size: 0.65rem;
+      font-weight: 800;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.25rem;
+      letter-spacing: -0.02em;
     }
 
-    .date-strip button { background: none; border: none; color: var(--text-muted); cursor: pointer; }
-
-    /* Technical Scanline Grid */
-    .tech-panel {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.75rem;
-      padding: 1rem;
+    /* Thermal Scan Image Card */
+    .thermal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.75rem;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
     }
 
-    .tech-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 0.4rem;
+    .thermal-img-wrapper {
+      width: 100%;
+      height: 240px;
+      position: relative;
     }
 
-    .tech-cell {
-      background: #000;
-      border: 1px solid var(--panel-border);
-      border-radius: 0.4rem;
-      padding: 0.5rem 0.25rem;
-      text-align: center;
+    .thermal-img-wrapper img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
-    .tech-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800; }
-    .tech-val { font-size: 0.95rem; font-weight: 800; color: #FFF; margin-top: 0.2rem; }
-
-    /* Timeline Items */
-    .timeline-card {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.65rem;
-      padding: 0.85rem 1rem;
+    .thermal-content {
+      padding: 1.25rem;
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
     }
 
-    .timeline-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .btn-action-dark {
+      background: var(--pill-bg);
+      border: 1px solid var(--card-border);
+      color: #FFF;
+      padding: 0.85rem;
+      border-radius: 9999px;
       font-size: 0.85rem;
       font-weight: 700;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      padding-bottom: 0.4rem;
-    }
-
-    .item-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.85rem;
-    }
-
-    .item-sub { font-size: 0.75rem; color: var(--text-muted); }
-
-    /* Bottom Technical Nav */
-    .nav-tech {
-      margin-top: auto;
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.65rem;
-      padding: 0.5rem;
-      display: flex;
-      justify-content: space-around;
-    }
-
-    .nav-item-tech {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      font-weight: 800;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.2rem;
       cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 100%;
+      margin-top: auto;
+      transition: background 0.2s;
     }
 
-    .nav-item-tech.active { color: #FFF; }
+    .btn-action-dark:hover { background: #FFFFFF; color: #0A0B10; }
   </style>
 </head>
 <body>
@@ -180,106 +129,40 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">SYNTHWAVE SCANLINES</div>
-          <div class="header-title chroma-text">GRID ENGINE V1</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">BIO-THERM SCAN V4.2</div>
+          <div style="font-size: 1.25rem; font-weight: 800;">Análisis Nutricional</div>
         </div>
-        <span class="num chroma-text" style="font-size: 0.75rem; font-weight: 800;">RGB: SHIFT</span>
+        <div class="chile-seal-black">ALTO EN SODIO</div>
       </div>
 
-      <div class="date-strip num">
-        <button>‹</button>
-        <span class="chroma-text">2026-07-30 (JUEVES)</span>
-        <button>›</button>
-      </div>
-
-      <!-- Technical Grid -->
-      <div class="tech-panel">
-        <div style="display: flex; justify-content: space-between; align-items: baseline;">
-          <div>
-            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">ENERGÍA ACUMULADA</div>
-            <div class="num chroma-text" style="font-size: 1.8rem; font-weight: 900; color: #FFF;">1,840 <span style="font-size: 0.9rem; color: var(--text-muted);">KCAL</span></div>
-          </div>
-          <div class="num chroma-text" style="font-size: 0.8rem; font-weight: 800;">META: 2,200 (83.6%)</div>
+      <!-- Thermal Bio Scan Card -->
+      <div class="thermal-card">
+        <div class="thermal-img-wrapper">
+          <img src="/mockups/assets/thermal_food.jpg" alt="Bio-Thermal Food Scanner">
         </div>
-
-        <div class="tech-grid num">
-          <div class="tech-cell">
-            <div class="tech-lbl">PROTEÍNA</div>
-            <div class="tech-val chroma-text">128.5g</div>
-          </div>
-          <div class="tech-cell">
-            <div class="tech-lbl">CARBS</div>
-            <div class="tech-val chroma-text">190.0g</div>
-          </div>
-          <div class="tech-cell">
-            <div class="tech-lbl">GRASA</div>
-            <div class="tech-val chroma-text">52.0g</div>
-          </div>
-          <div class="tech-cell">
-            <div class="tech-lbl">FIBRA</div>
-            <div class="tech-val chroma-text">26.5g</div>
-          </div>
+        <div class="thermal-content">
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">SUBJECT: MEAL BOWL 01</div>
+          <div style="font-size: 1.2rem; font-weight: 800;">Ensalada Proteica con Pollo</div>
+          <div style="font-size: 0.85rem; color: var(--text-muted);" class="num">Proteína: 62g • Carbs: 24g • Sodio: 180mg</div>
         </div>
       </div>
 
-      <!-- Timeline Items -->
-      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-        <div class="timeline-card">
-          <div class="timeline-head">
-            <span class="chroma-text">ALMUERZO (13:30)</span>
-            <span class="num chroma-text" style="font-weight: 800;">740 KCAL</span>
-          </div>
-
-          <div class="item-row">
-            <div>
-              <div style="font-weight: 700;">Pechuga de Pollo Cocida</div>
-              <div class="item-sub num">QTY: 200g • P:62.0g C:0g G:7.2g</div>
-            </div>
-            <span class="num" style="font-weight: 700;">330</span>
-          </div>
-
-          <div class="item-row">
-            <div>
-              <div style="font-weight: 700;">Arroz Integral Cocido</div>
-              <div class="item-sub num">QTY: 250g • P:6.0g C:58.0g Fib:4.5g</div>
-            </div>
-            <span class="num" style="font-weight: 700;">275</span>
-          </div>
+      <!-- Stats Pill Grid -->
+      <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 1.25rem; padding: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.75rem;">
+          <span>DIAGNOSTICO IA GEMINI</span>
+          <span style="color: #4ADE80;">ANALISIS COMPLETO</span>
         </div>
-
-        <div class="timeline-card">
-          <div class="timeline-head">
-            <span class="chroma-text">SNACK (17:45)</span>
-            <span class="num chroma-text" style="font-weight: 800;">310 KCAL</span>
-          </div>
-
-          <div class="item-row">
-            <div>
-              <div style="font-weight: 700;">Yogurt Protein Soprole</div>
-              <div class="item-sub num">QTY: 150g • P:15.0g C:8.0g Sodio:65mg</div>
-            </div>
-            <span class="num" style="font-weight: 700;">110</span>
-          </div>
+        <div style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+          • Comida equilibrada alta en aminoácidos esenciales.<br>
+          • Contenido moderado de carbohidratos complejos de absorción lenta.
         </div>
       </div>
 
-      <!-- Bottom Nav -->
-      <div class="nav-tech">
-        <button class="nav-item-tech active">
-          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span class="chroma-text">DIARIO</span>
-        </button>
-
-        <button class="nav-item-tech">
-          <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span>BUSCAR</span>
-        </button>
-
-        <button class="nav-item-tech">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          <span>IA SCAN</span>
-        </button>
-      </div>
+      <button class="btn-action-dark">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Escanear Otra Etiqueta con IA
+      </button>
     </div>
   </div>
 </body>

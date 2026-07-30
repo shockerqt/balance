@@ -3,19 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Chromatic Aberration UI System</title>
+  <title>Balance — High-End Iridescent Neon UI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #050508;
-      --panel: #0E0E14;
-      --panel-border: rgba(255, 255, 255, 0.1);
-      --chroma-red: #FF0055;
-      --chroma-cyan: #00FFFF;
+      --bg: #0A0B10;
+      --card-bg: #141622;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --pill-bg: #1F2233;
       --text: #FFFFFF;
-      --text-muted: #8E8E9F;
+      --text-muted: #8F96AB;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
@@ -29,37 +28,33 @@
       align-items: center;
       padding: 2.5rem 1rem;
       background-image: 
-        linear-gradient(rgba(255, 0, 85, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
+        radial-gradient(circle at 20% 15%, rgba(139, 92, 246, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 80% 85%, rgba(6, 182, 212, 0.12) 0%, transparent 40%);
     }
 
     .container { max-width: 960px; width: 100%; }
 
     header { text-align: center; margin-bottom: 3rem; }
 
-    .badge-chroma {
+    .tag-pill {
       display: inline-block;
       padding: 0.35rem 0.9rem;
-      background: #000;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      box-shadow: -2px 0 0 var(--chroma-red), 2px 0 0 var(--chroma-cyan);
-      color: #FFF;
-      font-size: 0.8rem;
-      font-weight: 700;
+      background: var(--pill-bg);
+      border: 1px solid var(--card-border);
+      color: #A0A6BF;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
       margin-bottom: 1rem;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
     }
 
-    h1.chroma-title {
+    h1 {
       font-size: 2.5rem;
-      font-weight: 900;
+      font-weight: 800;
       color: #FFF;
       letter-spacing: -0.03em;
-      text-shadow: 
-        -2px 0 0 var(--chroma-red),
-         2px 0 0 var(--chroma-cyan);
       margin-bottom: 0.5rem;
     }
 
@@ -72,68 +67,69 @@
     }
 
     .card {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 1rem;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.5rem;
       padding: 1.5rem;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      transition: transform 0.2s, box-shadow 0.2s;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s;
+      overflow: hidden;
       position: relative;
     }
 
     .card:hover {
-      transform: translateY(-4px);
-      box-shadow: 
-        -3px 0 12px rgba(255, 0, 85, 0.4),
-         3px 0 12px rgba(0, 255, 255, 0.4);
-      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-5px);
+      border-color: rgba(255, 255, 255, 0.25);
     }
 
-    .card-tag {
-      font-size: 0.75rem;
-      font-weight: 800;
+    .card-img-wrapper {
+      width: 100%;
+      height: 180px;
+      border-radius: 1rem;
+      overflow: hidden;
+      margin-bottom: 1.25rem;
+    }
+
+    .card-img-wrapper img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--chroma-cyan);
-      text-shadow: -1px 0 0 var(--chroma-red);
-      margin-bottom: 0.5rem;
+      letter-spacing: 0.06em;
+      color: #8F96AB;
+      margin-bottom: 0.4rem;
     }
 
     .card h2 { font-size: 1.35rem; font-weight: 700; color: #FFF; margin-bottom: 0.5rem; }
 
-    .card p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; margin-bottom: 1.25rem; }
+    .card p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; margin-bottom: 1.5rem; }
 
-    .svg-icon {
-      width: 18px;
-      height: 18px;
-      stroke: currentColor;
-      stroke-width: 2;
-      fill: none;
-    }
-
-    .btn-chroma {
+    .btn-neon {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
       width: 100%;
       padding: 0.85rem 1rem;
-      background: #000000;
+      background: #1F2233;
+      border: 1px solid var(--card-border);
       color: #FFFFFF;
       font-size: 0.9rem;
       font-weight: 700;
-      border: 1px solid #FFFFFF;
-      box-shadow: -3px 0 0 var(--chroma-red), 3px 0 0 var(--chroma-cyan);
-      border-radius: 0.5rem;
+      border-radius: 9999px;
       text-decoration: none;
-      transition: all 0.15s ease;
+      transition: all 0.2s ease;
     }
 
-    .btn-chroma:hover {
-      transform: translate(-1px, -1px);
-      box-shadow: -5px 0 10px var(--chroma-red), 5px 0 10px var(--chroma-cyan);
+    .btn-neon:hover {
+      background: #FFFFFF;
+      color: #0A0B10;
     }
 
     footer { margin-top: 4rem; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
@@ -142,46 +138,46 @@
 <body>
   <div class="container">
     <header>
-      <div class="badge-chroma">RGB Shift / Chromatic Aberration</div>
-      <h1 class="chroma-title">BALANCE — CHROMATIC UI</h1>
-      <p class="sub">Estilo cibernético con aberración cromática (desfase RGB rojo/cian), contraste negro absoluto y estética futurista.</p>
+      <div class="tag-pill">UI Showcase — Inspiration Reference</div>
+      <h1>BALANCE — IRIDESCENT NEON UI</h1>
+      <p class="sub">Réplica exacta del diseño Dribbble futurista: fluido iridiscente, escáneres térmicos infrarrojos y tarjetas mate de alta gama.</p>
     </header>
 
     <div class="grid">
       <!-- Opción A -->
       <div class="card">
         <div>
-          <div class="card-tag">Concepto 01 — Recomendado</div>
-          <h2>Cyber HUD Chromatic</h2>
-          <p>Interfaz estilo visor HUD con aberración cromática en títulos, barras de macros con tinte RGB y escáner de cámara IA.</p>
+          <div class="card-img-wrapper">
+            <img src="/mockups/assets/hero_fluid.jpg" alt="Iridescent Fluid">
+          </div>
+          <div class="card-label">Concepto 01 — Dribbble Inspired</div>
+          <h2>Iridescent Fluid & Macro Waves</h2>
+          <p>Banner iridiscente fluido 3D, gráfico de ondas sinusoidales neon multi-color y tarjetas mate para el diario nutricional.</p>
         </div>
-        <a href="/mockups/option-a.html" class="btn-chroma">
-          Ver Mockup Opción A →
-        </a>
+        <a href="/mockups/option-a.html" class="btn-neon">Ver Mockup Opción A →</a>
       </div>
 
       <!-- Opción B -->
       <div class="card">
         <div>
-          <div class="card-tag">Concepto 02</div>
-          <h2>Synthwave Scanline Grid</h2>
-          <p>Línea de tiempo con patrón de líneas de escaneo (scanlines), números en fuente monoespaciada y bordes neón desfase RGB.</p>
+          <div class="card-img-wrapper">
+            <img src="/mockups/assets/thermal_food.jpg" alt="Thermal Bio Scan">
+          </div>
+          <div class="card-label">Concepto 02 — Bio-Scanner UI</div>
+          <h2>Bio-Thermal Scanner & Nutrients</h2>
+          <p>Visor de análisis nutricional infrarrojo térmico (Bio-Therm Scan), desglose de sellos de advertencia chilenos y registro por horas.</p>
         </div>
-        <a href="/mockups/option-b.html" class="btn-chroma">
-          Ver Mockup Opción B →
-        </a>
+        <a href="/mockups/option-b.html" class="btn-neon">Ver Mockup Opción B →</a>
       </div>
 
       <!-- Opción C -->
       <div class="card">
         <div>
-          <div class="card-tag">Concepto 03</div>
-          <h2>Minimal Cyber Octagons</h2>
-          <p>Alto impacto visual con octágonos chilenos de advertencia enmarcados en aberración cromática roja y cian.</p>
+          <div class="card-label">Concepto 03 — Minimal Cyber Tech</div>
+          <h2>Track Your Goals & Chilean Labels</h2>
+          <p>Métricas de consumo energético de alta precisión, tarjetas estilo "TRACK YOUR GOALS" y botones de acción tipo píldora.</p>
         </div>
-        <a href="/mockups/option-c.html" class="btn-chroma">
-          Ver Mockup Opción C →
-        </a>
+        <a href="/mockups/option-c.html" class="btn-neon">Ver Mockup Opción C →</a>
       </div>
     </div>
 
