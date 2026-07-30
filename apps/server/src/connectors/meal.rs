@@ -90,14 +90,15 @@ impl MealDatasource {
         let mut total_fiber_bd = BigDecimal::from(0);
 
         for r in items_rows {
-            let base_qty = if r.base_quantity == BigDecimal::from(0) {
+            let zero = BigDecimal::from(0);
+            let base_qty = if r.base_quantity == zero {
                 BigDecimal::from(1)
             } else {
                 r.base_quantity
             };
 
             let ratio = &r.serving_quantity / &base_qty;
-            let item_cal = ((r.calories as f64) * (&ratio).to_string().parse::<f64>().unwrap_or(1.0)) as i32;
+            let item_cal = ((r.calories as f64) * ratio.to_string().parse::<f64>().unwrap_or(1.0)) as i32;
             let item_protein = &r.proteins * &ratio;
             let item_carbs = &r.carbs * &ratio;
             let item_fat = &r.fat * &ratio;

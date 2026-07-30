@@ -423,26 +423,22 @@ impl Validate for NewFood {
             return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
-        if self.carbs < BigDecimal::from(0) {
+        if self.carbs < zero {
             return Err(AppError::BadRequest("Carbs must be non-negative".into()));
         }
 
-        if self.fat < BigDecimal::from(0) {
+        if self.fat < zero {
             return Err(AppError::BadRequest("Fat must be non-negative".into()));
         }
 
-        if let Some(sodium) = &self.sodium {
-            if *sodium < 0 {
-                return Err(AppError::BadRequest("Sodium must be non-negative".into()));
-            }
+        if matches!(self.sodium, Some(sodium) if sodium < 0) {
+            return Err(AppError::BadRequest("Sodium must be non-negative".into()));
         }
 
-        if let Some(cholesterol) = &self.cholesterol {
-            if *cholesterol < 0 {
-                return Err(AppError::BadRequest(
-                    "Cholesterol must be non-negative".into(),
-                ));
-            }
+        if matches!(self.cholesterol, Some(cholesterol) if cholesterol < 0) {
+            return Err(AppError::BadRequest(
+                "Cholesterol must be non-negative".into(),
+            ));
         }
 
         Ok(())
@@ -464,26 +460,22 @@ impl Validate for UpdateFood {
             return Err(AppError::BadRequest("Proteins must be non-negative".into()));
         }
 
-        if self.carbs < BigDecimal::from(0) {
+        if self.carbs < zero {
             return Err(AppError::BadRequest("Carbs must be non-negative".into()));
         }
 
-        if self.fat < BigDecimal::from(0) {
+        if self.fat < zero {
             return Err(AppError::BadRequest("Fat must be non-negative".into()));
         }
 
-        if let Some(sodium) = &self.sodium {
-            if *sodium < 0 {
-                return Err(AppError::BadRequest("Sodium must be non-negative".into()));
-            }
+        if matches!(self.sodium, Some(sodium) if sodium < 0) {
+            return Err(AppError::BadRequest("Sodium must be non-negative".into()));
         }
 
-        if let Some(cholesterol) = &self.cholesterol {
-            if *cholesterol < 0 {
-                return Err(AppError::BadRequest(
-                    "Cholesterol must be non-negative".into(),
-                ));
-            }
+        if matches!(self.cholesterol, Some(cholesterol) if cholesterol < 0) {
+            return Err(AppError::BadRequest(
+                "Cholesterol must be non-negative".into(),
+            ));
         }
 
         Ok(())

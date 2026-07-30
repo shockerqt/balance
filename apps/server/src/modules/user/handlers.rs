@@ -1,4 +1,4 @@
-use axum::{Extension, Json, http::StatusCode};
+use axum::{Extension, Json};
 use std::sync::Arc;
 
 use crate::modules::user::dto::UserDto;
