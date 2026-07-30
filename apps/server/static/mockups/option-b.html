@@ -3,25 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option B: Apple HIG Native (iOS Health Clean Style)</title>
+  <title>Balance — Option B: Monochrome Technical Data</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #000000;
-      --card-bg: #1C1C1E;
-      --card-border: #2C2C2E;
-      --text: #FFFFFF;
-      --text-muted: #8E8E93;
-      --apple-blue: #0A84FF;
-      --apple-green: #30D158;
-      --apple-orange: #FF9F0A;
-      --apple-purple: #BF5AF2;
-      --apple-cyan: #64D2FF;
+      --bg: #0A0A0C;
+      --panel: #16161A;
+      --border: #27272A;
+      --text: #F4F4F5;
+      --text-muted: #71717A;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
 
     body {
       background: var(--bg);
@@ -32,156 +27,153 @@
       padding: 1rem;
     }
 
+    .num { font-family: 'JetBrains Mono', monospace; }
+
     .phone-frame {
       width: 100%;
       max-width: 420px;
       background: var(--bg);
-      border: 1px solid var(--card-border);
-      border-radius: 2.5rem;
-      padding: 1.5rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1.25rem;
-    }
-
-    .top-link { text-align: center; margin-bottom: 0.25rem; }
-    .top-link a { color: var(--text-muted); font-size: 0.8rem; text-decoration: none; }
-
-    .icon {
-      width: 20px;
-      height: 20px;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      fill: none;
-    }
-
-    .header-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-    }
-
-    .header-title { font-size: 1.75rem; font-weight: 700; tracking: -0.03em; }
-
-    .date-pill {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 9999px;
-      padding: 0.4rem 1rem;
-      font-size: 0.85rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    /* iOS Apple Style Summary Cards */
-    .summary-card {
-      background: var(--card-bg);
-      border-radius: 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: 2rem;
       padding: 1.25rem;
       display: flex;
       flex-direction: column;
       gap: 1rem;
     }
 
-    .summary-top {
+    .top-link { text-align: center; margin-bottom: 0.25rem; }
+    .top-link a { color: var(--text-muted); font-size: 0.8rem; text-decoration: none; }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    .header-bar {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
     }
 
-    .cal-big { font-size: 2.25rem; font-weight: 700; color: var(--text); }
+    .header-title { font-size: 1.1rem; font-weight: 700; }
 
-    .progress-bar-bg {
-      height: 8px;
-      background: #2C2C2E;
-      border-radius: 9999px;
-      overflow: hidden;
+    .date-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
 
-    .progress-bar-fill { height: 100%; border-radius: 9999px; }
+    .date-strip button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
 
-    .macro-grid-ios {
+    /* Technical Macro Table */
+    .tech-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .tech-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
 
-    .macro-item-ios {
-      background: #2C2C2E;
-      border-radius: 0.75rem;
-      padding: 0.6rem 0.4rem;
+    .tech-cell {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+      padding: 0.5rem 0.25rem;
       text-align: center;
     }
 
-    .macro-item-ios .lbl { font-size: 0.7rem; color: var(--text-muted); font-weight: 600; }
-    .macro-item-ios .val { font-size: 1rem; font-weight: 700; margin-top: 0.2rem; }
+    .tech-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+    .tech-val { font-size: 0.9rem; font-weight: 700; color: #FFF; margin-top: 0.2rem; }
 
-    /* iOS Activity List */
-    .ios-section-header {
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-top: 0.5rem;
+    /* Timeline Table */
+    .timeline-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
     }
 
-    .ios-card-group {
-      background: var(--card-bg);
-      border-radius: 1.25rem;
-      overflow: hidden;
-    }
-
-    .ios-list-row {
+    .timeline-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
       padding: 0.85rem 1rem;
-      border-bottom: 1px solid var(--card-border);
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .timeline-head {
+      display: flex;
       justify-content: space-between;
-    }
-
-    .ios-list-row:last-child { border-bottom: none; }
-
-    .ios-icon-box {
-      width: 36px;
-      height: 36px;
-      border-radius: 0.6rem;
-      display: flex;
       align-items: center;
-      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 0.4rem;
     }
 
-    .food-detail { flex: 1; margin-left: 0.85rem; }
-    .food-title { font-size: 0.95rem; font-weight: 600; }
-    .food-subtitle { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.1rem; }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
 
-    /* iOS Bottom Tab Bar */
-    .tab-bar {
+    .item-sub { font-size: 0.75rem; color: var(--text-muted); }
+
+    /* Bottom Technical Nav */
+    .nav-tech {
       margin-top: auto;
-      background: rgba(28, 28, 30, 0.95);
-      border-top: 1px solid var(--card-border);
-      border-radius: 1.5rem;
-      padding: 0.6rem 0.5rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 0.5rem;
       display: flex;
       justify-content: space-around;
-      align-items: center;
     }
 
-    .tab-item {
+    .nav-item-tech {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 0.2rem;
-      color: var(--text-muted);
-      font-size: 0.7rem;
-      font-weight: 500;
-      background: none;
-      border: none;
       cursor: pointer;
     }
 
-    .tab-item.active { color: var(--apple-blue); font-weight: 600; }
+    .nav-item-tech.active { color: #FFF; }
   </style>
 </head>
 <body>
@@ -191,110 +183,109 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.8rem; color: var(--text-muted);">Jueves 30 de Julio</div>
-          <div class="header-title">Resumen</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Balance Technical Engine</div>
+          <div class="header-title">Macro Metrics</div>
         </div>
-        <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--card-bg); border: 1px solid var(--card-border); display: flex; align-items: center; justify-content: center;">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        </div>
+        <span class="num" style="font-size: 0.75rem; background: #27272A; color: #A1A1AA; padding: 0.2rem 0.5rem; border-radius: 0.25rem;">STATUS: OK</span>
       </div>
 
-      <div class="date-pill">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
-        <span>Hoy</span>
-        <svg class="icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      <div class="date-strip num">
+        <button>‹</button>
+        <span>2026-07-30 (THU)</span>
+        <button>›</button>
       </div>
 
-      <!-- iOS Summary Card -->
-      <div class="summary-card">
-        <div class="summary-top">
+      <!-- Technical Macro Grid -->
+      <div class="tech-panel">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
           <div>
-            <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">Calorías Restantes</div>
-            <div class="cal-big">360 <span style="font-size: 1.1rem; color: var(--text-muted); font-weight: 500;">kcal</span></div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Caloric Intake</div>
+            <div class="num" style="font-size: 1.8rem; font-weight: 700; color: #FFF;">1,840 <span style="font-size: 0.9rem; color: var(--text-muted);">KCAL</span></div>
           </div>
-          <div style="text-align: right;">
-            <div style="font-size: 0.85rem; font-weight: 600; color: var(--apple-orange);">1,840 / 2,200</div>
-            <div style="font-size: 0.75rem; color: var(--text-muted);">Ingeridas</div>
-          </div>
+          <div class="num" style="font-size: 0.8rem; color: var(--text-muted);">TARGET: 2,200 (83.6%)</div>
         </div>
 
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" style="width: 83%; background: var(--apple-orange);"></div>
-        </div>
-
-        <div class="macro-grid-ios">
-          <div class="macro-item-ios">
-            <div class="lbl">Proteínas</div>
-            <div class="val" style="color: var(--apple-purple);">128g</div>
+        <div class="tech-grid">
+          <div class="tech-cell">
+            <div class="tech-lbl">PROTEIN</div>
+            <div class="tech-val num">128.5g</div>
           </div>
-          <div class="macro-item-ios">
-            <div class="lbl">Carbs</div>
-            <div class="val" style="color: var(--apple-green);">190g</div>
+          <div class="tech-cell">
+            <div class="tech-lbl">CARBS</div>
+            <div class="tech-val num">190.0g</div>
           </div>
-          <div class="macro-item-ios">
-            <div class="lbl">Grasas</div>
-            <div class="val" style="color: var(--apple-orange);">52g</div>
+          <div class="tech-cell">
+            <div class="tech-lbl">FAT</div>
+            <div class="tech-val num">52.0g</div>
           </div>
-          <div class="macro-item-ios">
-            <div class="lbl">Fibra</div>
-            <div class="val" style="color: var(--apple-cyan);">26g</div>
+          <div class="tech-cell">
+            <div class="tech-lbl">FIBER</div>
+            <div class="tech-val num">26.5g</div>
           </div>
         </div>
       </div>
 
-      <!-- Meal Activity -->
-      <div class="ios-section-header">Comidas Registradas</div>
+      <!-- Timeline Items -->
+      <div class="timeline-group">
+        <div class="timeline-card">
+          <div class="timeline-head">
+            <span>MEAL #1 — LUNCH (13:30)</span>
+            <span class="num" style="color: #FFF;">740 KCAL</span>
+          </div>
 
-      <div class="ios-card-group">
-        <div class="ios-list-row">
-          <div class="ios-icon-box" style="background: rgba(48, 209, 88, 0.15); color: var(--apple-green);">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          <div class="item-row">
+            <div>
+              <div style="font-weight: 600;">Pechuga de Pollo Cocida</div>
+              <div class="item-sub num">QTY: 200g • P:62.0g C:0g F:7.2g</div>
+            </div>
+            <span class="num" style="font-weight: 600;">330</span>
           </div>
-          <div class="food-detail">
-            <div class="food-title">Almuerzo — Pollo con Arroz</div>
-            <div class="food-subtitle">200g Pollo • 250g Arroz • Ensalada</div>
+
+          <div class="item-row">
+            <div>
+              <div style="font-weight: 600;">Arroz Integral Cocido</div>
+              <div class="item-sub num">QTY: 250g • P:6.0g C:58.0g Fib:4.5g</div>
+            </div>
+            <span class="num" style="font-weight: 600;">275</span>
           </div>
-          <div style="font-size: 0.95rem; font-weight: 700;">740 kcal</div>
         </div>
 
-        <div class="ios-list-row">
-          <div class="ios-icon-box" style="background: rgba(191, 90, 242, 0.15); color: var(--apple-purple);">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <div class="timeline-card">
+          <div class="timeline-head">
+            <span>MEAL #2 — SNACK (17:45)</span>
+            <span class="num" style="color: #FFF;">310 KCAL</span>
           </div>
-          <div class="food-detail">
-            <div class="food-title">Snack — Yogurt Soprole</div>
-            <div class="food-subtitle">150g (1 envase) • Protein</div>
+
+          <div class="item-row">
+            <div>
+              <div style="font-weight: 600;">Yogurt Protein Soprole (Chile)</div>
+              <div class="item-sub num">QTY: 150g • P:15.0g C:8.0g Na:65mg</div>
+            </div>
+            <span class="num" style="font-weight: 600;">110</span>
           </div>
-          <div style="font-size: 0.95rem; font-weight: 700;">110 kcal</div>
         </div>
       </div>
 
-      <!-- Tab Bar -->
-      <div class="tab-bar">
-        <button class="tab-item active">
+      <!-- Technical Bottom Bar -->
+      <div class="nav-tech">
+        <button class="nav-item-tech active">
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span>Hoy</span>
+          <span>LOG</span>
         </button>
 
-        <button class="tab-item">
+        <button class="nav-item-tech">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span>Buscar</span>
+          <span>SEARCH</span>
         </button>
 
-        <button class="tab-item" style="color: var(--apple-blue);">
-          <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--apple-blue); color: #FFF; display: flex; align-items: center; justify-content: center; margin-top: -0.5rem;">
-            <svg class="icon" viewBox="0 0 24 24" style="stroke-width: 3;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </div>
-        </button>
-
-        <button class="tab-item">
-          <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          <span>Stats</span>
-        </button>
-
-        <button class="tab-item">
+        <button class="nav-item-tech">
           <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          <span>Escanear</span>
+          <span>SCAN IA</span>
+        </button>
+
+        <button class="nav-item-tech">
+          <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>STATS</span>
         </button>
       </div>
     </div>

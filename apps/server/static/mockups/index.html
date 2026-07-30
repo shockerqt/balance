@@ -3,18 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Diseños UI/UX Humanos</title>
+  <title>Balance — Estilo Monocromático Negro</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0F172A;
-      --card-bg: #1E293B;
-      --card-border: #334155;
-      --accent: #3B82F6;
-      --text: #F8FAFC;
-      --text-muted: #94A3B8;
+      --bg: #000000;
+      --card-bg: #121212;
+      --card-border: #262626;
+      --text: #FFFFFF;
+      --text-muted: #A3A3A3;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
@@ -36,9 +35,9 @@
     .tag {
       display: inline-block;
       padding: 0.25rem 0.75rem;
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      color: #60A5FA;
+      background: #1C1C1C;
+      border: 1px solid #333333;
+      color: #E5E5E5;
       border-radius: 9999px;
       font-size: 0.8rem;
       font-weight: 600;
@@ -75,11 +74,11 @@
     }
 
     .card:hover {
-      border-color: var(--accent);
+      border-color: #525252;
       transform: translateY(-3px);
     }
 
-    .card-label { font-size: 0.75rem; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 0.5rem; }
+    .card-label { font-size: 0.75rem; font-weight: 700; color: #E5E5E5; text-transform: uppercase; margin-bottom: 0.5rem; }
 
     .card h2 { font-size: 1.35rem; font-weight: 600; color: #FFF; margin-bottom: 0.5rem; }
 
@@ -102,8 +101,8 @@
       gap: 0.5rem;
       width: 100%;
       padding: 0.75rem 1rem;
-      background: var(--accent);
-      color: #FFF;
+      background: #FFFFFF;
+      color: #000000;
       font-size: 0.9rem;
       font-weight: 600;
       border-radius: 0.5rem;
@@ -111,7 +110,7 @@
       transition: background 0.2s;
     }
 
-    .btn:hover { background: #2563EB; }
+    .btn:hover { background: #E5E5E5; }
 
     footer { margin-top: 4rem; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
   </style>
@@ -119,18 +118,18 @@
 <body>
   <div class="container">
     <header>
-      <span class="tag">Diseño Humano & Tipografía Inter</span>
-      <h1>Balance — Explorador de Mockups UI</h1>
-      <p class="sub">Mockups construidos con tipografía <strong>Inter</strong> e Iconografía SVG personalizada sin estética artificial.</p>
+      <span class="tag">Estilo Monocromático Negro & Tipografía Inter</span>
+      <h1>Balance — Explorador UI Monocromático</h1>
+      <p class="sub">Diseños minimalistas en negro profundo, escala de grises de alto contraste e iconografía SVG sobria.</p>
     </header>
 
     <div class="grid">
       <!-- Opción A -->
       <div class="card">
         <div>
-          <div class="card-label">Estilo 01 — Técnico & Precisión</div>
-          <h2>MacroFactor Professional</h2>
-          <p>Modo oscuro neutro de alta densidad informativa, tablas numéricas monoespaciadas para macros y escáner de etiquetas.</p>
+          <div class="card-label">Concepto 01 — Recomendado</div>
+          <h2>Monochrome Minimalist OLED</h2>
+          <p>Fondo negro puro, contraste blanco pulcro, barras monocromáticas de macros y escáner de cámara IA integrado.</p>
         </div>
         <a href="/mockups/option-a.html" class="btn">
           Ver Mockup Opción A
@@ -141,9 +140,9 @@
       <!-- Opción B -->
       <div class="card">
         <div>
-          <div class="card-label">Estilo 02 — Apple HIG Native</div>
-          <h2>iOS Health Clean</h2>
-          <p>Inspirado en las guías de diseño de Apple. Componentes sólidos con alto contraste, colores funcionales y navegación inferior.</p>
+          <div class="card-label">Concepto 02</div>
+          <h2>Monochrome Technical Data</h2>
+          <p>Enfoque de precisión técnica en gris carbón y negro, números monoespaciados e íconos SVG de trazo fino.</p>
         </div>
         <a href="/mockups/option-b.html" class="btn">
           Ver Mockup Opción B
@@ -154,9 +153,9 @@
       <!-- Opción C -->
       <div class="card">
         <div>
-          <div class="card-label">Estilo 03 — Editorial & Despensa</div>
-          <h2>Yuka Warm & Chilean Labels</h2>
-          <p>Fondo crema/carbón cálido, tarjetas estilo libreta nutricional y destaque limpio de sellos de advertencia chilenos (ALTO EN).</p>
+          <div class="card-label">Concepto 03</div>
+          <h2>Monochrome Chilean Octagons</h2>
+          <p>Diseño sobrio de alto impacto con destaque limpio de octágonos negros de advertencia (ALTO EN SODIO/AZÚCARES).</p>
         </div>
         <a href="/mockups/option-c.html" class="btn">
           Ver Mockup Opción C

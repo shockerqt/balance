@@ -3,21 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option C: Warm Editorial & Chilean Label Octagons</title>
+  <title>Balance — Option C: Monochrome Chilean Octagons</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #FDFBF7;
-      --card-bg: #FFFFFF;
-      --card-border: #E8E5DF;
-      --text: #1C1C1E;
-      --text-muted: #6E6E73;
-      --olive: #3F5E4D;
-      --amber: #D97706;
-      --red: #DC2626;
-      --blue: #2563EB;
+      --bg: #050505;
+      --card-bg: #141414;
+      --border: #2E2E2E;
+      --text: #FFFFFF;
+      --text-muted: #888888;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
@@ -35,13 +31,12 @@
       width: 100%;
       max-width: 420px;
       background: var(--bg);
-      border: 1px solid var(--card-border);
-      border-radius: 2.5rem;
-      padding: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 2.25rem;
+      padding: 1.25rem;
       display: flex;
       flex-direction: column;
       gap: 1.25rem;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
     }
 
     .top-link { text-align: center; margin-bottom: 0.25rem; }
@@ -63,19 +58,18 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--card-border);
+      border-bottom: 1px solid var(--border);
       padding-bottom: 0.75rem;
     }
 
-    .header-title { font-size: 1.5rem; font-weight: 700; color: var(--text); }
-
-    /* Chilean Warning Octagon SVG Badge */
-    .chilean-octagon {
-      background: #000;
-      color: #FFF;
+    /* Chilean Black & White Octagon Warning Badges */
+    .chilean-octagon-bw {
+      background: #000000;
+      color: #FFFFFF;
+      border: 1.5px solid #FFFFFF;
       font-size: 0.65rem;
       font-weight: 800;
-      padding: 0.2rem 0.5rem;
+      padding: 0.25rem 0.5rem;
       border-radius: 0.2rem;
       display: inline-flex;
       align-items: center;
@@ -83,40 +77,46 @@
       letter-spacing: -0.02em;
     }
 
-    /* Editorial Journal Card */
-    .journal-card {
+    /* Executive Hero Card */
+    .hero-card {
       background: var(--card-bg);
-      border: 1px solid var(--card-border);
+      border: 1px solid var(--border);
       border-radius: 1.25rem;
-      padding: 1.25rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
+      padding: 1.5rem;
+      text-align: center;
     }
 
-    .hero-num { font-size: 2.5rem; font-weight: 700; color: var(--olive); line-height: 1; }
+    .hero-num {
+      font-size: 3.25rem;
+      font-weight: 800;
+      color: #FFF;
+      line-height: 1;
+      margin-top: 0.5rem;
+    }
 
-    .macro-bar-warm {
+    .macro-bar-mono {
       display: flex;
-      height: 12px;
+      height: 10px;
       border-radius: 9999px;
       overflow: hidden;
-      background: #E8E5DF;
+      background: #262626;
+      margin-top: 1.25rem;
     }
 
-    .macro-part { height: 100%; }
+    .macro-seg { height: 100%; }
 
-    .macro-legend {
+    .macro-legend-mono {
       display: flex;
       justify-content: space-between;
       font-size: 0.8rem;
       color: var(--text-muted);
+      margin-top: 0.75rem;
     }
 
-    /* Chilean Food Item Card */
-    .food-card-editorial {
+    /* Food Editorial Cards */
+    .food-card-mono {
       background: var(--card-bg);
-      border: 1px solid var(--card-border);
+      border: 1px solid var(--border);
       border-radius: 1rem;
       padding: 1rem;
       display: flex;
@@ -124,24 +124,20 @@
       gap: 0.5rem;
     }
 
-    .food-header {
+    .food-top {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
     }
 
-    .food-name { font-weight: 700; font-size: 0.95rem; }
-    .food-sub { font-size: 0.8rem; color: var(--text-muted); }
-
-    /* Bottom Button Bar */
-    .btn-warm {
-      background: var(--olive);
-      color: #FFF;
+    .btn-action-bw {
+      background: #FFFFFF;
+      color: #000000;
       border: none;
-      padding: 0.85rem 1.25rem;
+      padding: 0.9rem 1.25rem;
       border-radius: 1rem;
       font-size: 0.9rem;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -159,68 +155,63 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.8rem; color: var(--text-muted);">Diario Nutricional</div>
-          <div class="header-title">Balance Chile</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Monochrome Editorial</div>
+          <div style="font-size: 1.35rem; font-weight: 800;">Balance Chile</div>
         </div>
-        <div class="chilean-octagon">
+        <div class="chilean-octagon-bw">
           <svg class="icon" viewBox="0 0 24 24" style="stroke: #FFF;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           ALTO EN SODIO
         </div>
       </div>
 
-      <!-- Journal Warm Card -->
-      <div class="journal-card">
-        <div style="display: flex; justify-content: space-between; align-items: baseline;">
-          <div>
-            <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">Calorías Ingeridas</div>
-            <div class="hero-num">1,840 <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">kcal</span></div>
-          </div>
-          <span style="font-size: 0.85rem; font-weight: 600; color: var(--olive);">Meta: 2,200</span>
+      <!-- Hero Card -->
+      <div class="hero-card">
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Consumo Nutricional Acumulado</span>
+        <div class="hero-num">1,840</div>
+        <span style="font-size: 0.85rem; color: var(--text-muted);">de 2,200 kcal diaria</span>
+
+        <div class="macro-bar-mono">
+          <div class="macro-seg" style="width: 40%; background: #FFFFFF;"></div>
+          <div class="macro-seg" style="width: 35%; background: #888888;"></div>
+          <div class="macro-seg" style="width: 15%; background: #444444;"></div>
         </div>
 
-        <!-- Proportional Bar -->
-        <div class="macro-bar-warm">
-          <div class="macro-part" style="width: 35%; background: var(--blue);"></div>
-          <div class="macro-part" style="width: 45%; background: var(--olive);"></div>
-          <div class="macro-part" style="width: 20%; background: var(--amber);"></div>
-        </div>
-
-        <div class="macro-legend">
-          <span><strong style="color: var(--blue);">● Prot:</strong> 128g</span>
-          <span><strong style="color: var(--olive);">● Carbs:</strong> 190g</span>
-          <span><strong style="color: var(--amber);">● Grass:</strong> 52g</span>
+        <div class="macro-legend-mono">
+          <span><strong>● Prot:</strong> 128g</span>
+          <span><strong>● Carbs:</strong> 190g</span>
+          <span><strong>● Fat:</strong> 52g</span>
         </div>
       </div>
 
-      <!-- Food Items Editorial -->
-      <div style="font-size: 0.95rem; font-weight: 700; color: var(--text);">Alimentos Registrados Hoy</div>
+      <!-- Food List -->
+      <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Alimentos Registrados Hoy</div>
 
-      <div class="food-card-editorial">
-        <div class="food-header">
+      <div class="food-card-mono">
+        <div class="food-top">
           <div>
-            <div class="food-name">Pechuga de Pollo Ariztía</div>
-            <div class="food-sub">200g (1 porción) • 62g Proteína</div>
+            <div style="font-weight: 700; font-size: 0.95rem;">Pechuga de Pollo Ariztía</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">200g (1 porción) • P: 62g | C: 0g</div>
           </div>
-          <strong style="color: var(--olive);">330 kcal</strong>
+          <strong style="font-size: 1rem;">330 kcal</strong>
         </div>
       </div>
 
-      <div class="food-card-editorial">
-        <div class="food-header">
+      <div class="food-card-mono">
+        <div class="food-top">
           <div>
-            <div class="food-name">Yogurt Protein Soprole</div>
-            <div class="food-sub">150g (1 envase) • 15g Proteína</div>
+            <div style="font-weight: 700; font-size: 0.95rem;">Yogurt Protein Soprole (Chile)</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">150g (1 envase) • P: 15g | C: 8g</div>
           </div>
-          <strong style="color: var(--olive);">110 kcal</strong>
+          <strong style="font-size: 1rem;">110 kcal</strong>
         </div>
-        <div style="display: flex; gap: 0.4rem; margin-top: 0.2rem;">
-          <span class="chilean-octagon" style="background: #1C1C1E;">ALTO EN AZÚCARES</span>
+        <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
+          <span class="chilean-octagon-bw">ALTO EN AZÚCARES</span>
         </div>
       </div>
 
       <!-- Action Button -->
-      <button class="btn-warm">
-        <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <button class="btn-action-bw">
+        <svg class="icon" viewBox="0 0 24 24" style="stroke: #000;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         Escanear Etiqueta Chilena con IA
       </button>
     </div>

@@ -3,22 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option A: Technical & Precision (MacroFactor Style)</title>
+  <title>Balance — Option A: Monochrome Minimalist OLED</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #121214;
-      --panel: #1A1A1E;
-      --panel-border: #2A2A30;
-      --text: #EDEDF0;
-      --text-muted: #8E8E9A;
-      --accent-calories: #F97316; /* Warm Amber */
-      --accent-protein: #3B82F6;  /* Deep Blue */
-      --accent-carbs: #10B981;    /* Emerald Green */
-      --accent-fat: #EAB308;      /* Gold */
-      --accent-fiber: #06B6D4;    /* Cyan */
+      --bg: #000000;
+      --panel: #121212;
+      --panel-hover: #1A1A1A;
+      --border: #262626;
+      --text: #FFFFFF;
+      --text-muted: #8E8E93;
+      --accent: #FFFFFF;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
@@ -32,29 +29,26 @@
       padding: 1rem;
     }
 
-    .num { font-family: 'JetBrains Mono', monospace; }
-
-    .app-frame {
+    .phone-frame {
       width: 100%;
       max-width: 420px;
       background: var(--bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 1.5rem;
-      padding: 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: 2.5rem;
+      padding: 1.5rem;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.25rem;
     }
 
     .top-link { text-align: center; margin-bottom: 0.25rem; }
     .top-link a { color: var(--text-muted); font-size: 0.8rem; text-decoration: none; }
 
-    /* Custom SVG Icons */
     .icon {
       width: 18px;
       height: 18px;
       stroke: currentColor;
-      stroke-width: 2;
+      stroke-width: 1.8;
       stroke-linecap: round;
       stroke-linejoin: round;
       fill: none;
@@ -66,16 +60,18 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid var(--panel-border);
-      padding-bottom: 0.75rem;
     }
 
-    .user-tag {
-      font-size: 0.8rem;
-      color: var(--text-muted);
+    .user-pill {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
+      gap: 0.5rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
     }
 
     .date-nav {
@@ -83,9 +79,9 @@
       align-items: center;
       justify-content: space-between;
       background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.5rem;
-      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 0.6rem 1rem;
       font-size: 0.9rem;
       font-weight: 600;
     }
@@ -99,110 +95,113 @@
       align-items: center;
     }
 
-    /* Precision Macro Grid */
-    .macro-panel {
+    /* Monochrome Macro Card */
+    .macro-card {
       background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.75rem;
-      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      padding: 1.25rem;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 1rem;
     }
 
     .cal-header {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      border-bottom: 1px solid var(--panel-border);
-      padding-bottom: 0.5rem;
     }
 
-    .cal-main { font-size: 1.8rem; font-weight: 700; color: var(--accent-calories); }
-    .cal-target { font-size: 0.85rem; color: var(--text-muted); }
+    .cal-big { font-size: 2.25rem; font-weight: 700; color: #FFF; line-height: 1; }
 
-    .macro-table {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 0.5rem;
-      text-align: center;
-    }
-
-    .macro-col {
-      background: var(--bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.5rem;
-      padding: 0.5rem 0.25rem;
-    }
-
-    .macro-lbl { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; }
-    .macro-val { font-size: 0.95rem; font-weight: 700; margin-top: 0.2rem; }
-
-    /* Meal Items List */
-    .section-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 0.5rem;
-    }
-
-    .section-title { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
-
-    .meal-block {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 0.75rem;
+    .progress-bar-bg {
+      height: 6px;
+      background: #262626;
+      border-radius: 9999px;
       overflow: hidden;
     }
 
-    .meal-title-bar {
+    .progress-bar-fill { height: 100%; background: #FFF; border-radius: 9999px; }
+
+    .macro-grid-mono {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+    }
+
+    .macro-item-mono {
+      background: #0A0A0A;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 0.6rem 0.4rem;
+      text-align: center;
+    }
+
+    .macro-item-mono .lbl { font-size: 0.7rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+    .macro-item-mono .val { font-size: 0.95rem; font-weight: 700; color: #FFF; margin-top: 0.2rem; }
+
+    /* Meal Section */
+    .section-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .meal-block {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      overflow: hidden;
+    }
+
+    .meal-header {
+      padding: 0.75rem 1rem;
       background: rgba(255, 255, 255, 0.02);
-      border-bottom: 1px solid var(--panel-border);
-      padding: 0.6rem 0.85rem;
+      border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 0.85rem;
       font-weight: 600;
+      font-size: 0.9rem;
     }
 
-    .meal-row {
-      padding: 0.75rem 0.85rem;
+    .food-row {
+      padding: 0.75rem 1rem;
       border-bottom: 1px solid rgba(255, 255, 255, 0.04);
       display: flex;
       justify-content: space-between;
       align-items: center;
+      font-size: 0.875rem;
     }
 
-    .meal-row:last-child { border-bottom: none; }
+    .food-row:last-child { border-bottom: none; }
 
-    .food-name { font-size: 0.875rem; font-weight: 500; }
-    .food-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
+    .food-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
 
-    .portion-tag {
+    .unit-tag {
       display: inline-block;
       padding: 0.15rem 0.4rem;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--panel-border);
+      background: #1F1F1F;
+      border: 1px solid var(--border);
       border-radius: 0.25rem;
       font-size: 0.7rem;
       color: var(--text-muted);
     }
 
-    /* Bottom Action Controls */
+    /* Action Controls */
     .action-bar {
       display: flex;
       gap: 0.5rem;
       margin-top: auto;
     }
 
-    .btn-action {
+    .btn-mono {
       flex: 1;
-      padding: 0.75rem;
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      color: var(--text);
-      border-radius: 0.5rem;
+      padding: 0.85rem;
+      border-radius: 0.75rem;
       font-size: 0.85rem;
       font-weight: 600;
       cursor: pointer;
@@ -212,10 +211,16 @@
       gap: 0.4rem;
     }
 
-    .btn-action.primary {
-      background: var(--accent-protein);
-      border-color: var(--accent-protein);
-      color: #FFF;
+    .btn-mono.primary {
+      background: #FFFFFF;
+      color: #000000;
+      border: none;
+    }
+
+    .btn-mono.secondary {
+      background: var(--panel);
+      color: #FFFFFF;
+      border: 1px solid var(--border);
     }
   </style>
 </head>
@@ -223,17 +228,17 @@
   <div style="width: 100%; max-width: 420px;">
     <div class="top-link"><a href="/mockups/">← Volver al Explorador de Mockups</a></div>
 
-    <div class="app-frame">
+    <div class="phone-frame">
       <!-- Header -->
       <div class="header-bar">
         <div>
-          <div style="font-size: 1.1rem; font-weight: 700;">Balance Pro</div>
-          <div class="user-tag">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            fmju96@gmail.com
-          </div>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">Balance Monochrome</div>
+          <div style="font-size: 1.25rem; font-weight: 700;">Seguimiento Diario</div>
         </div>
-        <span style="font-size: 0.75rem; background: rgba(16, 185, 129, 0.15); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.3); padding: 0.2rem 0.5rem; border-radius: 0.25rem; font-weight: 600;">DB V1.0</span>
+        <div class="user-pill">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          fmju96
+        </div>
       </div>
 
       <!-- Date Selector -->
@@ -246,101 +251,102 @@
         <button><svg class="icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
       </div>
 
-      <!-- Precision Macro Panel -->
-      <div class="macro-panel">
+      <!-- Monochrome Macro Summary -->
+      <div class="macro-card">
         <div class="cal-header">
           <div>
-            <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Energía Total</div>
-            <div class="cal-main num">1,840 <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">kcal</span></div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Calorías Ingeridas</div>
+            <div class="cal-big">1,840 <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">/ 2,200 kcal</span></div>
           </div>
-          <div class="cal-target num">Meta: 2,200 (83%)</div>
+          <span style="font-size: 0.85rem; font-weight: 600; color: #FFF;">83%</span>
         </div>
 
-        <div class="macro-table">
-          <div class="macro-col">
-            <div class="macro-lbl">Proteínas</div>
-            <div class="macro-val num" style="color: var(--accent-protein);">128.5g</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" style="width: 83%;"></div>
+        </div>
+
+        <div class="macro-grid-mono">
+          <div class="macro-item-mono">
+            <div class="lbl">Proteína</div>
+            <div class="val">128g</div>
           </div>
-          <div class="macro-col">
-            <div class="macro-lbl">Carbs</div>
-            <div class="macro-val num" style="color: var(--accent-carbs);">190.0g</div>
+          <div class="macro-item-mono">
+            <div class="lbl">Carbs</div>
+            <div class="val">190g</div>
           </div>
-          <div class="macro-col">
-            <div class="macro-lbl">Grasas</div>
-            <div class="macro-val num" style="color: var(--accent-fat);">52.0g</div>
+          <div class="macro-item-mono">
+            <div class="lbl">Grasa</div>
+            <div class="val">52g</div>
           </div>
-          <div class="macro-col">
-            <div class="macro-lbl">Fibra</div>
-            <div class="macro-val num" style="color: var(--accent-fiber);">26.5g</div>
+          <div class="macro-item-mono">
+            <div class="lbl">Fibra</div>
+            <div class="val">26g</div>
           </div>
         </div>
       </div>
 
       <!-- Meal Section -->
-      <div class="section-header">
-        <span class="section-title">Registro por Comidas</span>
-        <span style="font-size: 0.75rem; color: var(--text-muted);">3 comidas registradas</span>
-      </div>
+      <div class="section-title">Comidas Registradas</div>
 
-      <!-- Meal 1: Almuerzo -->
+      <!-- Almuerzo -->
       <div class="meal-block">
-        <div class="meal-title-bar">
+        <div class="meal-header">
           <span style="display: flex; align-items: center; gap: 0.4rem;">
             <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             Almuerzo (13:30)
           </span>
-          <span class="num" style="color: var(--accent-calories);">740 kcal</span>
+          <span style="font-weight: 700;">740 kcal</span>
         </div>
 
-        <div class="meal-row">
+        <div class="food-row">
           <div>
-            <div class="food-name">Pechuga de Pollo Cocida</div>
-            <div class="food-meta">
-              <span class="portion-tag num">200g</span> • P: 62.0g | C: 0g | G: 7.2g
+            <div style="font-weight: 600;">Pechuga de Pollo Cocida</div>
+            <div class="food-sub">
+              <span class="unit-tag">200g</span> • P: 62g | C: 0g | G: 7.2g
             </div>
           </div>
-          <span class="num" style="font-size: 0.85rem; font-weight: 600;">330 kcal</span>
+          <span style="font-weight: 600;">330 kcal</span>
         </div>
 
-        <div class="meal-row">
+        <div class="food-row">
           <div>
-            <div class="food-name">Arroz Integral Soprole (Chile)</div>
-            <div class="food-meta">
-              <span class="portion-tag num">250g (1.5 taza)</span> • P: 6.0g | C: 58g | Fibra: 4.5g
+            <div style="font-weight: 600;">Arroz Integral Cocido</div>
+            <div class="food-sub">
+              <span class="unit-tag">250g (1.5 taza)</span> • P: 6g | C: 58g | Fibra: 4.5g
             </div>
           </div>
-          <span class="num" style="font-size: 0.85rem; font-weight: 600;">275 kcal</span>
+          <span style="font-weight: 600;">275 kcal</span>
         </div>
       </div>
 
-      <!-- Meal 2: Snack -->
+      <!-- Snack -->
       <div class="meal-block">
-        <div class="meal-title-bar">
+        <div class="meal-header">
           <span style="display: flex; align-items: center; gap: 0.4rem;">
             <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Snack Tarde (17:45)
+            Snack (17:45)
           </span>
-          <span class="num" style="color: var(--accent-calories);">310 kcal</span>
+          <span style="font-weight: 700;">310 kcal</span>
         </div>
 
-        <div class="meal-row">
+        <div class="food-row">
           <div>
-            <div class="food-name">Yogurt Protein Soprole</div>
-            <div class="food-meta">
-              <span class="portion-tag num">150g (1 envase)</span> • P: 15.0g | C: 8.0g | Sodio: 65mg
+            <div style="font-weight: 600;">Yogurt Protein Soprole (Chile)</div>
+            <div class="food-sub">
+              <span class="unit-tag">150g (1 envase)</span> • P: 15g | C: 8g | Sodio: 65mg
             </div>
           </div>
-          <span class="num" style="font-size: 0.85rem; font-weight: 600;">110 kcal</span>
+          <span style="font-weight: 600;">110 kcal</span>
         </div>
       </div>
 
       <!-- Actions -->
       <div class="action-bar">
-        <button class="btn-action primary">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          Escáner IA
+        <button class="btn-mono primary">
+          <svg class="icon" viewBox="0 0 24 24" style="stroke: #000;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Escanear Etiqueta IA
         </button>
-        <button class="btn-action">
+        <button class="btn-mono secondary">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Buscar Alimento
         </button>
