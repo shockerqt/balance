@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — UI Design System & Component Library</title>
+  <title>Balance — Compact Mobile UI Design System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
       /* Colors */
@@ -22,10 +22,10 @@
       --accent-cyan: #38BDF8;
       --accent-green: #4ADE80;
 
-      /* Radii */
-      --radius-sm: 0.5rem;
-      --radius-md: 1rem;
-      --radius-lg: 1.5rem;
+      /* Compact Scaling */
+      --radius-sm: 0.35rem;  /* 6px */
+      --radius-md: 0.75rem;  /* 12px */
+      --radius-lg: 1rem;     /* 16px */
       --radius-full: 9999px;
     }
 
@@ -35,92 +35,105 @@
       background: var(--bg);
       color: var(--text-primary);
       min-height: 100vh;
-      padding: 2.5rem 1.5rem;
-      background-image: 
-        radial-gradient(circle at 10% 10%, rgba(192, 132, 252, 0.1) 0%, transparent 40%),
-        radial-gradient(circle at 90% 90%, rgba(56, 189, 248, 0.1) 0%, transparent 40%);
+      padding: 1.5rem 1rem;
+      font-size: 14px; /* Standard Compact Base Size */
     }
 
     .num { font-family: 'JetBrains Mono', monospace; }
 
-    .container { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 3rem; }
+    .container { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
 
     header {
       border-bottom: 1px solid var(--card-border);
-      padding-bottom: 1.5rem;
+      padding-bottom: 1rem;
     }
 
     .header-badge {
       display: inline-block;
-      padding: 0.35rem 0.85rem;
+      padding: 0.2rem 0.6rem;
       background: var(--pill-bg);
       border: 1px solid var(--pill-border);
       color: var(--accent-cyan);
       border-radius: var(--radius-full);
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 0.75rem;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
     }
 
-    h1 { font-size: 2.5rem; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 0.5rem; }
-    p.subtitle { color: var(--text-secondary); font-size: 1.05rem; }
+    h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
+    p.subtitle { color: var(--text-secondary); font-size: 0.85rem; }
 
-    /* Specimen Section */
-    .section {
+    /* Mobile Frame Preview Container */
+    .mobile-frame-wrapper {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+
+    .mobile-frame {
+      width: 100%;
+      max-width: 390px; /* Standard Mobile Viewport Width */
+      background: var(--bg);
+      border: 1px solid var(--card-border);
+      border-radius: 1.75rem;
+      padding: 1rem;
       display: flex;
       flex-direction: column;
-      gap: 1.25rem;
+      gap: 1rem;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
     }
+
+    /* Section Specimen */
+    .section { display: flex; flex-direction: column; gap: 0.85rem; }
 
     .section-header {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       border-bottom: 1px solid var(--card-border);
-      padding-bottom: 0.5rem;
+      padding-bottom: 0.35rem;
     }
 
-    .section-title { font-size: 1.25rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-primary); }
-    .section-desc { font-size: 0.85rem; color: var(--text-secondary); }
+    .section-title { font-size: 0.95rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-primary); }
+    .section-desc { font-size: 0.75rem; color: var(--text-secondary); }
 
-    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; }
-    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; }
-    .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.85rem; }
 
-    /* 1. Surfaces & Containers */
+    /* Compact Surfaces */
     .surface-card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: var(--radius-lg);
-      padding: 1.5rem;
+      padding: 0.85rem 1rem;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
-      position: relative;
+      gap: 0.5rem;
     }
 
-    .surface-card.sm { border-radius: var(--radius-sm); padding: 1rem; }
-    .surface-card.md { border-radius: var(--radius-md); padding: 1.25rem; }
+    .surface-card.sm { border-radius: var(--radius-sm); padding: 0.6rem 0.75rem; }
+    .surface-card.md { border-radius: var(--radius-md); padding: 0.75rem 0.85rem; }
 
-    .surface-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.06em; }
+    .surface-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.05em; }
 
-    /* 2. Buttons Specimen */
-    .btn-group { display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: center; }
+    /* Compact Buttons (36px Height Standard) */
+    .btn-group { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
-      padding: 0.85rem 1.5rem;
-      font-size: 0.9rem;
+      gap: 0.4rem;
+      padding: 0.45rem 0.85rem;
+      font-size: 0.8rem;
       font-weight: 700;
+      height: 36px;
       border-radius: var(--radius-full);
       cursor: pointer;
       border: 1px solid transparent;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: all 0.15s ease;
       text-decoration: none;
     }
 
@@ -139,14 +152,13 @@
 
     .btn-outline {
       background: transparent;
-      border-color: rgba(255, 255, 255, 0.25);
+      border-color: rgba(255, 255, 255, 0.2);
       color: var(--text-primary);
     }
-    .btn-outline:hover { border-color: #FFF; }
 
     .btn-icon {
-      width: 44px;
-      height: 44px;
+      width: 34px;
+      height: 34px;
       padding: 0;
       border-radius: 50%;
       background: var(--pill-bg);
@@ -154,68 +166,61 @@
       color: var(--text-primary);
     }
 
-    /* 3. Typography Specimen */
-    .type-specimen { display: flex; flex-direction: column; gap: 0.75rem; }
-    .t-display { font-size: 3rem; font-weight: 900; line-height: 1; letter-spacing: -0.04em; }
-    .t-h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
-    .t-h2 { font-size: 1.35rem; font-weight: 700; }
-    .t-body { font-size: 0.95rem; color: var(--text-secondary); line-height: 1.6; }
-    .t-mono { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; }
+    /* Compact Typography */
+    .t-display { font-size: 1.8rem; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+    .t-h1 { font-size: 1.25rem; font-weight: 800; }
+    .t-h2 { font-size: 1rem; font-weight: 700; }
+    .t-body { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; }
+    .t-mono { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 700; }
 
-    /* 4. Tags & Badges Specimen */
-    .badge-group { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    /* Compact Badges */
+    .badge-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     
     .badge {
       display: inline-flex;
       align-items: center;
-      gap: 0.35rem;
-      padding: 0.3rem 0.75rem;
+      gap: 0.25rem;
+      padding: 0.2rem 0.55rem;
       border-radius: var(--radius-full);
-      font-size: 0.75rem;
+      font-size: 0.65rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.04em;
     }
 
-    .badge-pill-neutral { background: var(--pill-bg); border: 1px solid var(--pill-border); color: var(--text-secondary); }
+    .badge-pill-dark { background: var(--pill-bg); border: 1px solid var(--pill-border); color: var(--text-secondary); }
     .badge-neon-purple { background: rgba(192, 132, 252, 0.15); border: 1px solid rgba(192, 132, 252, 0.3); color: var(--accent-purple); }
     .badge-neon-cyan { background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--accent-cyan); }
     
-    /* Chilean Warning Octagon Badge */
     .chilean-octagon-badge {
       background: #000000;
       color: #FFFFFF;
       border: 1.5px solid #FFFFFF;
-      font-size: 0.65rem;
-      font-weight: 900;
-      padding: 0.25rem 0.5rem;
+      font-size: 0.6rem;
+      font-weight: 800;
+      padding: 0.15rem 0.4rem;
       border-radius: 0.2rem;
       letter-spacing: -0.02em;
     }
 
-    /* 5. Inputs & Controls */
-    .input-group { display: flex; flex-direction: column; gap: 0.5rem; }
-    .input-label { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; }
-
+    /* Compact Inputs */
     .input-field {
       width: 100%;
-      padding: 0.85rem 1.1rem;
+      height: 38px;
+      padding: 0.45rem 0.75rem;
       background: var(--card-bg);
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       color: var(--text-primary);
-      font-size: 0.95rem;
+      font-size: 0.85rem;
       outline: none;
-      transition: border-color 0.2s;
     }
 
-    .input-field:focus { border-color: rgba(255, 255, 255, 0.3); }
-
-    /* 6. SVG Icon Specimen */
-    .icon-grid { display: flex; flex-wrap: wrap; gap: 1rem; }
+    /* Compact SVG Icons (16px x 16px) */
+    .icon-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; }
     .icon-box {
-      width: 50px;
-      height: 50px;
+      width: 36px;
+      height: 36px;
       background: var(--pill-bg);
       border: 1px solid var(--pill-border);
       border-radius: var(--radius-md);
@@ -225,198 +230,85 @@
       color: var(--text-primary);
     }
 
-    .svg-icon { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    .svg-icon { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <div class="header-badge">Balance UI Token Specimen</div>
-      <h1>DESIGN SYSTEM & COMPONENT LIBRARY</h1>
-      <p class="subtitle">Librería de estilos, superficies, botones, tipografía, badges, inputs y componentes visuales para la aplicación.</p>
+      <div class="header-badge">Compact Mobile UI System (390px Scale)</div>
+      <h1>COMPACT COMPONENT LIBRARY</h1>
+      <p class="subtitle">Tamaños estandarizados y compactos optimizados para pantallas de teléfonos móviles.</p>
     </header>
 
-    <!-- SECTION 1: SURFACES & CONTAINERS -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">01. Superficies & Contenedores</h2>
-        <span class="section-desc">Jerarquía de contenedores oscuros con bordes suaves y radios</span>
-      </div>
-
-      <div class="grid-3">
-        <div class="surface-card">
-          <span class="surface-label">Surface Large (24px Radius)</span>
-          <div style="font-size: 1.1rem; font-weight: 700;">Contenedor Principal</div>
-          <p style="font-size: 0.85rem; color: var(--text-secondary);">Fondo mate (#141622) con borde interior tenue de 1px.</p>
+    <!-- MOBILE FRAME SIMULATION -->
+    <div class="mobile-frame-wrapper">
+      <div class="mobile-frame">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 0.7rem; font-weight: 700; color: var(--text-secondary);">390px Mobile Viewport</span>
+          <span class="badge badge-pill-dark">COMPACT SCALE</span>
         </div>
 
+        <!-- 1. COMPACT SURFACES -->
+        <div class="surface-card">
+          <span class="surface-label">Surface Card (16px Radius • 14px Padding)</span>
+          <div style="font-size: 0.95rem; font-weight: 700;">Contenedor Compacto</div>
+          <p class="t-body">Tarjeta ajustada para evitar sobrecargar la pantalla en dispositivos móviles.</p>
+        </div>
+
+        <!-- 2. COMPACT BUTTONS -->
         <div class="surface-card md">
-          <span class="surface-label">Surface Medium (16px Radius)</span>
-          <div style="font-size: 1rem; font-weight: 700;">Tarjeta Secundaria</div>
-          <p style="font-size: 0.85rem; color: var(--text-secondary);">Para agrupación de información y listas.</p>
-        </div>
-
-        <div class="surface-card sm">
-          <span class="surface-label">Surface Small (8px Radius)</span>
-          <div style="font-size: 0.9rem; font-weight: 700;">Sub-bloque / Chip</div>
-          <p style="font-size: 0.8rem; color: var(--text-secondary);">Para cajas numéricas o métricas rápidas.</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 2: BUTTONS -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">02. Botones & Acciones</h2>
-        <span class="section-desc">Estilos tipo píldora Dribbble, sólidos y contornos</span>
-      </div>
-
-      <div class="surface-card">
-        <div class="btn-group">
-          <button class="btn btn-pill-dark">
-            <svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            Boton Píldora Mate (Default)
-          </button>
-
-          <button class="btn btn-solid-white">
-            Boton Sólido Blanco
-          </button>
-
-          <button class="btn btn-outline">
-            Boton Contorno
-          </button>
-
-          <button class="btn btn-icon">
-            <svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 3: TYPOGRAPHY -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">03. Tipografía & Números</h2>
-        <span class="section-desc">Inter para interfaz + JetBrains Mono para precisión tabular</span>
-      </div>
-
-      <div class="grid-2">
-        <div class="surface-card">
-          <div class="type-specimen">
-            <span class="surface-label">Display Heading</span>
-            <div class="t-display">2,200</div>
-
-            <span class="surface-label">Heading 1</span>
-            <div class="t-h1">Resumen Diario</div>
-
-            <span class="surface-label">Heading 2</span>
-            <div class="t-h2">Alimentos Registrados</div>
-
-            <span class="surface-label">Body Text</span>
-            <p class="t-body">Texto secundario explicativo para descripciones de nutrientes y diagnósticos.</p>
+          <span class="surface-label">Botones Compactos (36px Height)</span>
+          <div class="btn-group">
+            <button class="btn btn-pill-dark">
+              <svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Escanear IA
+            </button>
+            <button class="btn btn-solid-white">Aceptar</button>
+            <button class="btn btn-icon">
+              <svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
           </div>
         </div>
 
-        <div class="surface-card">
-          <div class="type-specimen">
-            <span class="surface-label">Métricas Tabulares (JetBrains Mono)</span>
-            <div class="t-mono" style="color: var(--accent-purple);">PROTEINA: 128.5g</div>
-            <div class="t-mono" style="color: var(--accent-cyan);">CARBOHIDRATOS: 190.0g</div>
-            <div class="t-mono" style="color: var(--accent-green);">GRASAS TOTALES: 52.0g</div>
-            <div class="t-mono" style="color: var(--text-primary);">FIBRA DIETETICA: 26.5g</div>
+        <!-- 3. COMPACT TYPOGRAPHY & MONO METRICS -->
+        <div class="surface-card md">
+          <span class="surface-label">Tipografía & Métricas Mono</span>
+          <div class="t-display num">1,840 <span style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">/ 2,200 kcal</span></div>
+          
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35rem; margin-top: 0.35rem;" class="t-mono">
+            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">P:128g</div>
+            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">C:190g</div>
+            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">G:52g</div>
+            <div style="background: #000; border: 1px solid var(--card-border); padding: 0.35rem 0.2rem; border-radius: 0.35rem; text-align: center; font-size: 0.75rem;">F:26g</div>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- SECTION 4: BADGES & CHILEAN SEALS -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">04. Badges & Sellos Chilenos</h2>
-        <span class="section-desc">Píldoras de estado y octágonos de advertencia ley de etiquetado</span>
-      </div>
-
-      <div class="surface-card">
-        <div class="badge-group" style="align-items: center;">
-          <span class="badge badge-pill-dark">PRO MEMBER</span>
-          <span class="badge badge-neon-purple">PROTEINA ALTA</span>
-          <span class="badge badge-neon-cyan">SCANNER IA</span>
-
-          <!-- Chilean Seals -->
-          <div style="display: flex; gap: 0.4rem; margin-left: 1rem;">
+        <!-- 4. BADGES & CHILEAN SEALS -->
+        <div class="surface-card md">
+          <span class="surface-label">Badges & Octágonos Chilenos</span>
+          <div class="badge-group">
+            <span class="badge badge-neon-purple">PROTEÍNA ALTA</span>
             <span class="chilean-octagon-badge">ALTO EN SODIO</span>
             <span class="chilean-octagon-badge">ALTO EN AZÚCARES</span>
-            <span class="chilean-octagon-badge">ALTO EN CALORÍAS</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 5: FORM INPUTS & SEARCH -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">05. Entradas de Texto & Búsqueda</h2>
-        <span class="section-desc">Campos de búsqueda con íconos integrados</span>
-      </div>
-
-      <div class="surface-card">
-        <div class="input-group">
-          <span class="input-label">Buscar Alimento en Base de Datos</span>
-          <div style="position: relative;">
-            <input type="text" class="input-field" placeholder="Escribe el nombre del alimento (ej. Pechuga de Pollo)..." value="Pechuga de Pollo Ariztía">
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 6: SVG ICON LIBRARY -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">06. Librería de Íconos Vectoriales SVG</h2>
-        <span class="section-desc">Íconos vectoriales personalizados</span>
-      </div>
-
-      <div class="surface-card">
-        <div class="icon-grid">
-          <div class="icon-box" title="Cámara Escáner"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
-          <div class="icon-box" title="Buscador"><svg class="svg-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-          <div class="icon-box" title="Calendario"><svg class="svg-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
-          <div class="icon-box" title="Usuario"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-          <div class="icon-box" title="Agregar Plus"><svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
-          <div class="icon-box" title="Gráfico Stats"><svg class="svg-icon" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>
-          <div class="icon-box" title="Escudo Advertencia"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 7: VISUAL ARTWORKS -->
-    <div class="section">
-      <div class="section-header">
-        <h2 class="section-title">07. Contenedores de Arte Visual & Gráficas</h2>
-        <span class="section-desc">Banners de imagen iridiscente y gráficos de onda neón</span>
-      </div>
-
-      <div class="grid-2">
-        <div class="surface-card">
-          <span class="surface-label">Hero Iridescent Banner Frame</span>
-          <div style="width: 100%; height: 160px; border-radius: var(--radius-md); overflow: hidden; margin-top: 0.5rem;">
-            <img src="/mockups/assets/hero_fluid.jpg" alt="Hero Fluid" style="width: 100%; height: 100%; object-fit: cover;">
           </div>
         </div>
 
-        <div class="surface-card">
-          <span class="surface-label">Neon Waveform Graph Container</span>
-          <div style="width: 100%; height: 160px; display: flex; align-items: center; justify-content: center;">
-            <svg width="100%" height="80" viewBox="0 0 350 80" fill="none">
-              <defs>
-                <linearGradient id="tokenGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stop-color="#C084FC" />
-                  <stop offset="50%" stop-color="#38BDF8" />
-                  <stop offset="100%" stop-color="#4ADE80" />
-                </linearGradient>
-              </defs>
-              <path d="M 0 40 Q 50 10, 100 45 T 200 25 T 300 55 T 350 20" stroke="url(#tokenGradient)" stroke-width="4" fill="none" stroke-linecap="round" />
-            </svg>
+        <!-- 5. INPUT & SEARCH FIELD -->
+        <div class="surface-card md">
+          <span class="surface-label">Campo de Búsqueda (38px Height)</span>
+          <input type="text" class="input-field" placeholder="Buscar alimento (ej. Pechuga Pollo)..." value="Pechuga de Pollo Ariztía">
+        </div>
+
+        <!-- 6. SVG ICONS -->
+        <div class="surface-card md">
+          <span class="surface-label">Íconos Vectoriales SVG (16px x 16px)</span>
+          <div class="icon-grid">
+            <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+            <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+            <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+            <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+            <div class="icon-box"><svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
           </div>
         </div>
       </div>
