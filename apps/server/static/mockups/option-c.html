@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Balance — Option C: Indigo Chilean Octagons</title>
+  <title>Balance — Option C: Minimal Cyber Octagons</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #090C15;
-      --card-bg: #111726;
-      --border: #1E293B;
+      --bg: #040406;
+      --card-bg: #0D0D14;
+      --border: rgba(255, 255, 255, 0.15);
+      --red: #FF0055;
+      --cyan: #00FFFF;
       --text: #FFFFFF;
-      --text-muted: #94A3B8;
-      --indigo: #6366F1;
-      --indigo-light: #818CF8;
+      --text-muted: #8E8E9F;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
 
     body {
       background: var(--bg);
@@ -29,16 +29,23 @@
       padding: 1rem;
     }
 
+    .num { font-family: 'JetBrains Mono', monospace; }
+
+    .chroma-text {
+      text-shadow: -2px 0 0 var(--red), 2px 0 0 var(--cyan);
+    }
+
     .phone-frame {
       width: 100%;
       max-width: 420px;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 2.25rem;
+      border-radius: 2rem;
       padding: 1.25rem;
       display: flex;
       flex-direction: column;
       gap: 1.25rem;
+      box-shadow: -3px 0 15px rgba(255, 0, 85, 0.2), 3px 0 15px rgba(0, 255, 255, 0.2);
     }
 
     .top-link { text-align: center; margin-bottom: 0.25rem; }
@@ -52,8 +59,6 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       fill: none;
-      display: inline-block;
-      vertical-align: middle;
     }
 
     .header-bar {
@@ -64,13 +69,14 @@
       padding-bottom: 0.75rem;
     }
 
-    /* Chilean Black & White Octagon Warning Badges */
-    .chilean-octagon-bw {
+    /* Chilean Black & White Octagon Warning Badges with Chromatic Aberration */
+    .chilean-octagon-chroma {
       background: #000000;
       color: #FFFFFF;
       border: 1.5px solid #FFFFFF;
+      box-shadow: -2px 0 0 var(--red), 2px 0 0 var(--cyan);
       font-size: 0.65rem;
-      font-weight: 800;
+      font-weight: 900;
       padding: 0.25rem 0.5rem;
       border-radius: 0.2rem;
       display: inline-flex;
@@ -86,28 +92,29 @@
       border-radius: 1.25rem;
       padding: 1.5rem;
       text-align: center;
+      box-shadow: -2px 0 10px rgba(255, 0, 85, 0.15), 2px 0 10px rgba(0, 255, 255, 0.15);
     }
 
     .hero-num {
       font-size: 3.25rem;
-      font-weight: 800;
+      font-weight: 900;
       color: #FFF;
       line-height: 1;
       margin-top: 0.5rem;
     }
 
-    .macro-bar-indigo {
+    .macro-bar-chroma {
       display: flex;
       height: 10px;
       border-radius: 9999px;
       overflow: hidden;
-      background: #1E293B;
+      background: #181824;
       margin-top: 1.25rem;
     }
 
     .macro-seg { height: 100%; }
 
-    .macro-legend-indigo {
+    .macro-legend-chroma {
       display: flex;
       justify-content: space-between;
       font-size: 0.8rem;
@@ -132,14 +139,15 @@
       align-items: flex-start;
     }
 
-    .btn-action-indigo {
-      background: var(--indigo);
+    .btn-action-chroma {
+      background: #000000;
       color: #FFFFFF;
-      border: none;
+      border: 1.5px solid #FFFFFF;
+      box-shadow: -3px 0 0 var(--red), 3px 0 0 var(--cyan);
       padding: 0.9rem 1.25rem;
-      border-radius: 1rem;
+      border-radius: 0.75rem;
       font-size: 0.9rem;
-      font-weight: 700;
+      font-weight: 800;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -147,7 +155,12 @@
       gap: 0.5rem;
       width: 100%;
       margin-top: auto;
-      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+      transition: all 0.15s ease;
+    }
+
+    .btn-action-chroma:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: -4px 0 10px var(--red), 4px 0 10px var(--cyan);
     }
   </style>
 </head>
@@ -158,10 +171,10 @@
     <div class="phone-frame">
       <div class="header-bar">
         <div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Monochrome Indigo</div>
-          <div style="font-size: 1.35rem; font-weight: 800;">Balance Chile</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 800;">CYBER CHILE LABELS</div>
+          <div style="font-size: 1.35rem; font-weight: 900;" class="chroma-text">BALANCE CHROMA</div>
         </div>
-        <div class="chilean-octagon-bw">
+        <div class="chilean-octagon-chroma">
           <svg class="icon" viewBox="0 0 24 24" style="stroke: #FFF;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           ALTO EN SODIO
         </div>
@@ -169,51 +182,51 @@
 
       <!-- Hero Card -->
       <div class="hero-card">
-        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Consumo Nutricional Acumulado</span>
-        <div class="hero-num">1,840</div>
-        <span style="font-size: 0.85rem; color: var(--indigo-light); font-weight: 600;">de 2,200 kcal recomendadas</span>
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;" class="chroma-text">CONSUMO NUTRICIONAL ACUMULADO</span>
+        <div class="hero-num num chroma-text">1,840</div>
+        <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted);">DE 2,200 KCAL</span>
 
-        <div class="macro-bar-indigo">
-          <div class="macro-seg" style="width: 40%; background: var(--indigo);"></div>
-          <div class="macro-seg" style="width: 35%; background: var(--indigo-light);"></div>
-          <div class="macro-seg" style="width: 15%; background: #334155;"></div>
+        <div class="macro-bar-chroma">
+          <div class="macro-seg" style="width: 40%; background: #FFFFFF; box-shadow: -2px 0 0 var(--red);"></div>
+          <div class="macro-seg" style="width: 35%; background: #888888;"></div>
+          <div class="macro-seg" style="width: 15%; background: #444444; box-shadow: 2px 0 0 var(--cyan);"></div>
         </div>
 
-        <div class="macro-legend-indigo">
-          <span><strong style="color: #FFF;">● Prot:</strong> 128g</span>
-          <span><strong style="color: #FFF;">● Carbs:</strong> 190g</span>
-          <span><strong style="color: #FFF;">● Fat:</strong> 52g</span>
+        <div class="macro-legend-chroma num">
+          <span class="chroma-text"><strong>● PROT:</strong> 128g</span>
+          <span class="chroma-text"><strong>● CARBS:</strong> 190g</span>
+          <span class="chroma-text"><strong>● FAT:</strong> 52g</span>
         </div>
       </div>
 
       <!-- Food List -->
-      <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Alimentos Registrados Hoy</div>
+      <div style="font-size: 0.8rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted);" class="chroma-text">ALIMENTOS REGISTRADOS HOY</div>
 
       <div class="food-card">
         <div class="food-top">
           <div>
-            <div style="font-weight: 700; font-size: 0.95rem;">Pechuga de Pollo Ariztía</div>
-            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">200g (1 porción) • P: 62g | C: 0g</div>
+            <div style="font-weight: 800; font-size: 0.95rem;">Pechuga de Pollo Ariztía</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;" class="num">200g (1 porción) • P: 62g | C: 0g</div>
           </div>
-          <strong style="font-size: 1rem; color: var(--indigo-light);">330 kcal</strong>
+          <strong style="font-size: 1rem;" class="num chroma-text">330 kcal</strong>
         </div>
       </div>
 
       <div class="food-card">
         <div class="food-top">
           <div>
-            <div style="font-weight: 700; font-size: 0.95rem;">Yogurt Protein Soprole (Chile)</div>
-            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">150g (1 envase) • P: 15g | C: 8g</div>
+            <div style="font-weight: 800; font-size: 0.95rem;">Yogurt Protein Soprole (Chile)</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;" class="num">150g (1 envase) • P: 15g | C: 8g</div>
           </div>
-          <strong style="font-size: 1rem; color: var(--indigo-light);">110 kcal</strong>
+          <strong style="font-size: 1rem;" class="num chroma-text">110 kcal</strong>
         </div>
         <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
-          <span class="chilean-octagon-bw">ALTO EN AZÚCARES</span>
+          <span class="chilean-octagon-chroma">ALTO EN AZÚCARES</span>
         </div>
       </div>
 
       <!-- Action Button -->
-      <button class="btn-action-indigo">
+      <button class="btn-action-chroma">
         <svg class="icon" viewBox="0 0 24 24" style="stroke: #FFF;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         Escanear Etiqueta Chilena con IA
       </button>
