@@ -47,8 +47,9 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}>
-      {sortedTimes.map((timeKey) => {
+      {sortedTimes.map((timeKey, index) => {
         const groupFoods = groupedFoods[timeKey];
+        const isLastGroup = index === sortedTimes.length - 1;
 
         // Calculate macro & calorie totals for this timestamp group
         const groupCalories = groupFoods.reduce((acc, f) => acc + (f.calories || 0), 0);
@@ -57,20 +58,28 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
         const groupFat = groupFoods.reduce((acc, f) => acc + (f.fat || 0), 0);
 
         return (
-          <View key={timeKey} style={styles.timeBlock}>
-            {/* Timestamp Group Header: Time + Macro Summary + Circular (+) Add Button */}
-            <View style={styles.timeHeaderRow}>
-              <View style={styles.timeTitleBox}>
-                <Text style={styles.timeText}>{timeKey}</Text>
-                <Text style={styles.dotSeparator}>·</Text>
-                <Text style={styles.groupKcalText}>{groupCalories} kcal</Text>
-                <Text style={styles.dotSeparator}>·</Text>
+          <View key={timeKey} style={styles.timelineGroupBlock}>
+            {/* Timestamp Header Row with Timeline Node Bullet */}
+            <View style={styles.headerRow}>
+              {/* Bullet Node Indicator */}
+              <View style={styles.bulletNodeContainer}>
+                <View style={styles.bulletNode} />
+              </View>
+
+              {/* Title & Macro Summary */}
+              <View style={styles.headerTitleBox}>
+                <View style={styles.timeKcalRow}>
+                  <Text style={styles.timeText}>{timeKey}</Text>
+                  <Text style={styles.dotSeparator}>·</Text>
+                  <Text style={styles.groupKcalText}>{groupCalories} kcal</Text>
+                </View>
+
                 <Text style={styles.groupMacroText}>
-                  P {groupProtein}g  C {groupCarbs}g  G {groupFat}g
+                  P {groupProtein}g  ·  C {groupCarbs}g  ·  G {groupFat}g
                 </Text>
               </View>
 
-              {/* Circular (+) Add Button */}
+              {/* (+) Circular Add Button */}
               <TouchableOpacity
                 style={styles.addCircleBtn}
                 delayPressIn={0}
@@ -81,16 +90,22 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Continuous food list for this timestamp */}
-            <View style={styles.foodListContainer}>
-              {groupFoods.map((food) => (
-                <FoodRow
-                  key={food.id}
-                  food={food}
-                  onPress={onSelectFood}
-                  onDelete={onDeleteFood}
-                />
-              ))}
+            {/* Timeline Content Block (Vertical Line + Indented Foods List) */}
+            <View style={styles.contentBodyRow}>
+              {/* Vertical Connecting Line */}
+              <View style={[styles.timelineVerticalLine, isLastGroup && styles.timelineLineLast]} />
+
+              {/* Food List Container */}
+              <View style={styles.foodItemsWrapper}>
+                {groupFoods.map((food) => (
+                  <FoodRow
+                    key={food.id}
+                    food={food}
+                    onPress={onSelectFood}
+                    onDelete={onDeleteFood}
+                  />
+                ))}
+              </View>
             </View>
           </View>
         );
@@ -105,7 +120,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#080B11',
   },
   scrollContent: {
-    paddingVertical: 12,
+    paddingVertical: 16,
     paddingHorizontal: 16,
     paddingBottom: 80,
   },
@@ -139,29 +154,40 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
   },
-  timeBlock: {
-    marginBottom: 20,
+  timelineGroupBlock: {
+    marginBottom: 12,
   },
-  timeHeaderRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
-    marginBottom: 4,
+    minHeight: 36,
   },
-  timeTitleBox: {
-    flexDirection: 'row',
+  bulletNodeContainer: {
+    width: 24,
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
+    justifyContent: 'center',
+  },
+  bulletNode: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#080B11',
+    borderWidth: 2.5,
+    borderColor: '#3B82F6',
+    boxShadow: '0 0 6px rgba(59, 130, 246, 0.5)',
+  },
+  headerTitleBox: {
     flex: 1,
-    paddingRight: 8,
+    paddingLeft: 8,
+  },
+  timeKcalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   timeText: {
     color: '#F8FAFC',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
@@ -171,14 +197,15 @@ const styles = StyleSheet.create({
   },
   groupKcalText: {
     color: '#F87171',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   groupMacroText: {
     color: '#8E9BAE',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
+    marginTop: 1,
     fontVariant: ['tabular-nums'],
   },
   addCircleBtn: {
@@ -197,7 +224,21 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: -1,
   },
-  foodListContainer: {
-    backgroundColor: '#080B11',
+  contentBodyRow: {
+    flexDirection: 'row',
+    marginTop: 4,
+  },
+  timelineVerticalLine: {
+    width: 24,
+    alignItems: 'center',
+    borderRightWidth: 2,
+    borderRightColor: '#1C2638',
+  },
+  timelineLineLast: {
+    borderRightColor: 'transparent',
+  },
+  foodItemsWrapper: {
+    flex: 1,
+    paddingLeft: 8,
   },
 });
