@@ -12,6 +12,7 @@ export const FoodRow: React.FC<FoodRowProps> = ({ food, onPress, onDelete }) => 
   return (
     <TouchableOpacity
       style={styles.container}
+      delayPressIn={0}
       activeOpacity={0.7}
       onPress={() => onPress(food)}>
       <View style={styles.mainContent}>
@@ -39,6 +40,7 @@ export const FoodRow: React.FC<FoodRowProps> = ({ food, onPress, onDelete }) => 
       {onDelete ? (
         <TouchableOpacity
           style={styles.deleteBtn}
+          delayPressIn={0}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           onPress={() => onDelete(food.id)}>
           <Text style={styles.deleteIcon}>✕</Text>

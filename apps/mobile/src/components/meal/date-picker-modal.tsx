@@ -105,7 +105,7 @@ export const DatePickerModal: React.FC<DatePickerModalProps> = ({
             <View style={styles.modalCard}>
               {/* Modal Header */}
               <View style={styles.modalHeader}>
-                <TouchableOpacity onPress={handlePrevMonth} style={styles.navBtn}>
+                <TouchableOpacity onPress={handlePrevMonth} delayPressIn={0} style={styles.navBtn}>
                   <Text style={styles.navBtnText}>‹</Text>
                 </TouchableOpacity>
 
@@ -113,7 +113,7 @@ export const DatePickerModal: React.FC<DatePickerModalProps> = ({
                   {MONTH_NAMES_ES[month]} {year}
                 </Text>
 
-                <TouchableOpacity onPress={handleNextMonth} style={styles.navBtn}>
+                <TouchableOpacity onPress={handleNextMonth} delayPressIn={0} style={styles.navBtn}>
                   <Text style={styles.navBtnText}>›</Text>
                 </TouchableOpacity>
               </View>
@@ -145,6 +145,7 @@ export const DatePickerModal: React.FC<DatePickerModalProps> = ({
                         isSelected && styles.dayCellSelected,
                         isToday && !isSelected && styles.dayCellToday,
                       ]}
+                      delayPressIn={0}
                       activeOpacity={0.7}
                       onPress={() => {
                         onSelectDate(cell.dateId);
@@ -167,6 +168,7 @@ export const DatePickerModal: React.FC<DatePickerModalProps> = ({
               <View style={styles.footerRow}>
                 <TouchableOpacity
                   style={styles.todayQuickBtn}
+                  delayPressIn={0}
                   onPress={() => {
                     onSelectDate(todayStr);
                     onClose();
@@ -174,7 +176,7 @@ export const DatePickerModal: React.FC<DatePickerModalProps> = ({
                   <Text style={styles.todayQuickBtnText}>Ir a Hoy</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+                <TouchableOpacity style={styles.closeBtn} delayPressIn={0} onPress={onClose}>
                   <Text style={styles.closeBtnText}>Cerrar</Text>
                 </TouchableOpacity>
               </View>
@@ -246,7 +248,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   dayCell: {
-    width: '14.28%', // 100% / 7 days
+    width: '14.28%',
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
