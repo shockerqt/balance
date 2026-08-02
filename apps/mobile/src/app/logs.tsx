@@ -28,19 +28,24 @@ export default function LogsScreen() {
   const [selectedFood, setSelectedFood] = useState<LoggedFoodItem | null>(null);
   const [presetTime, setPresetTime] = useState<string>('08:30');
 
-  // Helper to generate current 7-day week list (Monday to Sunday)
-  const generateCurrentWeek = (): string[] => {
+  // Helper to generate 5 continuous weeks (35 days: 2 weeks past, 1 week current, 2 weeks future)
+  const generateMultiWeekDateIds = (): string[] => {
     const dates: string[] = [];
     const validBaseDate = parseDateId(selectedDateId);
     const currentDay = validBaseDate.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
     const startOffset = currentDay === 0 ? -6 : 1 - currentDay;
 
-    const mondayDate = new Date(validBaseDate);
-    mondayDate.setDate(validBaseDate.getDate() + startOffset);
+    const currentMonday = new Date(validBaseDate);
+    currentMonday.setDate(validBaseDate.getDate() + startOffset);
 
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(mondayDate);
-      d.setDate(mondayDate.getDate() + i);
+    // Start 2 weeks before current Monday (-14 days)
+    const startMonday = new Date(currentMonday);
+    startMonday.setDate(currentMonday.getDate() - 14);
+
+    // Generate 35 continuous days (5 full weeks)
+    for (let i = 0; i < 35; i++) {
+      const d = new Date(startMonday);
+      d.setDate(startMonday.getDate() + i);
 
       const year = d.getFullYear();
       const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -50,8 +55,17 @@ export default function LogsScreen() {
     return dates;
   };
 
-  const weekDateIds = generateCurrentWeek();
-  const activePageIndex = Math.max(0, weekDateIds.indexOf(selectedDateId));
+  // Generate multi-week date array centered around current selection
+  const weekDateIds = useRef<string[]>(generateMultiWeekDateIds()).current;
+
+  // If selectedDateId falls outside the current 35-day window, regenerate weekDateIds window
+  let activePageIndex = weekDateIds.indexOf(selectedDateId);
+  if (activePageIndex === -1) {
+    const newDates = generateMultiWeekDateIds();
+    weekDateIds.length = 0;
+    weekDateIds.push(...newDates);
+    activePageIndex = weekDateIds.indexOf(selectedDateId);
+  }
 
   // Sync PagerView position when selectedDateId changes via DateStripHeader or Ir a Hoy
   useEffect(() => {
@@ -137,11 +151,11 @@ export default function LogsScreen() {
         targetFiber={currentDayLog.targetFiber}
       />
 
-      {/* 3. Official Native PagerView (UIPageViewController on iOS, ViewPager2 on Android) */}
+      {/* 3. Official Native PagerView with 35 continuous pages (5 full weeks) */}
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
-        initialPage={activePageIndex}
+        initialPage={activePageIndex !== -1 ? activePageIndex : 14}
         onPageSelected={handlePageSelected}>
         {weekDateIds.map((dateId) => {
           const log = getLogForDate(dateId);
