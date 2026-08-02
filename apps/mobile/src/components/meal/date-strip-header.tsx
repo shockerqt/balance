@@ -1,5 +1,6 @@
-import React, { useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
@@ -8,6 +9,12 @@ interface DateItem {
   dayName: string; // "L", "M", "M", "J", "V", "S", "D"
   dayNumber: number; // 2, 28, 29...
   isToday: boolean;
+}
+
+interface WeekGroup {
+  weekIndex: number;
+  startDateId: string;
+  days: DateItem[];
 }
 
 interface DateStripHeaderProps {
@@ -37,7 +44,6 @@ const parseDateId = (dateId: string): Date => {
   return new Date();
 };
 
-// Helper to format Date to "YYYY-MM-DD"
 const formatDateId = (d: Date): string => {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -51,6 +57,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   weekStartsOn = 'monday',
 }) => {
   const { width: windowWidth } = useWindowDimensions();
+  const headerPagerRef = useRef<PagerView>(null);
 
   // Calculate exact uniform width for each of the 7 pills
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
@@ -59,40 +66,76 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const todayStr = formatDateId(now);
   const isSelectedToday = selectedDateId === todayStr;
 
-  // Jump 1 week forward (+7 days)
-  const handleNextWeek = () => {
-    const d = parseDateId(selectedDateId);
-    d.setDate(d.getDate() + 7);
-    onSelectDate(formatDateId(d));
+  // Generate 5 continuous weeks (Week -2, Week -1, Current Week, Week +1, Week +2)
+  const generateWeekGroups = (): WeekGroup[] => {
+    const groups: WeekGroup[] = [];
+    const validBaseDate = parseDateId(selectedDateId);
+    const currentDay = validBaseDate.getDay();
+    const startOffset = currentDay === 0 ? -6 : 1 - currentDay;
+
+    const currentMonday = new Date(validBaseDate);
+    currentMonday.setDate(validBaseDate.getDate() + startOffset);
+
+    // Generate 5 weeks centered around selected date
+    for (let w = -2; w <= 2; w++) {
+      const weekMonday = new Date(currentMonday);
+      weekMonday.setDate(currentMonday.getDate() + w * 7);
+
+      const dayNames = weekStartsOn === 'monday'
+        ? ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+        : ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+
+      const days: DateItem[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekMonday);
+        d.setDate(weekMonday.getDate() + i);
+        const dateId = formatDateId(d);
+
+        days.push({
+          dateId,
+          dayName: dayNames[i],
+          dayNumber: d.getDate(),
+          isToday: dateId === todayStr,
+        });
+      }
+
+      groups.push({
+        weekIndex: w + 2, // 0, 1, 2, 3, 4 (2 is current center week)
+        startDateId: formatDateId(weekMonday),
+        days,
+      });
+    }
+
+    return groups;
   };
 
-  // Jump 1 week backward (-7 days)
-  const handlePrevWeek = () => {
-    const d = parseDateId(selectedDateId);
-    d.setDate(d.getDate() - 7);
-    onSelectDate(formatDateId(d));
+  const weekGroups = generateWeekGroups();
+
+  // Find active week index (default center = 2)
+  const activeWeekIndex = weekGroups.findIndex((g) =>
+    g.days.some((d) => d.dateId === selectedDateId)
+  );
+
+  useEffect(() => {
+    if (headerPagerRef.current && activeWeekIndex !== -1) {
+      headerPagerRef.current.setPage(activeWeekIndex);
+    }
+  }, [selectedDateId, activeWeekIndex]);
+
+  // Handle native PagerView swipe between week pages
+  const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
+    const pageIndex = e.nativeEvent.position;
+    const targetGroup = weekGroups[pageIndex];
+    if (targetGroup) {
+      // Check if current selectedDateId is inside this week; if not, select Monday of new week
+      const isAlreadyInWeek = targetGroup.days.some((d) => d.dateId === selectedDateId);
+      if (!isAlreadyInWeek) {
+        onSelectDate(targetGroup.days[0].dateId);
+      }
+    }
   };
 
-  // PanResponder to capture horizontal swipes on the week strip
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 15 && Math.abs(gestureState.dy) < 15;
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx < -35) {
-          // Swiped Left -> Advance to Next Week
-          handleNextWeek();
-        } else if (gestureState.dx > 35) {
-          // Swiped Right -> Go Back to Previous Week
-          handlePrevWeek();
-        }
-      },
-    })
-  ).current;
-
-  // Format full readable date header string (e.g. "Domingo 2 de Agosto, 2026")
+  // Format full readable date header string
   const getReadableHeader = (): { monthYear: string; fullDateLabel: string } => {
     const d = parseDateId(selectedDateId);
     const dayName = DAY_NAMES_FULL_ES[d.getDay()];
@@ -108,47 +151,21 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   const { monthYear, fullDateLabel } = getReadableHeader();
 
-  // Helper to calculate the 7 days of the current week based on selectedDateId
-  const generateCurrentWeek = (): DateItem[] => {
-    const dates: DateItem[] = [];
-    const validBaseDate = parseDateId(selectedDateId);
-    const currentDay = validBaseDate.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-
-    let startOffset = 0;
-    if (weekStartsOn === 'monday') {
-      startOffset = currentDay === 0 ? -6 : 1 - currentDay;
-    } else {
-      startOffset = -currentDay;
-    }
-
-    const mondayDate = new Date(validBaseDate);
-    mondayDate.setDate(validBaseDate.getDate() + startOffset);
-
-    const dayNames = weekStartsOn === 'monday'
-      ? ['L', 'M', 'M', 'J', 'V', 'S', 'D']
-      : ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(mondayDate);
-      d.setDate(mondayDate.getDate() + i);
-
-      const dateId = formatDateId(d);
-
-      dates.push({
-        dateId,
-        dayName: dayNames[i],
-        dayNumber: d.getDate(),
-        isToday: dateId === todayStr,
-      });
-    }
-    return dates;
+  const handlePrevWeek = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() - 7);
+    onSelectDate(formatDateId(d));
   };
 
-  const weekList = generateCurrentWeek();
+  const handleNextWeek = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() + 7);
+    onSelectDate(formatDateId(d));
+  };
 
   return (
-    <View style={styles.container} {...panResponder.panHandlers}>
-      {/* Top Header: Month/Year Title & Smart 'Ir a Hoy' Button with discreet week navigation arrows */}
+    <View style={styles.container}>
+      {/* Top Header: Month/Year Title & Smart 'Ir a Hoy' Button with discreet navigation arrows */}
       <View style={styles.topHeaderRow}>
         <View style={styles.titleBox}>
           <View style={styles.monthNavRow}>
@@ -175,42 +192,50 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         )}
       </View>
 
-      {/* 7-Day Uniform Week Strip */}
-      <View style={styles.weekRow}>
-        {weekList.map((item) => {
-          const isSelected = item.dateId === selectedDateId;
+      {/* Official Native PagerView for Week-by-Week Native Swiping */}
+      <PagerView
+        ref={headerPagerRef}
+        style={styles.headerPagerView}
+        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 2}
+        onPageSelected={handleWeekPageSelected}>
+        {weekGroups.map((group) => (
+          <View key={group.startDateId} style={styles.weekRow}>
+            {group.days.map((item) => {
+              const isSelected = item.dateId === selectedDateId;
 
-          return (
-            <TouchableOpacity
-              key={item.dateId}
-              style={[
-                styles.pill,
-                { width: pillWidth },
-                isSelected && styles.pillActive,
-                item.isToday && !isSelected && styles.pillToday,
-              ]}
-              activeOpacity={0.7}
-              onPress={() => onSelectDate(item.dateId)}>
-              <Text
-                style={[
-                  styles.dayNameText,
-                  isSelected && styles.dayNameActive,
-                  item.isToday && !isSelected && styles.dayNameToday,
-                ]}>
-                {item.dayName}
-              </Text>
-              <Text
-                style={[
-                  styles.dayNumText,
-                  isSelected && styles.dayNumActive,
-                  item.isToday && !isSelected && styles.dayNumToday,
-                ]}>
-                {item.dayNumber}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+              return (
+                <TouchableOpacity
+                  key={item.dateId}
+                  style={[
+                    styles.pill,
+                    { width: pillWidth },
+                    isSelected && styles.pillActive,
+                    item.isToday && !isSelected && styles.pillToday,
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => onSelectDate(item.dateId)}>
+                  <Text
+                    style={[
+                      styles.dayNameText,
+                      isSelected && styles.dayNameActive,
+                      item.isToday && !isSelected && styles.dayNameToday,
+                    ]}>
+                    {item.dayName}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.dayNumText,
+                      isSelected && styles.dayNumActive,
+                      item.isToday && !isSelected && styles.dayNumToday,
+                    ]}>
+                    {item.dayNumber}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ))}
+      </PagerView>
     </View>
   );
 };
@@ -266,6 +291,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  headerPagerView: {
+    height: 48,
+    width: '100%',
+  },
   weekRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -275,7 +304,7 @@ const styles = StyleSheet.create({
   pill: {
     height: 44,
     borderRadius: 12,
-    borderCurve: 'continuous', // Apple HIG smooth corners from expo-native-ui
+    borderCurve: 'continuous',
     backgroundColor: '#0E1420',
     alignItems: 'center',
     justifyContent: 'center',
@@ -285,7 +314,7 @@ const styles = StyleSheet.create({
   pillActive: {
     backgroundColor: '#3B82F6',
     borderColor: '#3B82F6',
-    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)', // modern boxShadow from expo-native-ui
+    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
   },
   pillToday: {
     borderColor: '#3B82F6',
@@ -306,7 +335,7 @@ const styles = StyleSheet.create({
     color: '#F8FAFC',
     fontSize: 14,
     fontWeight: '700',
-    fontVariant: ['tabular-nums'], // expo-native-ui numeric alignment
+    fontVariant: ['tabular-nums'],
   },
   dayNumActive: {
     color: '#FFFFFF',
