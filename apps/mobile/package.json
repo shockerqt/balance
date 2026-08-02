@@ -34,7 +34,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "expo start --dev-client --tunnel",
+    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
