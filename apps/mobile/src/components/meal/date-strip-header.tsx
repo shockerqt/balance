@@ -134,7 +134,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     setVisibleWeekIndex(pageIndex);
   };
 
-  // Format full readable date header string (Option A: Primary = Day, Secondary = Month/Year)
+  // Format full readable date header string (Compact 'Hoy' format: Line 1: Hoy, Line 2: 2 de Agosto)
   const getReadableHeader = (): { primaryLabel: string; secondaryLabel: string } => {
     const d = parseDateId(selectedDateId);
     const dayName = DAY_NAMES_FULL_ES[d.getDay()];
@@ -145,7 +145,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     if (isSelectedToday) {
       return {
         primaryLabel: 'Hoy',
-        secondaryLabel: `${dayName} ${dayNum} de ${monthName}, ${year}`,
+        secondaryLabel: `${dayNum} de ${monthName}`,
       };
     }
 
@@ -172,7 +172,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered 2-Line Date Title (Option A: Day Headline + Month Subtitle) */}
+      {/* Top Header: Centered 2-Line Date Title */}
       <View style={styles.topHeaderRow}>
         {/* Left Arrow (Fixed Position) */}
         <TouchableOpacity
