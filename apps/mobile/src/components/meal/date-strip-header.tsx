@@ -167,10 +167,11 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     <View style={styles.container}>
       {/* Top Header: Centered Date Title with Invariant Fixed Position Navigation Arrows */}
       <View style={styles.topHeaderRow}>
-        {/* Left Arrow (Fixed Position) */}
+        {/* Left Arrow (Fixed Position with 0ms delayPressIn) */}
         <TouchableOpacity
           style={styles.arrowBtnLeft}
           onPress={handlePrevDay}
+          delayPressIn={0}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           activeOpacity={0.6}>
           <Text style={styles.arrowText}>‹</Text>
@@ -179,6 +180,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         {/* Pressable Date Title -> Opens Calendar Picker Modal */}
         <TouchableOpacity
           style={styles.titleBoxCentered}
+          delayPressIn={0}
           activeOpacity={0.7}
           onPress={() => setCalendarModalVisible(true)}>
           <Text style={styles.monthYearText}>{monthYear}</Text>
@@ -187,10 +189,11 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
           </Text>
         </TouchableOpacity>
 
-        {/* Right Arrow (Fixed Position) */}
+        {/* Right Arrow (Fixed Position with 0ms delayPressIn) */}
         <TouchableOpacity
           style={[styles.arrowBtnRight, !isSelectedToday && { right: 58 }]}
           onPress={handleNextDay}
+          delayPressIn={0}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           activeOpacity={0.6}>
           <Text style={styles.arrowText}>›</Text>
@@ -200,6 +203,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         {!isSelectedToday && (
           <TouchableOpacity
             style={styles.todayBtn}
+            delayPressIn={0}
             activeOpacity={0.7}
             onPress={() => onSelectDate(todayStr)}>
             <Text style={styles.todayBtnText}>Hoy</Text>
@@ -227,6 +231,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     isSelected && styles.pillActive,
                     item.isToday && !isSelected && styles.pillToday,
                   ]}
+                  delayPressIn={0}
                   activeOpacity={0.7}
                   onPress={() => onSelectDate(item.dateId)}>
                   <Text

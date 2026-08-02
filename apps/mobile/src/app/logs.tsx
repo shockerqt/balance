@@ -58,7 +58,7 @@ export default function LogsScreen() {
   // Generate multi-week date array centered around current selection
   const weekDateIds = useRef<string[]>(generateMultiWeekDateIds()).current;
 
-  // If selectedDateId falls outside the current 35-day window, regenerate weekDateIds window
+  // If selectedDateId falls outside current window, update window
   let activePageIndex = weekDateIds.indexOf(selectedDateId);
   if (activePageIndex === -1) {
     const newDates = generateMultiWeekDateIds();
@@ -67,7 +67,7 @@ export default function LogsScreen() {
     activePageIndex = weekDateIds.indexOf(selectedDateId);
   }
 
-  // Sync PagerView position when selectedDateId changes via DateStripHeader or Ir a Hoy
+  // Sync PagerView position when selectedDateId changes
   useEffect(() => {
     if (pagerRef.current && activePageIndex !== -1) {
       pagerRef.current.setPage(activePageIndex);
@@ -129,7 +129,7 @@ export default function LogsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Date Strip Navigation Header (Top position above macro header) */}
+      {/* 1. Date Strip Navigation Header */}
       <DateStripHeader
         selectedDateId={selectedDateId}
         onSelectDate={(dateId) => {
@@ -151,22 +151,29 @@ export default function LogsScreen() {
         targetFiber={currentDayLog.targetFiber}
       />
 
-      {/* 3. Official Native PagerView with 35 continuous pages (5 full weeks) */}
+      {/* 3. Official Native PagerView with 5-Day Active Lazy Rendering */}
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
         initialPage={activePageIndex !== -1 ? activePageIndex : 14}
         onPageSelected={handlePageSelected}>
-        {weekDateIds.map((dateId) => {
+        {weekDateIds.map((dateId, idx) => {
+          // Render full timeline feed for 5 active pages around selected date (active ± 2 days)
+          const isNearbyActive = Math.abs(idx - activePageIndex) <= 2;
           const log = getLogForDate(dateId);
+
           return (
             <View key={dateId} style={styles.page}>
-              <FluidTimelineFeed
-                foods={log.foods}
-                onSelectFood={handleOpenEditModal}
-                onAddAtTime={(time) => handleOpenAddModal(time)}
-                onDeleteFood={handleDeleteFood}
-              />
+              {isNearbyActive ? (
+                <FluidTimelineFeed
+                  foods={log.foods}
+                  onSelectFood={handleOpenEditModal}
+                  onAddAtTime={(time) => handleOpenAddModal(time)}
+                  onDeleteFood={handleDeleteFood}
+                />
+              ) : (
+                <View style={styles.page} />
+              )}
             </View>
           );
         })}
@@ -175,6 +182,7 @@ export default function LogsScreen() {
       {/* Floating Add Action Button */}
       <TouchableOpacity
         style={styles.floatingAddBtn}
+        delayPressIn={0}
         activeOpacity={0.8}
         onPress={() => handleOpenAddModal()}>
         <Text style={styles.floatingAddIcon}>+</Text>
