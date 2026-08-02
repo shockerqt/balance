@@ -82,3 +82,4 @@ Esto ejecuta automáticamente el comando configurado:
 1. **Aprobación Previa de Cambios**: Ante cualquier consulta, investigación o diagnóstico, presentar la propuesta explicada y esperar la confirmación del usuario antes de modificar archivos o ejecutar comandos de edición.
 2. **Importación de SafeAreaView**: Utilizar siempre `import { SafeAreaView } from 'react-native-safe-area-context';` para evitar warnings de obsolescencia en React Native.
 3. **Nombres de Propiedades de Estilos**: Usar estrictamente **camelCase** para estilos de React Native (ej: `justifyContent: 'space-between'`), nunca guiones de CSS web (`justify-content`).
+4. **Revisiones Mínimas Obligatorias tras Cada Cambio**: Tras realizar cualquier modificación de código, ejecutar inmediatamente una verificación mínima (`npx tsc --noEmit` y revisión silenciosa de logs de Metro) para asegurar cero errores antes de notificar la finalización de la tarea.

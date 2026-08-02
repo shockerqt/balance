@@ -18,6 +18,13 @@ pnpm dev:server       # Iniciar solo la API Rust (cargo watch)
 cargo check -p server # Verificación de tipos del servidor
 ```
 
+## 📋 Reglas Obligatorias de Trabajo
+
+1. **Aprobación Previa de Cambios**: Explicar propuestas y obtener confirmación antes de editar archivos.
+2. **SafeAreaView**: Utilizar `import { SafeAreaView } from 'react-native-safe-area-context';`.
+3. **Estilos React Native**: Usar estrictamente **camelCase** (ej: `justifyContent: 'space-between'`).
+4. **Revisiones Mínimas Obligatorias tras Cada Cambio**: Tras cada edición, ejecutar verificación mínima (`npx tsc --noEmit` y lectura silenciosa de `/tmp/metro.log`) para asegurar cero errores antes de reportar la tarea como completada.
+
 ## 🗄️ Base de datos (PostgreSQL)
 
 Base de datos local: `meal_logger` (usuario: `meal_admin`).

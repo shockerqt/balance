@@ -7,8 +7,28 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useMealStore } from '@/hooks/use-meal-store';
 
 export default function SummaryScreen() {
+  const { currentDayLog } = useMealStore();
+
+  const totalCal = currentDayLog.foods.reduce((sum, f) => sum + (f.calories || 0), 0);
+  const totalP = currentDayLog.foods.reduce((sum, f) => sum + (f.protein || 0), 0);
+  const totalC = currentDayLog.foods.reduce((sum, f) => sum + (f.carbs || 0), 0);
+  const totalF = currentDayLog.foods.reduce((sum, f) => sum + (f.fat || 0), 0);
+  const totalFib = currentDayLog.foods.reduce((sum, f) => sum + (f.fiber || 0), 0);
+
+  const calRemaining = Math.max(0, currentDayLog.targetCalories - totalCal);
+  const calPercent = Math.min(
+    Math.round((totalCal / currentDayLog.targetCalories) * 100),
+    100
+  );
+
+  const pPercent = Math.min(Math.round((totalP / currentDayLog.targetProtein) * 100), 100);
+  const cPercent = Math.min(Math.round((totalC / currentDayLog.targetCarbs) * 100), 100);
+  const fPercent = Math.min(Math.round((totalF / currentDayLog.targetFat) * 100), 100);
+  const fibPercent = Math.min(Math.round((totalFib / currentDayLog.targetFiber) * 100), 100);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -29,57 +49,57 @@ export default function SummaryScreen() {
           </View>
         </View>
 
-        {/* Cal AI Style Gauge Card */}
+        {/* Hero Gauge Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroTop}>
             <View>
               <Text style={styles.cardLabel}>CALORÍAS RESTANTES</Text>
               <View style={styles.calRow}>
-                <Text style={styles.calMain}>360</Text>
-                <Text style={styles.calTarget}>/ 2,200 kcal</Text>
+                <Text style={styles.calMain}>{calRemaining}</Text>
+                <Text style={styles.calTarget}>/ {currentDayLog.targetCalories} kcal</Text>
               </View>
             </View>
             <View style={styles.gaugeBox}>
-              <Text style={styles.gaugePercent}>83.6%</Text>
+              <Text style={styles.gaugePercent}>{calPercent}%</Text>
             </View>
           </View>
 
           {/* Calorie Progress Bar */}
           <View style={styles.progressBarBg}>
-            <View style={[styles.progressBarFill, { width: '83.6%' }]} />
+            <View style={[styles.progressBarFill, { width: `${calPercent}%` }]} />
           </View>
 
           {/* 4 Macros Grid */}
           <View style={styles.macrosGrid}>
             <View style={styles.macroBox}>
               <Text style={styles.macroLabel}>PROTEÍNA</Text>
-              <Text style={styles.macroVal}>128g</Text>
+              <Text style={styles.macroVal}>{totalP}g</Text>
               <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: '85%', backgroundColor: '#6366F1' }]} />
+                <View style={[styles.miniBarFill, { width: `${pPercent}%`, backgroundColor: '#6366F1' }]} />
               </View>
             </View>
 
             <View style={styles.macroBox}>
               <Text style={styles.macroLabel}>CARBS</Text>
-              <Text style={styles.macroVal}>190g</Text>
+              <Text style={styles.macroVal}>{totalC}g</Text>
               <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: '86%', backgroundColor: '#10B981' }]} />
+                <View style={[styles.miniBarFill, { width: `${cPercent}%`, backgroundColor: '#10B981' }]} />
               </View>
             </View>
 
             <View style={styles.macroBox}>
               <Text style={styles.macroLabel}>GRASAS</Text>
-              <Text style={styles.macroVal}>52g</Text>
+              <Text style={styles.macroVal}>{totalF}g</Text>
               <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: '80%', backgroundColor: '#F59E0B' }]} />
+                <View style={[styles.miniBarFill, { width: `${fPercent}%`, backgroundColor: '#F59E0B' }]} />
               </View>
             </View>
 
             <View style={styles.macroBox}>
               <Text style={styles.macroLabel}>FIBRA</Text>
-              <Text style={styles.macroVal}>26g</Text>
+              <Text style={styles.macroVal}>{totalFib}g</Text>
               <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: '86%', backgroundColor: '#06B6D4' }]} />
+                <View style={[styles.miniBarFill, { width: `${fibPercent}%`, backgroundColor: '#06B6D4' }]} />
               </View>
             </View>
           </View>
@@ -99,19 +119,14 @@ export default function SummaryScreen() {
           <View style={styles.weeklyBarRow}>
             {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, idx) => (
               <View key={idx} style={styles.dayCol}>
-                <View
-                  style={[
-                    styles.dayBar,
-                    { height: `${[60, 85, 70, 90, 65, 80, 83][idx]}%` },
-                    idx === 3 ? styles.activeDayBar : null,
-                  ]}
-                />
-                <Text style={[styles.dayText, idx === 3 ? styles.activeDayText : null]}>{day}</Text>
+                <View style={styles.barTrack}>
+                  <View style={[styles.barFill, { height: `${60 + (idx % 3) * 15}%` }]} />
+                </View>
+                <Text style={styles.dayLabel}>{day}</Text>
               </View>
             ))}
           </View>
         </View>
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -123,74 +138,77 @@ const styles = StyleSheet.create({
     backgroundColor: '#090C15',
   },
   scrollContent: {
-    padding: 16,
-    gap: 16,
+    padding: 20,
+    paddingBottom: 40,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 20,
   },
   userRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   avatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#1E293B',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#334155',
   },
   avatarText: {
-    color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 13,
+    color: '#F8FAFC',
+    fontWeight: '700',
+    fontSize: 16,
   },
   greetingText: {
     color: '#94A3B8',
-    fontSize: 11,
+    fontSize: 13,
   },
   brandTitle: {
-    color: '#FFF',
-    fontSize: 15,
-    fontWeight: 'bold',
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
   },
   streakBadge: {
     backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#334155',
   },
   streakText: {
     color: '#F59E0B',
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontSize: 13,
+    fontWeight: '600',
   },
   heroCard: {
     backgroundColor: '#111726',
     borderRadius: 20,
-    padding: 16,
+    padding: 20,
     borderWidth: 1,
     borderColor: '#1E293B',
-    gap: 12,
+    marginBottom: 20,
   },
   heroTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems: 'flex-start',
+    marginBottom: 16,
   },
   cardLabel: {
     color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 4,
   },
   calRow: {
     flexDirection: 'row',
@@ -198,13 +216,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   calMain: {
-    color: '#FFF',
+    color: '#F8FAFC',
     fontSize: 32,
-    fontWeight: 'bold',
+    fontWeight: '800',
   },
   calTarget: {
-    color: '#94A3B8',
-    fontSize: 13,
+    color: '#64748B',
+    fontSize: 14,
+    fontWeight: '500',
   },
   gaugeBox: {
     backgroundColor: '#1E293B',
@@ -213,117 +232,120 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   gaugePercent: {
-    color: '#818CF8',
-    fontWeight: 'bold',
-    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '700',
+    fontSize: 13,
   },
   progressBarBg: {
     height: 8,
     backgroundColor: '#1E293B',
-    borderRadius: 999,
+    borderRadius: 4,
     overflow: 'hidden',
+    marginBottom: 20,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#6366F1',
-    borderRadius: 999,
+    backgroundColor: '#3B82F6',
+    borderRadius: 4,
   },
   macrosGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 6,
-    marginTop: 4,
+    gap: 8,
   },
   macroBox: {
     flex: 1,
-    backgroundColor: '#090C15',
-    padding: 8,
-    borderRadius: 10,
+    backgroundColor: '#161E2E',
+    padding: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1E293B',
   },
   macroLabel: {
-    color: '#94A3B8',
-    fontSize: 9,
-    fontWeight: 'bold',
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   macroVal: {
-    color: '#FFF',
-    fontSize: 13,
-    fontWeight: 'bold',
-    marginVertical: 2,
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
   },
   miniBarBg: {
     height: 4,
     backgroundColor: '#1E293B',
-    borderRadius: 999,
+    borderRadius: 2,
     overflow: 'hidden',
   },
   miniBarFill: {
     height: '100%',
-    borderRadius: 999,
+    borderRadius: 2,
   },
   primaryScanBtn: {
-    backgroundColor: '#FFFFFF',
-    height: 48,
-    borderRadius: 14,
-    justifyContent: 'center',
+    backgroundColor: '#3B82F6',
+    borderRadius: 16,
+    paddingVertical: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
   },
   primaryBtnText: {
-    color: '#000',
-    fontWeight: 'bold',
-    fontSize: 14,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   statsCard: {
     backgroundColor: '#111726',
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 20,
+    padding: 20,
     borderWidth: 1,
     borderColor: '#1E293B',
-    gap: 12,
   },
   statsHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 16,
   },
   statsTitle: {
     color: '#94A3B8',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '500',
   },
   statsValue: {
-    color: '#10B981',
-    fontSize: 12,
-    fontWeight: 'bold',
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
   },
   weeklyBarRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    height: 70,
-    paddingTop: 10,
+    height: 80,
   },
   dayCol: {
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     flex: 1,
   },
-  dayBar: {
-    width: 14,
+  barTrack: {
+    width: 8,
+    height: 60,
     backgroundColor: '#1E293B',
     borderRadius: 4,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
-  activeDayBar: {
-    backgroundColor: '#6366F1',
+  barFill: {
+    width: '100%',
+    backgroundColor: '#3B82F6',
+    borderRadius: 4,
   },
-  dayText: {
-    color: '#94A3B8',
-    fontSize: 10,
-  },
-  activeDayText: {
-    color: '#818CF8',
-    fontWeight: 'bold',
+  dayLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
