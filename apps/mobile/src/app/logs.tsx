@@ -7,6 +7,7 @@ import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { FluidTimelineFeed } from '@/components/meal/fluid-timeline-feed';
 import { TimeFoodModal } from '@/components/meal/time-food-modal';
+import { BatchMoveModal } from '@/components/meal/batch-move-modal';
 
 // Helper to safely parse "YYYY-MM-DD" without UTC timezone shift
 const parseDateId = (dateId: string): Date => {
@@ -21,28 +22,41 @@ const parseDateId = (dateId: string): Date => {
 };
 
 export default function LogsScreen() {
-  const { selectedDateId, setSelectedDateId, currentDayLog, dayLogs, addFood, updateFood, deleteFood } = useMealStore();
+  const {
+    selectedDateId,
+    setSelectedDateId,
+    currentDayLog,
+    dayLogs,
+    addFood,
+    updateFood,
+    deleteFood,
+    deleteMultipleFoods,
+    moveMultipleFoodsTime,
+  } = useMealStore();
   const pagerRef = useRef<PagerView>(null);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedFood, setSelectedFood] = useState<LoggedFoodItem | null>(null);
   const [presetTime, setPresetTime] = useState<string>('08:30');
 
-  // Helper to generate 5 continuous weeks (35 days: 2 weeks past, 1 week current, 2 weeks future)
+  // Multi-select & Batch Actions State
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedFoodIds, setSelectedFoodIds] = useState<Set<string>>(new Set());
+  const [batchMoveModalVisible, setBatchMoveModalVisible] = useState(false);
+
+  // Helper to generate 5 continuous weeks (35 days)
   const generateMultiWeekDateIds = (): string[] => {
     const dates: string[] = [];
     const validBaseDate = parseDateId(selectedDateId);
-    const currentDay = validBaseDate.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+    const currentDay = validBaseDate.getDay();
     const startOffset = currentDay === 0 ? -6 : 1 - currentDay;
 
     const currentMonday = new Date(validBaseDate);
     currentMonday.setDate(validBaseDate.getDate() + startOffset);
 
-    // Start 2 weeks before current Monday (-14 days)
     const startMonday = new Date(currentMonday);
     startMonday.setDate(currentMonday.getDate() - 14);
 
-    // Generate 35 continuous days (5 full weeks)
     for (let i = 0; i < 35; i++) {
       const d = new Date(startMonday);
       d.setDate(startMonday.getDate() + i);
@@ -55,10 +69,8 @@ export default function LogsScreen() {
     return dates;
   };
 
-  // Generate multi-week date array centered around current selection
   const weekDateIds = useRef<string[]>(generateMultiWeekDateIds()).current;
 
-  // If selectedDateId falls outside current window, update window
   let activePageIndex = weekDateIds.indexOf(selectedDateId);
   if (activePageIndex === -1) {
     const newDates = generateMultiWeekDateIds();
@@ -67,14 +79,15 @@ export default function LogsScreen() {
     activePageIndex = weekDateIds.indexOf(selectedDateId);
   }
 
-  // Sync PagerView position when selectedDateId changes
+  // Exit selection mode when date changes
   useEffect(() => {
+    setIsSelectionMode(false);
+    setSelectedFoodIds(new Set());
     if (pagerRef.current && activePageIndex !== -1) {
       pagerRef.current.setPage(activePageIndex);
     }
   }, [selectedDateId, activePageIndex]);
 
-  // Handle native page selection from user swipe
   const handlePageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pageIndex = e.nativeEvent.position;
     const targetDateId = weekDateIds[pageIndex];
@@ -110,6 +123,7 @@ export default function LogsScreen() {
   };
 
   const handleOpenEditModal = (food: LoggedFoodItem) => {
+    if (isSelectionMode) return;
     setSelectedFood(food);
     setPresetTime(food.time);
     setModalVisible(true);
@@ -126,6 +140,74 @@ export default function LogsScreen() {
   const handleDeleteFood = (foodId: string) => {
     deleteFood(currentDayLog.dateId, foodId);
   };
+
+  // Selection Mode Handlers
+  const handleLongPressFood = (food: LoggedFoodItem) => {
+    if (!isSelectionMode) {
+      setIsSelectionMode(true);
+      setSelectedFoodIds(new Set([food.id]));
+    }
+  };
+
+  const handleLongPressGroup = (_timeKey: string, groupFoodIds: string[]) => {
+    if (!isSelectionMode) {
+      setIsSelectionMode(true);
+      setSelectedFoodIds(new Set(groupFoodIds));
+    }
+  };
+
+  const handleToggleSelectFood = (foodId: string) => {
+    const nextSet = new Set(selectedFoodIds);
+    if (nextSet.has(foodId)) {
+      nextSet.delete(foodId);
+    } else {
+      nextSet.add(foodId);
+    }
+
+    if (nextSet.size === 0) {
+      setIsSelectionMode(false);
+    }
+    setSelectedFoodIds(nextSet);
+  };
+
+  const handleToggleSelectGroup = (_timeKey: string, groupFoodIds: string[]) => {
+    const nextSet = new Set(selectedFoodIds);
+    const isAllSelected = groupFoodIds.every((id) => nextSet.has(id));
+
+    if (isAllSelected) {
+      groupFoodIds.forEach((id) => nextSet.delete(id));
+    } else {
+      groupFoodIds.forEach((id) => nextSet.add(id));
+    }
+
+    if (nextSet.size === 0) {
+      setIsSelectionMode(false);
+    }
+    setSelectedFoodIds(nextSet);
+  };
+
+  const handleCancelSelection = () => {
+    setIsSelectionMode(false);
+    setSelectedFoodIds(new Set());
+  };
+
+  const handleBatchDelete = () => {
+    const idsArray = Array.from(selectedFoodIds);
+    if (idsArray.length > 0) {
+      deleteMultipleFoods(selectedDateId, idsArray);
+      handleCancelSelection();
+    }
+  };
+
+  const handleBatchMoveConfirm = (newTime: string) => {
+    const idsArray = Array.from(selectedFoodIds);
+    if (idsArray.length > 0) {
+      moveMultipleFoodsTime(selectedDateId, idsArray, newTime);
+      handleCancelSelection();
+    }
+  };
+
+  const selectedCount = selectedFoodIds.size;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -151,14 +233,26 @@ export default function LogsScreen() {
         targetFiber={currentDayLog.targetFiber}
       />
 
-      {/* 3. Official Native PagerView with 5-Day Active Lazy Rendering */}
+      {/* Selection Mode Top Banner */}
+      {isSelectionMode && (
+        <View style={styles.selectionTopBanner}>
+          <Text style={styles.selectionCountText}>
+            {selectedCount} {selectedCount === 1 ? 'alimento seleccionado' : 'alimentos seleccionados'}
+          </Text>
+          <TouchableOpacity delayPressIn={0} onPress={handleCancelSelection}>
+            <Text style={styles.cancelBannerText}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* 3. Official Native PagerView with Multi-Select Support */}
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
+        scrollEnabled={!isSelectionMode}
         initialPage={activePageIndex !== -1 ? activePageIndex : 14}
         onPageSelected={handlePageSelected}>
         {weekDateIds.map((dateId, idx) => {
-          // Render full timeline feed for 5 active pages around selected date (active ± 2 days)
           const isNearbyActive = Math.abs(idx - activePageIndex) <= 2;
           const log = getLogForDate(dateId);
 
@@ -170,6 +264,12 @@ export default function LogsScreen() {
                   onSelectFood={handleOpenEditModal}
                   onAddAtTime={(time) => handleOpenAddModal(time)}
                   onDeleteFood={handleDeleteFood}
+                  isSelectionMode={isSelectionMode}
+                  selectedFoodIds={selectedFoodIds}
+                  onLongPressFood={handleLongPressFood}
+                  onLongPressGroup={handleLongPressGroup}
+                  onToggleSelectFood={handleToggleSelectFood}
+                  onToggleSelectGroup={handleToggleSelectGroup}
                 />
               ) : (
                 <View style={styles.page} />
@@ -179,16 +279,41 @@ export default function LogsScreen() {
         })}
       </PagerView>
 
-      {/* Floating Add Action Button */}
-      <TouchableOpacity
-        style={styles.floatingAddBtn}
-        delayPressIn={0}
-        activeOpacity={0.8}
-        onPress={() => handleOpenAddModal()}>
-        <Text style={styles.floatingAddIcon}>+</Text>
-      </TouchableOpacity>
+      {/* Floating Add Action Button (hidden in selection mode) */}
+      {!isSelectionMode && (
+        <TouchableOpacity
+          style={styles.floatingAddBtn}
+          delayPressIn={0}
+          activeOpacity={0.8}
+          onPress={() => handleOpenAddModal()}>
+          <Text style={styles.floatingAddIcon}>+</Text>
+        </TouchableOpacity>
+      )}
 
-      {/* Time-based Food Form Modal */}
+      {/* Bottom Floating Batch Action Bar */}
+      {isSelectionMode && (
+        <View style={styles.bottomBatchBar}>
+          {/* Cancel Button */}
+          <TouchableOpacity style={styles.batchBarBtnCancel} delayPressIn={0} onPress={handleCancelSelection}>
+            <Text style={styles.batchBarBtnCancelText}>✕ Cancelar</Text>
+          </TouchableOpacity>
+
+          {/* Move Button */}
+          <TouchableOpacity
+            style={styles.batchBarBtnMove}
+            delayPressIn={0}
+            onPress={() => setBatchMoveModalVisible(true)}>
+            <Text style={styles.batchBarBtnMoveText}>🕒 Mover ({selectedCount})</Text>
+          </TouchableOpacity>
+
+          {/* Delete Button */}
+          <TouchableOpacity style={styles.batchBarBtnDelete} delayPressIn={0} onPress={handleBatchDelete}>
+            <Text style={styles.batchBarBtnDeleteText}>🗑️ Eliminar ({selectedCount})</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Single Food Add/Edit Modal */}
       <TimeFoodModal
         visible={modalVisible}
         initialTime={presetTime}
@@ -196,6 +321,14 @@ export default function LogsScreen() {
         onClose={() => setModalVisible(false)}
         onSave={handleSaveFood}
         onDelete={handleDeleteFood}
+      />
+
+      {/* Batch Move Time Modal */}
+      <BatchMoveModal
+        visible={batchMoveModalVisible}
+        selectedCount={selectedCount}
+        onClose={() => setBatchMoveModalVisible(false)}
+        onConfirmMove={handleBatchMoveConfirm}
       />
     </SafeAreaView>
   );
@@ -211,6 +344,26 @@ const styles = StyleSheet.create({
   },
   page: {
     flex: 1,
+  },
+  selectionTopBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#3B82F6',
+  },
+  selectionCountText: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cancelBannerText: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
   },
   floatingAddBtn: {
     position: 'absolute',
@@ -230,5 +383,56 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '400',
     marginTop: -2,
+  },
+  bottomBatchBar: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    backgroundColor: '#0E1420',
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: '#1C2638',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 8,
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+  },
+  batchBarBtnCancel: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#1E293B',
+  },
+  batchBarBtnCancelText: {
+    color: '#8E9BAE',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  batchBarBtnMove: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
+  batchBarBtnMoveText: {
+    color: '#3B82F6',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  batchBarBtnDelete: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#EF4444',
+  },
+  batchBarBtnDeleteText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

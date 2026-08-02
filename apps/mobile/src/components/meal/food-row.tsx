@@ -5,16 +5,50 @@ import { LoggedFoodItem } from '@/hooks/use-meal-store';
 interface FoodRowProps {
   food: LoggedFoodItem;
   onPress: (food: LoggedFoodItem) => void;
-  onDelete?: (foodId: string) => void;
+  onLongPress?: (food: LoggedFoodItem) => void;
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (foodId: string) => void;
 }
 
-export const FoodRow: React.FC<FoodRowProps> = ({ food, onPress, onDelete }) => {
+export const FoodRow: React.FC<FoodRowProps> = ({
+  food,
+  onPress,
+  onLongPress,
+  isSelectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+}) => {
+  const handlePress = () => {
+    if (isSelectionMode && onToggleSelect) {
+      onToggleSelect(food.id);
+    } else {
+      onPress(food);
+    }
+  };
+
+  const handleLongPress = () => {
+    if (onLongPress) {
+      onLongPress(food);
+    }
+  };
+
   return (
     <TouchableOpacity
-      style={styles.container}
+      style={[styles.container, isSelected && styles.containerSelected]}
       delayPressIn={0}
       activeOpacity={0.7}
-      onPress={() => onPress(food)}>
+      onPress={handlePress}
+      onLongPress={handleLongPress}>
+      {/* Selection Mode Checkbox Indicator */}
+      {isSelectionMode && (
+        <View style={styles.checkboxWrapper}>
+          <View style={[styles.checkboxCircle, isSelected && styles.checkboxCircleSelected]}>
+            {isSelected && <Text style={styles.checkmarkIcon}>✓</Text>}
+          </View>
+        </View>
+      )}
+
       <View style={styles.mainContent}>
         {/* Line 1: Name */}
         <Text style={styles.nameText} numberOfLines={1}>
@@ -36,16 +70,6 @@ export const FoodRow: React.FC<FoodRowProps> = ({ food, onPress, onDelete }) => 
           ) : null}
         </View>
       </View>
-
-      {onDelete ? (
-        <TouchableOpacity
-          style={styles.deleteBtn}
-          delayPressIn={0}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          onPress={() => onDelete(food.id)}>
-          <Text style={styles.deleteIcon}>✕</Text>
-        </TouchableOpacity>
-      ) : null}
     </TouchableOpacity>
   );
 };
@@ -58,6 +82,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 4,
+    borderRadius: 10,
+  },
+  containerSelected: {
+    backgroundColor: '#1E293B',
+  },
+  checkboxWrapper: {
+    marginRight: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#64748B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxCircleSelected: {
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
+  },
+  checkmarkIcon: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: -1,
   },
   mainContent: {
     flex: 1,
@@ -93,13 +145,5 @@ const styles = StyleSheet.create({
   dot: {
     color: '#475569',
     fontSize: 12,
-  },
-  deleteBtn: {
-    padding: 6,
-  },
-  deleteIcon: {
-    color: '#64748B',
-    fontSize: 14,
-    fontWeight: '600',
   },
 });

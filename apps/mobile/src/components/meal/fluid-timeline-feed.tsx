@@ -8,13 +8,24 @@ interface FluidTimelineFeedProps {
   onSelectFood: (food: LoggedFoodItem) => void;
   onAddAtTime: (time: string) => void;
   onDeleteFood?: (foodId: string) => void;
+  isSelectionMode?: boolean;
+  selectedFoodIds?: Set<string>;
+  onLongPressFood?: (food: LoggedFoodItem) => void;
+  onLongPressGroup?: (timeKey: string, groupFoodIds: string[]) => void;
+  onToggleSelectFood?: (foodId: string) => void;
+  onToggleSelectGroup?: (timeKey: string, groupFoodIds: string[]) => void;
 }
 
 export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
   foods,
   onSelectFood,
   onAddAtTime,
-  onDeleteFood,
+  isSelectionMode = false,
+  selectedFoodIds = new Set(),
+  onLongPressFood,
+  onLongPressGroup,
+  onToggleSelectFood,
+  onToggleSelectGroup,
 }) => {
   if (!foods || foods.length === 0) {
     return (
@@ -49,6 +60,8 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
       showsVerticalScrollIndicator={false}>
       {sortedTimes.map((timeKey) => {
         const groupFoods = groupedFoods[timeKey];
+        const groupFoodIds = groupFoods.map((f) => f.id);
+        const isGroupFullySelected = groupFoodIds.every((id) => selectedFoodIds.has(id));
 
         // Calculate macro & calorie totals for this timestamp group
         const groupCalories = groupFoods.reduce((acc, f) => acc + (f.calories || 0), 0);
@@ -58,13 +71,42 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
 
         return (
           <View key={timeKey} style={styles.timestampBlock}>
-            {/* Inline Timestamp Header Row (Pure Whitespace Separation) */}
+            {/* Inline Timestamp Header Row */}
             <View style={styles.timeHeaderRow}>
               <View style={styles.headerLeftGroup}>
-                {/* Time Badge Pill */}
-                <View style={styles.timeBadgePill}>
+                {/* Group Selection Checkbox when in Selection Mode */}
+                {isSelectionMode && (
+                  <TouchableOpacity
+                    style={styles.groupCheckboxBtn}
+                    delayPressIn={0}
+                    onPress={() => onToggleSelectGroup && onToggleSelectGroup(timeKey, groupFoodIds)}>
+                    <View
+                      style={[
+                        styles.groupCheckboxCircle,
+                        isGroupFullySelected && styles.groupCheckboxSelected,
+                      ]}>
+                      {isGroupFullySelected && <Text style={styles.checkmarkIcon}>✓</Text>}
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {/* Time Badge Pill (Pressable / Long-pressable to select whole group) */}
+                <TouchableOpacity
+                  style={styles.timeBadgePill}
+                  delayPressIn={0}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (isSelectionMode && onToggleSelectGroup) {
+                      onToggleSelectGroup(timeKey, groupFoodIds);
+                    }
+                  }}
+                  onLongPress={() => {
+                    if (onLongPressGroup) {
+                      onLongPressGroup(timeKey, groupFoodIds);
+                    }
+                  }}>
                   <Text style={styles.timeBadgeText}>{timeKey}</Text>
-                </View>
+                </TouchableOpacity>
 
                 {/* Soft Muted Group Macro & Calorie Summary */}
                 <View style={styles.summaryStatsRow}>
@@ -74,15 +116,17 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
                 </View>
               </View>
 
-              {/* (+) Circular Add Button */}
-              <TouchableOpacity
-                style={styles.addCircleBtn}
-                delayPressIn={0}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                onPress={() => onAddAtTime(timeKey)}>
-                <Text style={styles.addCircleIcon}>+</Text>
-              </TouchableOpacity>
+              {/* (+) Circular Add Button (hidden during selection mode) */}
+              {!isSelectionMode && (
+                <TouchableOpacity
+                  style={styles.addCircleBtn}
+                  delayPressIn={0}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  onPress={() => onAddAtTime(timeKey)}>
+                  <Text style={styles.addCircleIcon}>+</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Continuous Food List for this timestamp */}
@@ -92,7 +136,10 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
                   key={food.id}
                   food={food}
                   onPress={onSelectFood}
-                  onDelete={onDeleteFood}
+                  onLongPress={onLongPressFood}
+                  isSelectionMode={isSelectionMode}
+                  isSelected={selectedFoodIds.has(food.id)}
+                  onToggleSelect={onToggleSelectFood}
                 />
               ))}
             </View>
@@ -109,9 +156,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#080B11',
   },
   scrollContent: {
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    paddingBottom: 80,
+    paddingBottom: 100,
   },
   emptyFlexContainer: {
     flex: 1,
@@ -144,13 +191,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   timestampBlock: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   timeHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 4,
+    paddingBottom: 8,
     marginBottom: 4,
   },
   headerLeftGroup: {
@@ -160,6 +207,28 @@ const styles = StyleSheet.create({
     gap: 10,
     flex: 1,
     paddingRight: 8,
+  },
+  groupCheckboxBtn: {
+    paddingRight: 2,
+  },
+  groupCheckboxCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#64748B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupCheckboxSelected: {
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
+  },
+  checkmarkIcon: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: -1,
   },
   timeBadgePill: {
     backgroundColor: '#1E293B',

@@ -32,7 +32,9 @@ interface MealStoreContextType {
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
+  deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
   moveFoodTime: (dateId: string, foodId: string, newTime: string) => void;
+  moveMultipleFoodsTime: (dateId: string, foodIds: string[], newTime: string) => void;
 }
 
 const STORAGE_KEY = '@balance_meal_logs_v1';
@@ -222,8 +224,28 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     saveLogs({ ...dayLogs, [dateId]: { ...existingDay, foods: updatedFoods } });
   };
 
+  const deleteMultipleFoods = (dateId: string, foodIds: string[]) => {
+    const existingDay = dayLogs[dateId];
+    if (!existingDay) return;
+
+    const idSet = new Set(foodIds);
+    const updatedFoods = existingDay.foods.filter((f) => !idSet.has(f.id));
+    saveLogs({ ...dayLogs, [dateId]: { ...existingDay, foods: updatedFoods } });
+  };
+
   const moveFoodTime = (dateId: string, foodId: string, newTime: string) => {
     updateFood(dateId, foodId, { time: newTime });
+  };
+
+  const moveMultipleFoodsTime = (dateId: string, foodIds: string[], newTime: string) => {
+    const existingDay = dayLogs[dateId];
+    if (!existingDay) return;
+
+    const idSet = new Set(foodIds);
+    const updatedFoods = existingDay.foods.map((f) =>
+      idSet.has(f.id) ? { ...f, time: newTime } : f
+    );
+    saveLogs({ ...dayLogs, [dateId]: { ...existingDay, foods: updatedFoods } });
   };
 
   return (
@@ -236,7 +258,9 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addFood,
         updateFood,
         deleteFood,
+        deleteMultipleFoods,
         moveFoodTime,
+        moveMultipleFoodsTime,
       }}>
       {children}
     </MealStoreContext.Provider>
