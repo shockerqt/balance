@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import { useRouter } from 'expo-router';
 import { useMealStore, LoggedFoodItem, DayLog } from '@/hooks/use-meal-store';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
@@ -22,6 +23,7 @@ const parseDateId = (dateId: string): Date => {
 };
 
 export default function LogsScreen() {
+  const router = useRouter();
   const {
     selectedDateId,
     setSelectedDateId,
@@ -111,15 +113,18 @@ export default function LogsScreen() {
     );
   };
 
+  // Navigates to dedicated food search screen with smart recommendations
   const handleOpenAddModal = (time?: string) => {
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const currentTimeStr = `${hours}:${minutes}`;
+    const targetTime = time || currentTimeStr;
 
-    setPresetTime(time || currentTimeStr);
-    setSelectedFood(null);
-    setModalVisible(true);
+    router.push({
+      pathname: '/food-search',
+      params: { dateId: selectedDateId, time: targetTime },
+    });
   };
 
   const handleOpenEditModal = (food: LoggedFoodItem) => {
@@ -267,7 +272,7 @@ export default function LogsScreen() {
         })}
       </PagerView>
 
-      {/* Floating Add Action Button (hidden in selection mode) */}
+      {/* Floating Add Action Button (navigates to /food-search) */}
       {!isSelectionMode && (
         <TouchableOpacity
           style={styles.floatingAddBtn}
@@ -281,17 +286,14 @@ export default function LogsScreen() {
       {/* Single Consolidated Bottom Floating Batch Action Bar */}
       {isSelectionMode && (
         <View style={styles.bottomBatchBar}>
-          {/* Cancel Button */}
           <TouchableOpacity style={styles.batchBarBtnCancel} delayPressIn={0} onPress={handleCancelSelection}>
             <Text style={styles.batchBarBtnCancelText}>Cancelar</Text>
           </TouchableOpacity>
 
-          {/* Counter Status */}
           <Text style={styles.batchBarCountText}>
             {selectedCount} {selectedCount === 1 ? 'seleccionado' : 'seleccionados'}
           </Text>
 
-          {/* Action Buttons Group */}
           <View style={styles.batchBarActionsGroup}>
             <TouchableOpacity
               style={styles.batchBarBtnMove}
@@ -307,7 +309,7 @@ export default function LogsScreen() {
         </View>
       )}
 
-      {/* Single Food Add/Edit Modal */}
+      {/* Single Food Edit Modal */}
       <TimeFoodModal
         visible={modalVisible}
         initialTime={presetTime}
