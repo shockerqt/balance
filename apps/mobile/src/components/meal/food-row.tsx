@@ -52,13 +52,12 @@ export const FoodRow: React.FC<FoodRowProps> = ({ food, onPress, onDelete }) => 
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
+    marginBottom: 4,
   },
   mainContent: {
     flex: 1,

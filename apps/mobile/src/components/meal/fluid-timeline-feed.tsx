@@ -58,7 +58,7 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
 
         return (
           <View key={timeKey} style={styles.timestampBlock}>
-            {/* Inline Timestamp Header Row */}
+            {/* Inline Timestamp Header Row (Pure Whitespace Separation) */}
             <View style={styles.timeHeaderRow}>
               <View style={styles.headerLeftGroup}>
                 {/* Time Badge Pill */}
@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#080B11',
   },
   scrollContent: {
-    paddingVertical: 14,
+    paddingVertical: 16,
     paddingHorizontal: 16,
     paddingBottom: 80,
   },
@@ -144,15 +144,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   timestampBlock: {
-    marginBottom: 20,
+    marginBottom: 24,
   },
   timeHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
+    paddingBottom: 4,
     marginBottom: 4,
   },
   headerLeftGroup: {
