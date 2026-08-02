@@ -4,7 +4,7 @@ dev:
 	pnpm dev
 
 mobile:
-	pnpm mobile
+	npm run mobile
 
 check:
 	cargo check -p server
