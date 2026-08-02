@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import { DatePickerModal } from '@/components/meal/date-picker-modal';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
@@ -59,6 +60,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const { width: windowWidth } = useWindowDimensions();
   const headerPagerRef = useRef<PagerView>(null);
   const prevSelectedDateIdRef = useRef<string>(selectedDateId);
+  const [calendarModalVisible, setCalendarModalVisible] = useState(false);
 
   // Calculate exact uniform width for each of the 7 pills
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
@@ -112,7 +114,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const weekGroups = useRef<WeekGroup[]>(generateWeekGroups()).current;
   const [visibleWeekIndex, setVisibleWeekIndex] = useState<number>(5);
 
-  // Sync PagerView page ONLY when selectedDateId explicitly changes (e.g. Hoy button or day tap)
+  // Sync PagerView page ONLY when selectedDateId explicitly changes
   useEffect(() => {
     if (prevSelectedDateIdRef.current !== selectedDateId) {
       prevSelectedDateIdRef.current = selectedDateId;
@@ -126,7 +128,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     }
   }, [selectedDateId, weekGroups]);
 
-  // Handle native PagerView swipe: ONLY update visible week index
+  // Handle native PagerView swipe
   const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pageIndex = e.nativeEvent.position;
     setVisibleWeekIndex(pageIndex);
@@ -148,39 +150,50 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   const { monthYear, fullDateLabel } = getReadableHeader();
 
-  const handlePrevWeek = () => {
-    if (visibleWeekIndex > 0) {
-      const newIndex = visibleWeekIndex - 1;
-      headerPagerRef.current?.setPage(newIndex);
-      setVisibleWeekIndex(newIndex);
-    }
+  // Day-by-day navigation handlers
+  const handlePrevDay = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() - 1);
+    onSelectDate(formatDateId(d));
   };
 
-  const handleNextWeek = () => {
-    if (visibleWeekIndex < weekGroups.length - 1) {
-      const newIndex = visibleWeekIndex + 1;
-      headerPagerRef.current?.setPage(newIndex);
-      setVisibleWeekIndex(newIndex);
-    }
+  const handleNextDay = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() + 1);
+    onSelectDate(formatDateId(d));
   };
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered Date Title & Clean 'Hoy' Subtitle */}
+      {/* Top Header: Centered 2-Line Date Title (Pressable to open DatePickerModal) */}
       <View style={styles.topHeaderRow}>
-        <View style={styles.titleBoxCentered}>
-          <View style={styles.monthNavRow}>
-            <TouchableOpacity onPress={handlePrevWeek} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.navArrowText}>‹</Text>
-            </TouchableOpacity>
+        <View style={styles.dateNavContainer}>
+          <TouchableOpacity
+            style={styles.arrowBtn}
+            onPress={handlePrevDay}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.6}>
+            <Text style={styles.arrowText}>‹</Text>
+          </TouchableOpacity>
+
+          {/* Pressable Date Title -> Opens Calendar Picker Modal */}
+          <TouchableOpacity
+            style={styles.titleBoxCentered}
+            activeOpacity={0.7}
+            onPress={() => setCalendarModalVisible(true)}>
             <Text style={styles.monthYearText}>{monthYear}</Text>
-            <TouchableOpacity onPress={handleNextWeek} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.navArrowText}>›</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.fullDateText}>
-            {isSelectedToday ? 'Hoy' : fullDateLabel}
-          </Text>
+            <Text style={styles.fullDateText}>
+              {isSelectedToday ? 'Hoy' : fullDateLabel}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.arrowBtn}
+            onPress={handleNextDay}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.6}>
+            <Text style={styles.arrowText}>›</Text>
+          </TouchableOpacity>
         </View>
 
         {!isSelectedToday && (
@@ -237,6 +250,14 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
           </View>
         ))}
       </PagerView>
+
+      {/* Interactive Calendar Date Picker Modal */}
+      <DatePickerModal
+        visible={calendarModalVisible}
+        selectedDateId={selectedDateId}
+        onClose={() => setCalendarModalVisible(false)}
+        onSelectDate={onSelectDate}
+      />
     </View>
   );
 };
@@ -254,23 +275,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    minHeight: 36,
+    minHeight: 40,
     marginBottom: 8,
+  },
+  dateNavContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+  },
+  arrowBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  arrowText: {
+    color: '#3B82F6',
+    fontSize: 32,
+    fontWeight: '500',
+    lineHeight: 32,
   },
   titleBoxCentered: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  monthNavRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  navArrowText: {
-    color: '#3B82F6',
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: -2,
   },
   monthYearText: {
     color: '#F8FAFC',
@@ -281,12 +308,12 @@ const styles = StyleSheet.create({
     color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '400',
-    marginTop: 1,
+    marginTop: 2,
   },
   todayBtn: {
     position: 'absolute',
     right: 0,
-    top: 4,
+    top: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
