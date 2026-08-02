@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   dateHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
@@ -344,7 +344,7 @@ const styles = StyleSheet.create({
   },
   daySummaryRow: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
   daySummaryLabel: {
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
   },
   mealHeader: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -391,7 +391,7 @@ const styles = StyleSheet.create({
   },
   foodItemRow: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
   foodInfo: {
