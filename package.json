@@ -5,8 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev:dashboard": "pnpm --filter dashboard dev",
+    "dev:mobile": "pnpm --filter mobile start -- --tunnel",
     "dev:landing": "pnpm --filter landing dev",
     "dev:server": "cargo watch -x run -p server",
+    "mobile": "pnpm --filter mobile start -- --tunnel",
     "dev": "concurrently \"pnpm dev:dashboard\" \"pnpm dev:server\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

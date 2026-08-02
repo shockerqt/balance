@@ -3,6 +3,9 @@
 dev:
 	pnpm dev
 
+mobile:
+	pnpm mobile
+
 check:
 	cargo check -p server
 
