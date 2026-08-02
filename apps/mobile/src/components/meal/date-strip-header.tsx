@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 
@@ -58,7 +58,6 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const headerPagerRef = useRef<PagerView>(null);
-  const isSwipingRef = useRef<boolean>(false);
 
   // Calculate exact uniform width for each of the 7 pills
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
@@ -67,18 +66,16 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const todayStr = formatDateId(now);
   const isSelectedToday = selectedDateId === todayStr;
 
-  // Generate a stable set of 11 continuous weeks (5 weeks past, 1 current week, 5 weeks future)
-  // Index 5 is always the base reference week
-  const generateStableWeekGroups = (): WeekGroup[] => {
+  // Generate 11 continuous weeks (-5 to +5 around today)
+  const generateWeekGroups = (): WeekGroup[] => {
     const groups: WeekGroup[] = [];
-    const baseDate = parseDateId(selectedDateId);
+    const baseDate = parseDateId(todayStr);
     const currentDay = baseDate.getDay();
     const startOffset = currentDay === 0 ? -6 : 1 - currentDay;
 
     const referenceMonday = new Date(baseDate);
     referenceMonday.setDate(baseDate.getDate() + startOffset);
 
-    // 11 continuous weeks (-5 to +5 around reference)
     for (let w = -5; w <= 5; w++) {
       const weekMonday = new Date(referenceMonday);
       weekMonday.setDate(referenceMonday.getDate() + w * 7);
@@ -102,7 +99,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
       }
 
       groups.push({
-        weekIndex: w + 5, // 0 to 10
+        weekIndex: w + 5, // 0 to 10 (5 is center = current week)
         startDateId: formatDateId(weekMonday),
         days,
       });
@@ -111,45 +108,24 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     return groups;
   };
 
-  const weekGroups = useRef<WeekGroup[]>(generateStableWeekGroups()).current;
+  const weekGroups = useRef<WeekGroup[]>(generateWeekGroups()).current;
+  const [visibleWeekIndex, setVisibleWeekIndex] = useState<number>(5);
 
-  // Find active week index
-  const activeWeekIndex = weekGroups.findIndex((g) =>
-    g.days.some((d) => d.dateId === selectedDateId)
-  );
-
-  // Sync PagerView position without loop
+  // Sync PagerView page when selectedDateId changes externally (e.g. Ir a Hoy button)
   useEffect(() => {
-    if (headerPagerRef.current && activeWeekIndex !== -1 && !isSwipingRef.current) {
-      headerPagerRef.current.setPage(activeWeekIndex);
+    const targetIndex = weekGroups.findIndex((g) =>
+      g.days.some((d) => d.dateId === selectedDateId)
+    );
+    if (targetIndex !== -1 && headerPagerRef.current && targetIndex !== visibleWeekIndex) {
+      headerPagerRef.current.setPage(targetIndex);
+      setVisibleWeekIndex(targetIndex);
     }
-  }, [selectedDateId, activeWeekIndex]);
+  }, [selectedDateId, visibleWeekIndex, weekGroups]);
 
-  // Calculate day-of-week relative index (0..6) of current selection
-  const getDayOfWeekIndex = (dateId: string): number => {
-    const d = parseDateId(dateId);
-    const day = d.getDay();
-    if (weekStartsOn === 'monday') {
-      return day === 0 ? 6 : day - 1;
-    }
-    return day;
-  };
-
-  // Handle native PagerView swipe between week pages
+  // Handle native PagerView swipe: ONLY update visible week index, NEVER mutate selectedDateId!
   const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pageIndex = e.nativeEvent.position;
-    const targetGroup = weekGroups[pageIndex];
-    if (targetGroup) {
-      isSwipingRef.current = true;
-      const dayOffset = getDayOfWeekIndex(selectedDateId);
-      const targetDateItem = targetGroup.days[dayOffset] || targetGroup.days[0];
-      if (targetDateItem.dateId !== selectedDateId) {
-        onSelectDate(targetDateItem.dateId);
-      }
-      setTimeout(() => {
-        isSwipingRef.current = false;
-      }, 150);
-    }
+    setVisibleWeekIndex(pageIndex);
   };
 
   // Format full readable date header string
@@ -169,15 +145,19 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const { monthYear, fullDateLabel } = getReadableHeader();
 
   const handlePrevWeek = () => {
-    const d = parseDateId(selectedDateId);
-    d.setDate(d.getDate() - 7);
-    onSelectDate(formatDateId(d));
+    if (visibleWeekIndex > 0) {
+      const newIndex = visibleWeekIndex - 1;
+      headerPagerRef.current?.setPage(newIndex);
+      setVisibleWeekIndex(newIndex);
+    }
   };
 
   const handleNextWeek = () => {
-    const d = parseDateId(selectedDateId);
-    d.setDate(d.getDate() + 7);
-    onSelectDate(formatDateId(d));
+    if (visibleWeekIndex < weekGroups.length - 1) {
+      const newIndex = visibleWeekIndex + 1;
+      headerPagerRef.current?.setPage(newIndex);
+      setVisibleWeekIndex(newIndex);
+    }
   };
 
   return (
@@ -209,11 +189,11 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         )}
       </View>
 
-      {/* Official Native PagerView for Week-by-Week Swiping */}
+      {/* Official Native PagerView: Swiping ONLY shifts visible buttons, never mutates selectedDateId */}
       <PagerView
         ref={headerPagerRef}
         style={styles.headerPagerView}
-        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 5}
+        initialPage={5}
         onPageSelected={handleWeekPageSelected}>
         {weekGroups.map((group) => (
           <View key={group.startDateId} style={styles.weekRow}>
