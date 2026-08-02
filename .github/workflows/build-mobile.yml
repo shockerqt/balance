@@ -13,41 +13,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 1. Checkout Repository
+      - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: 2. Setup Node.js 24
+      - name: "2. Setup Node.js 24"
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'npm'
           cache-dependency-path: 'apps/mobile/package-lock.json'
 
-      - name: 3. Setup Java 17 (JDK)
+      - name: "3. Setup Java 17 (JDK)"
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: 3b. Setup Gradle Cache
+      - name: "3b. Setup Gradle Cache"
         uses: gradle/actions/setup-gradle@v4
 
-      - name: 4. Install Mobile Dependencies
+      - name: "4. Install Mobile Dependencies"
         run: |
           npm --prefix apps/mobile install
 
-      - name: 5. Prebuild Native Android Code
+      - name: "5. Prebuild Native Android Code"
         run: |
           cd apps/mobile
           npx expo prebuild --platform android --clean
 
-      - name: 6. Compile Android Debug APK (Single ABI: arm64-v8a)
+      - name: "6. Compile Android Debug APK (Single ABI arm64-v8a)"
         run: |
           cd apps/mobile/android
           chmod +x gradlew
           ./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a --parallel --build-cache -Dorg.gradle.jvmargs="-Xmx4608m"
 
-      - name: 7. Upload APK Artifact
+      - name: "7. Upload APK Artifact"
         uses: actions/upload-artifact@v4
         with:
           name: balance-mobile-sdk57-dev
