@@ -134,7 +134,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     setVisibleWeekIndex(pageIndex);
   };
 
-  // Format full readable date header string (Compact 'Hoy' format: Line 1: Hoy, Line 2: 2 de Agosto)
+  // Format full readable date header string
   const getReadableHeader = (): { primaryLabel: string; secondaryLabel: string } => {
     const d = parseDateId(selectedDateId);
     const dayName = DAY_NAMES_FULL_ES[d.getDay()];
@@ -172,37 +172,39 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered 2-Line Date Title */}
+      {/* Top Header: Fixed-Width Centered 240px Date Navigation Box */}
       <View style={styles.topHeaderRow}>
-        {/* Left Arrow (Fixed Position) */}
-        <TouchableOpacity
-          style={styles.arrowBtnLeft}
-          onPress={handlePrevDay}
-          delayPressIn={0}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          activeOpacity={0.6}>
-          <Text style={styles.arrowText}>‹</Text>
-        </TouchableOpacity>
+        <View style={styles.fixedDateNavBox}>
+          {/* Left Arrow (Fixed Position within 240px Box) */}
+          <TouchableOpacity
+            style={styles.arrowBtn}
+            onPress={handlePrevDay}
+            delayPressIn={0}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.6}>
+            <Text style={styles.arrowText}>‹</Text>
+          </TouchableOpacity>
 
-        {/* Pressable Date Title -> Opens Calendar Picker Modal */}
-        <TouchableOpacity
-          style={styles.titleBoxCentered}
-          delayPressIn={0}
-          activeOpacity={0.7}
-          onPress={() => setCalendarModalVisible(true)}>
-          <Text style={styles.primaryDateText}>{primaryLabel}</Text>
-          <Text style={styles.secondaryDateText}>{secondaryLabel}</Text>
-        </TouchableOpacity>
+          {/* Pressable Date Title -> Opens Calendar Picker Modal */}
+          <TouchableOpacity
+            style={styles.titleBoxCentered}
+            delayPressIn={0}
+            activeOpacity={0.7}
+            onPress={() => setCalendarModalVisible(true)}>
+            <Text style={styles.primaryDateText}>{primaryLabel}</Text>
+            <Text style={styles.secondaryDateText}>{secondaryLabel}</Text>
+          </TouchableOpacity>
 
-        {/* Right Arrow (Fixed Position) */}
-        <TouchableOpacity
-          style={[styles.arrowBtnRight, !isSelectedToday && { right: 58 }]}
-          onPress={handleNextDay}
-          delayPressIn={0}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          activeOpacity={0.6}>
-          <Text style={styles.arrowText}>›</Text>
-        </TouchableOpacity>
+          {/* Right Arrow (Fixed Position within 240px Box) */}
+          <TouchableOpacity
+            style={styles.arrowBtn}
+            onPress={handleNextDay}
+            delayPressIn={0}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.6}>
+            <Text style={styles.arrowText}>›</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Hoy Button (Fixed Right Position when not on today) */}
         {!isSelectedToday && (
@@ -290,21 +292,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     width: '100%',
   },
-  arrowBtnLeft: {
-    position: 'absolute',
-    left: 8,
+  fixedDateNavBox: {
+    width: 240,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    zIndex: 10,
+    justifyContent: 'space-between',
   },
-  arrowBtnRight: {
-    position: 'absolute',
-    right: 8,
+  arrowBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
-    zIndex: 10,
+    width: 32,
+    height: 32,
   },
   arrowText: {
     color: '#3B82F6',
@@ -313,9 +311,9 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
   titleBoxCentered: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 48,
   },
   primaryDateText: {
     color: '#F8FAFC',
