@@ -166,7 +166,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered Date Title & Compact 'Hoy' Button */}
+      {/* Top Header: Centered Date Title & Clean 'Hoy' Subtitle */}
       <View style={styles.topHeaderRow}>
         <View style={styles.titleBoxCentered}>
           <View style={styles.monthNavRow}>
@@ -179,7 +179,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
             </TouchableOpacity>
           </View>
           <Text style={styles.fullDateText}>
-            {isSelectedToday ? '📍 Hoy' : fullDateLabel}
+            {isSelectedToday ? 'Hoy' : fullDateLabel}
           </Text>
         </View>
 
