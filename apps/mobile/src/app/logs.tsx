@@ -233,18 +233,6 @@ export default function LogsScreen() {
         targetFiber={currentDayLog.targetFiber}
       />
 
-      {/* Selection Mode Top Banner */}
-      {isSelectionMode && (
-        <View style={styles.selectionTopBanner}>
-          <Text style={styles.selectionCountText}>
-            {selectedCount} {selectedCount === 1 ? 'alimento seleccionado' : 'alimentos seleccionados'}
-          </Text>
-          <TouchableOpacity delayPressIn={0} onPress={handleCancelSelection}>
-            <Text style={styles.cancelBannerText}>Cancelar</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* 3. Official Native PagerView with Multi-Select Support */}
       <PagerView
         ref={pagerRef}
@@ -290,26 +278,32 @@ export default function LogsScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Bottom Floating Batch Action Bar */}
+      {/* Single Consolidated Bottom Floating Batch Action Bar */}
       {isSelectionMode && (
         <View style={styles.bottomBatchBar}>
           {/* Cancel Button */}
           <TouchableOpacity style={styles.batchBarBtnCancel} delayPressIn={0} onPress={handleCancelSelection}>
-            <Text style={styles.batchBarBtnCancelText}>✕ Cancelar</Text>
+            <Text style={styles.batchBarBtnCancelText}>Cancelar</Text>
           </TouchableOpacity>
 
-          {/* Move Button */}
-          <TouchableOpacity
-            style={styles.batchBarBtnMove}
-            delayPressIn={0}
-            onPress={() => setBatchMoveModalVisible(true)}>
-            <Text style={styles.batchBarBtnMoveText}>🕒 Mover ({selectedCount})</Text>
-          </TouchableOpacity>
+          {/* Counter Status */}
+          <Text style={styles.batchBarCountText}>
+            {selectedCount} {selectedCount === 1 ? 'seleccionado' : 'seleccionados'}
+          </Text>
 
-          {/* Delete Button */}
-          <TouchableOpacity style={styles.batchBarBtnDelete} delayPressIn={0} onPress={handleBatchDelete}>
-            <Text style={styles.batchBarBtnDeleteText}>🗑️ Eliminar ({selectedCount})</Text>
-          </TouchableOpacity>
+          {/* Action Buttons Group */}
+          <View style={styles.batchBarActionsGroup}>
+            <TouchableOpacity
+              style={styles.batchBarBtnMove}
+              delayPressIn={0}
+              onPress={() => setBatchMoveModalVisible(true)}>
+              <Text style={styles.batchBarBtnMoveText}>Mover</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.batchBarBtnDelete} delayPressIn={0} onPress={handleBatchDelete}>
+              <Text style={styles.batchBarBtnDeleteText}>Eliminar</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -345,26 +339,6 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
   },
-  selectionTopBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#3B82F6',
-  },
-  selectionCountText: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  cancelBannerText: {
-    color: '#3B82F6',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   floatingAddBtn: {
     position: 'absolute',
     bottom: 24,
@@ -397,13 +371,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
   },
   batchBarBtnCancel: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: '#1E293B',
   },
   batchBarBtnCancelText: {
@@ -411,10 +386,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  batchBarCountText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  batchBarActionsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   batchBarBtnMove: {
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: '#3B82F6',
@@ -426,8 +412,8 @@ const styles = StyleSheet.create({
   },
   batchBarBtnDelete: {
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     backgroundColor: '#EF4444',
   },
   batchBarBtnDeleteText: {
