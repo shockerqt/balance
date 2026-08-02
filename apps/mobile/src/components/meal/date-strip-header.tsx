@@ -58,6 +58,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const headerPagerRef = useRef<PagerView>(null);
+  const isSwipingRef = useRef<boolean>(false);
 
   // Calculate exact uniform width for each of the 7 pills
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
@@ -66,20 +67,21 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const todayStr = formatDateId(now);
   const isSelectedToday = selectedDateId === todayStr;
 
-  // Generate 5 continuous weeks (Week -2, Week -1, Current Week, Week +1, Week +2)
-  const generateWeekGroups = (): WeekGroup[] => {
+  // Generate a stable set of 11 continuous weeks (5 weeks past, 1 current week, 5 weeks future)
+  // Index 5 is always the base reference week
+  const generateStableWeekGroups = (): WeekGroup[] => {
     const groups: WeekGroup[] = [];
-    const validBaseDate = parseDateId(selectedDateId);
-    const currentDay = validBaseDate.getDay();
+    const baseDate = parseDateId(selectedDateId);
+    const currentDay = baseDate.getDay();
     const startOffset = currentDay === 0 ? -6 : 1 - currentDay;
 
-    const currentMonday = new Date(validBaseDate);
-    currentMonday.setDate(validBaseDate.getDate() + startOffset);
+    const referenceMonday = new Date(baseDate);
+    referenceMonday.setDate(baseDate.getDate() + startOffset);
 
-    // Generate 5 weeks centered around selected date
-    for (let w = -2; w <= 2; w++) {
-      const weekMonday = new Date(currentMonday);
-      weekMonday.setDate(currentMonday.getDate() + w * 7);
+    // 11 continuous weeks (-5 to +5 around reference)
+    for (let w = -5; w <= 5; w++) {
+      const weekMonday = new Date(referenceMonday);
+      weekMonday.setDate(referenceMonday.getDate() + w * 7);
 
       const dayNames = weekStartsOn === 'monday'
         ? ['L', 'M', 'M', 'J', 'V', 'S', 'D']
@@ -100,7 +102,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
       }
 
       groups.push({
-        weekIndex: w + 2, // 0, 1, 2, 3, 4 (2 is current center week)
+        weekIndex: w + 5, // 0 to 10
         startDateId: formatDateId(weekMonday),
         days,
       });
@@ -109,29 +111,44 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     return groups;
   };
 
-  const weekGroups = generateWeekGroups();
+  const weekGroups = useRef<WeekGroup[]>(generateStableWeekGroups()).current;
 
-  // Find active week index (default center = 2)
+  // Find active week index
   const activeWeekIndex = weekGroups.findIndex((g) =>
     g.days.some((d) => d.dateId === selectedDateId)
   );
 
+  // Sync PagerView position without loop
   useEffect(() => {
-    if (headerPagerRef.current && activeWeekIndex !== -1) {
+    if (headerPagerRef.current && activeWeekIndex !== -1 && !isSwipingRef.current) {
       headerPagerRef.current.setPage(activeWeekIndex);
     }
   }, [selectedDateId, activeWeekIndex]);
+
+  // Calculate day-of-week relative index (0..6) of current selection
+  const getDayOfWeekIndex = (dateId: string): number => {
+    const d = parseDateId(dateId);
+    const day = d.getDay();
+    if (weekStartsOn === 'monday') {
+      return day === 0 ? 6 : day - 1;
+    }
+    return day;
+  };
 
   // Handle native PagerView swipe between week pages
   const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pageIndex = e.nativeEvent.position;
     const targetGroup = weekGroups[pageIndex];
     if (targetGroup) {
-      // Check if current selectedDateId is inside this week; if not, select Monday of new week
-      const isAlreadyInWeek = targetGroup.days.some((d) => d.dateId === selectedDateId);
-      if (!isAlreadyInWeek) {
-        onSelectDate(targetGroup.days[0].dateId);
+      isSwipingRef.current = true;
+      const dayOffset = getDayOfWeekIndex(selectedDateId);
+      const targetDateItem = targetGroup.days[dayOffset] || targetGroup.days[0];
+      if (targetDateItem.dateId !== selectedDateId) {
+        onSelectDate(targetDateItem.dateId);
       }
+      setTimeout(() => {
+        isSwipingRef.current = false;
+      }, 150);
     }
   };
 
@@ -192,11 +209,11 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         )}
       </View>
 
-      {/* Official Native PagerView for Week-by-Week Native Swiping */}
+      {/* Official Native PagerView for Week-by-Week Swiping */}
       <PagerView
         ref={headerPagerRef}
         style={styles.headerPagerView}
-        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 2}
+        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 5}
         onPageSelected={handleWeekPageSelected}>
         {weekGroups.map((group) => (
           <View key={group.startDateId} style={styles.weekRow}>
