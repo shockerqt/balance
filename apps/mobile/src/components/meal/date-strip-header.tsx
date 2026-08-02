@@ -165,37 +165,38 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered 2-Line Date Title (Pressable to open DatePickerModal) */}
+      {/* Top Header: Centered Date Title with Invariant Fixed Position Navigation Arrows */}
       <View style={styles.topHeaderRow}>
-        <View style={styles.dateNavContainer}>
-          <TouchableOpacity
-            style={styles.arrowBtn}
-            onPress={handlePrevDay}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            activeOpacity={0.6}>
-            <Text style={styles.arrowText}>‹</Text>
-          </TouchableOpacity>
+        {/* Left Arrow (Fixed Position) */}
+        <TouchableOpacity
+          style={styles.arrowBtnLeft}
+          onPress={handlePrevDay}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          activeOpacity={0.6}>
+          <Text style={styles.arrowText}>‹</Text>
+        </TouchableOpacity>
 
-          {/* Pressable Date Title -> Opens Calendar Picker Modal */}
-          <TouchableOpacity
-            style={styles.titleBoxCentered}
-            activeOpacity={0.7}
-            onPress={() => setCalendarModalVisible(true)}>
-            <Text style={styles.monthYearText}>{monthYear}</Text>
-            <Text style={styles.fullDateText}>
-              {isSelectedToday ? 'Hoy' : fullDateLabel}
-            </Text>
-          </TouchableOpacity>
+        {/* Pressable Date Title -> Opens Calendar Picker Modal */}
+        <TouchableOpacity
+          style={styles.titleBoxCentered}
+          activeOpacity={0.7}
+          onPress={() => setCalendarModalVisible(true)}>
+          <Text style={styles.monthYearText}>{monthYear}</Text>
+          <Text style={styles.fullDateText}>
+            {isSelectedToday ? 'Hoy' : fullDateLabel}
+          </Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.arrowBtn}
-            onPress={handleNextDay}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            activeOpacity={0.6}>
-            <Text style={styles.arrowText}>›</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Right Arrow (Fixed Position) */}
+        <TouchableOpacity
+          style={[styles.arrowBtnRight, !isSelectedToday && { right: 58 }]}
+          onPress={handleNextDay}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          activeOpacity={0.6}>
+          <Text style={styles.arrowText}>›</Text>
+        </TouchableOpacity>
 
+        {/* Hoy Button (Fixed Right Position when not on today) */}
         {!isSelectedToday && (
           <TouchableOpacity
             style={styles.todayBtn}
@@ -277,27 +278,34 @@ const styles = StyleSheet.create({
     position: 'relative',
     minHeight: 40,
     marginBottom: 8,
+    width: '100%',
   },
-  dateNavContainer: {
-    flexDirection: 'row',
+  arrowBtnLeft: {
+    position: 'absolute',
+    left: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 20,
+    paddingHorizontal: 8,
+    zIndex: 10,
   },
-  arrowBtn: {
+  arrowBtnRight: {
+    position: 'absolute',
+    right: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
+    zIndex: 10,
   },
   arrowText: {
     color: '#3B82F6',
-    fontSize: 32,
+    fontSize: 34,
     fontWeight: '500',
-    lineHeight: 32,
+    lineHeight: 34,
   },
   titleBoxCentered: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 48,
   },
   monthYearText: {
     color: '#F8FAFC',
@@ -313,13 +321,13 @@ const styles = StyleSheet.create({
   todayBtn: {
     position: 'absolute',
     right: 0,
-    top: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: '#3B82F6',
+    zIndex: 10,
   },
   todayBtnText: {
     color: '#3B82F6',
