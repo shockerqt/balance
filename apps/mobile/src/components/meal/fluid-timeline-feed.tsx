@@ -1,13 +1,13 @@
 import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
-import { FoodRow } from './food-row';
+import { FoodRow } from '@/components/meal/food-row';
 
 interface FluidTimelineFeedProps {
   foods: LoggedFoodItem[];
   onSelectFood: (food: LoggedFoodItem) => void;
   onAddAtTime: (time: string) => void;
-  onDeleteFood: (foodId: string) => void;
+  onDeleteFood?: (foodId: string) => void;
 }
 
 export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
@@ -16,55 +16,72 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
   onAddAtTime,
   onDeleteFood,
 }) => {
-  // Group foods by time
-  const timeMap = foods.reduce<Record<string, LoggedFoodItem[]>>((acc, food) => {
-    const timeKey = food.time || '12:00';
-    if (!acc[timeKey]) acc[timeKey] = [];
-    acc[timeKey].push(food);
-    return acc;
-  }, {});
-
-  // Sort times chronologically
-  const sortedTimes = Object.keys(timeMap).sort();
-
-  if (foods.length === 0) {
+  if (!foods || foods.length === 0) {
     return (
       <View style={styles.emptyFlexContainer}>
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Sin registros para este día</Text>
           <Text style={styles.emptySubtitle}>
-            Toca el botón '+' para registrar tu primera comida o desliza horizontalmente entre días.
+            Toca el botón [+] para agregar tu primera comida o alimento del día.
           </Text>
         </View>
       </View>
     );
   }
 
+  // Group foods by timestamp ("HH:MM")
+  const groupedFoods: Record<string, LoggedFoodItem[]> = {};
+  foods.forEach((food) => {
+    const timeKey = food.time || '12:00';
+    if (!groupedFoods[timeKey]) {
+      groupedFoods[timeKey] = [];
+    }
+    groupedFoods[timeKey].push(food);
+  });
+
+  // Sort timestamps chronologically
+  const sortedTimes = Object.keys(groupedFoods).sort();
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}>
       {sortedTimes.map((timeKey) => {
-        const groupFoods = timeMap[timeKey];
-        const groupCal = groupFoods.reduce((sum, f) => sum + (f.calories || 0), 0);
+        const groupFoods = groupedFoods[timeKey];
+
+        // Calculate macro & calorie totals for this timestamp group
+        const groupCalories = groupFoods.reduce((acc, f) => acc + (f.calories || 0), 0);
+        const groupProtein = groupFoods.reduce((acc, f) => acc + (f.protein || 0), 0);
+        const groupCarbs = groupFoods.reduce((acc, f) => acc + (f.carbs || 0), 0);
+        const groupFat = groupFoods.reduce((acc, f) => acc + (f.fat || 0), 0);
 
         return (
           <View key={timeKey} style={styles.timeBlock}>
-            {/* Minimalist Time Header Divider */}
+            {/* Timestamp Group Header: Time + Macro Summary + Circular (+) Add Button */}
             <View style={styles.timeHeaderRow}>
               <View style={styles.timeTitleBox}>
-                <View style={styles.timeDot} />
                 <Text style={styles.timeText}>{timeKey}</Text>
-                <Text style={styles.timeCalText}>({groupCal} kcal)</Text>
+                <Text style={styles.dotSeparator}>·</Text>
+                <Text style={styles.groupKcalText}>{groupCalories} kcal</Text>
+                <Text style={styles.dotSeparator}>·</Text>
+                <Text style={styles.groupMacroText}>
+                  P {groupProtein}g  C {groupCarbs}g  G {groupFat}g
+                </Text>
               </View>
 
+              {/* Circular (+) Add Button */}
               <TouchableOpacity
-                style={styles.addBtn}
+                style={styles.addCircleBtn}
+                delayPressIn={0}
                 activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 onPress={() => onAddAtTime(timeKey)}>
-                <Text style={styles.addBtnText}>+ Agregar</Text>
+                <Text style={styles.addCircleIcon}>+</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Continuous food list */}
+            {/* Continuous food list for this timestamp */}
             <View style={styles.foodListContainer}>
               {groupFoods.map((food) => (
                 <FoodRow
@@ -104,6 +121,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     borderRadius: 16,
+    borderCurve: 'continuous',
     backgroundColor: '#0E1420',
     borderWidth: 1,
     borderColor: '#1C2638',
@@ -122,13 +140,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   timeBlock: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   timeHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#1C2638',
     marginBottom: 4,
@@ -136,36 +154,50 @@ const styles = StyleSheet.create({
   timeTitleBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  timeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#3B82F6',
+    flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
+    paddingRight: 8,
   },
   timeText: {
-    color: '#3B82F6',
-    fontSize: 14,
+    color: '#F8FAFC',
+    fontSize: 15,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
-  timeCalText: {
-    color: '#64748B',
+  dotSeparator: {
+    color: '#475569',
     fontSize: 12,
-    fontWeight: '400',
   },
-  addBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    backgroundColor: '#161E2E',
-  },
-  addBtnText: {
-    color: '#94A3B8',
-    fontSize: 11,
+  groupKcalText: {
+    color: '#F87171',
+    fontSize: 12,
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  groupMacroText: {
+    color: '#8E9BAE',
+    fontSize: 12,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+  },
+  addCircleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addCircleIcon: {
+    color: '#3B82F6',
+    fontSize: 18,
+    fontWeight: '500',
+    marginTop: -1,
   },
   foodListContainer: {
-    paddingLeft: 6,
+    backgroundColor: '#080B11',
   },
 });
