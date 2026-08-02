@@ -134,21 +134,28 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     setVisibleWeekIndex(pageIndex);
   };
 
-  // Format full readable date header string
-  const getReadableHeader = (): { monthYear: string; fullDateLabel: string } => {
+  // Format full readable date header string (Option A: Primary = Day, Secondary = Month/Year)
+  const getReadableHeader = (): { primaryLabel: string; secondaryLabel: string } => {
     const d = parseDateId(selectedDateId);
     const dayName = DAY_NAMES_FULL_ES[d.getDay()];
     const dayNum = d.getDate();
     const monthName = MONTH_NAMES_ES[d.getMonth()];
     const year = d.getFullYear();
 
+    if (isSelectedToday) {
+      return {
+        primaryLabel: 'Hoy',
+        secondaryLabel: `${dayName} ${dayNum} de ${monthName}, ${year}`,
+      };
+    }
+
     return {
-      monthYear: `${monthName} ${year}`,
-      fullDateLabel: `${dayName} ${dayNum} de ${monthName}`,
+      primaryLabel: `${dayName} ${dayNum}`,
+      secondaryLabel: `${monthName}, ${year}`,
     };
   };
 
-  const { monthYear, fullDateLabel } = getReadableHeader();
+  const { primaryLabel, secondaryLabel } = getReadableHeader();
 
   // Day-by-day navigation handlers
   const handlePrevDay = () => {
@@ -165,9 +172,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Centered Date Title with Invariant Fixed Position Navigation Arrows */}
+      {/* Top Header: Centered 2-Line Date Title (Option A: Day Headline + Month Subtitle) */}
       <View style={styles.topHeaderRow}>
-        {/* Left Arrow (Fixed Position with 0ms delayPressIn) */}
+        {/* Left Arrow (Fixed Position) */}
         <TouchableOpacity
           style={styles.arrowBtnLeft}
           onPress={handlePrevDay}
@@ -183,13 +190,11 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
           delayPressIn={0}
           activeOpacity={0.7}
           onPress={() => setCalendarModalVisible(true)}>
-          <Text style={styles.monthYearText}>{monthYear}</Text>
-          <Text style={styles.fullDateText}>
-            {isSelectedToday ? 'Hoy' : fullDateLabel}
-          </Text>
+          <Text style={styles.primaryDateText}>{primaryLabel}</Text>
+          <Text style={styles.secondaryDateText}>{secondaryLabel}</Text>
         </TouchableOpacity>
 
-        {/* Right Arrow (Fixed Position with 0ms delayPressIn) */}
+        {/* Right Arrow (Fixed Position) */}
         <TouchableOpacity
           style={[styles.arrowBtnRight, !isSelectedToday && { right: 58 }]}
           onPress={handleNextDay}
@@ -312,16 +317,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 48,
   },
-  monthYearText: {
+  primaryDateText: {
     color: '#F8FAFC',
     fontSize: 16,
     fontWeight: '700',
   },
-  fullDateText: {
+  secondaryDateText: {
     color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '400',
-    marginTop: 2,
+    marginTop: 1,
   },
   todayBtn: {
     position: 'absolute',
