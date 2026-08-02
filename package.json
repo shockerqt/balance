@@ -5,10 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev:dashboard": "npm --prefix apps/dashboard run dev",
-    "dev:mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start -- --dev-client --tunnel",
+    "dev:mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
     "dev:landing": "pnpm --filter landing dev",
     "dev:server": "cargo watch -x run -p server",
-    "mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start -- --dev-client --tunnel",
+    "mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
     "dev": "concurrently \"pnpm dev:dashboard\" \"pnpm dev:server\"",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
