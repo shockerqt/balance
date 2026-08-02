@@ -1,10 +1,10 @@
-.PHONY: dev build check test
+.PHONY: dev build check test mobile
 
 dev:
 	pnpm dev
 
 mobile:
-	npm run mobile
+	npm run mobile 2>&1 | tee /tmp/metro.log
 
 check:
 	cargo check -p server
