@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import React, { useRef } from 'react';
+import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions, PanResponder } from 'react-native';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
@@ -37,6 +37,14 @@ const parseDateId = (dateId: string): Date => {
   return new Date();
 };
 
+// Helper to format Date to "YYYY-MM-DD"
+const formatDateId = (d: Date): string => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   selectedDateId,
   onSelectDate,
@@ -48,8 +56,41 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
 
   const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayStr = formatDateId(now);
   const isSelectedToday = selectedDateId === todayStr;
+
+  // Jump 1 week forward (+7 days)
+  const handleNextWeek = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() + 7);
+    onSelectDate(formatDateId(d));
+  };
+
+  // Jump 1 week backward (-7 days)
+  const handlePrevWeek = () => {
+    const d = parseDateId(selectedDateId);
+    d.setDate(d.getDate() - 7);
+    onSelectDate(formatDateId(d));
+  };
+
+  // PanResponder to capture horizontal swipes on the week strip
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 15 && Math.abs(gestureState.dy) < 15;
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx < -35) {
+          // Swiped Left -> Advance to Next Week
+          handleNextWeek();
+        } else if (gestureState.dx > 35) {
+          // Swiped Right -> Go Back to Previous Week
+          handlePrevWeek();
+        }
+      },
+    })
+  ).current;
 
   // Format full readable date header string (e.g. "Domingo 2 de Agosto, 2026")
   const getReadableHeader = (): { monthYear: string; fullDateLabel: string } => {
@@ -91,10 +132,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
       const d = new Date(mondayDate);
       d.setDate(mondayDate.getDate() + i);
 
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      const dateId = `${year}-${month}-${day}`;
+      const dateId = formatDateId(d);
 
       dates.push({
         dateId,
@@ -109,11 +147,19 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const weekList = generateCurrentWeek();
 
   return (
-    <View style={styles.container}>
-      {/* Top Header: Month/Year Title & Smart 'Ir a Hoy' Button */}
+    <View style={styles.container} {...panResponder.panHandlers}>
+      {/* Top Header: Month/Year Title & Smart 'Ir a Hoy' Button with discreet week navigation arrows */}
       <View style={styles.topHeaderRow}>
         <View style={styles.titleBox}>
-          <Text style={styles.monthYearText}>{monthYear}</Text>
+          <View style={styles.monthNavRow}>
+            <TouchableOpacity onPress={handlePrevWeek} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.navArrowText}>‹</Text>
+            </TouchableOpacity>
+            <Text style={styles.monthYearText}>{monthYear}</Text>
+            <TouchableOpacity onPress={handleNextWeek} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.navArrowText}>›</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.fullDateText}>
             {isSelectedToday ? '📍 Hoy' : fullDateLabel}
           </Text>
@@ -185,6 +231,17 @@ const styles = StyleSheet.create({
   },
   titleBox: {
     flexDirection: 'column',
+  },
+  monthNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  navArrowText: {
+    color: '#3B82F6',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: -2,
   },
   monthYearText: {
     color: '#F8FAFC',
