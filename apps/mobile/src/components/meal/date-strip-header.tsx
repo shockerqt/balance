@@ -58,6 +58,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 }) => {
   const { width: windowWidth } = useWindowDimensions();
   const headerPagerRef = useRef<PagerView>(null);
+  const prevSelectedDateIdRef = useRef<string>(selectedDateId);
 
   // Calculate exact uniform width for each of the 7 pills
   const pillWidth = Math.floor((windowWidth - 32 - 36) / 7);
@@ -111,16 +112,19 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const weekGroups = useRef<WeekGroup[]>(generateWeekGroups()).current;
   const [visibleWeekIndex, setVisibleWeekIndex] = useState<number>(5);
 
-  // Sync PagerView page when selectedDateId changes externally (e.g. Ir a Hoy button)
+  // Sync PagerView page ONLY when selectedDateId explicitly changes (e.g. Ir a Hoy or day tap)
   useEffect(() => {
-    const targetIndex = weekGroups.findIndex((g) =>
-      g.days.some((d) => d.dateId === selectedDateId)
-    );
-    if (targetIndex !== -1 && headerPagerRef.current && targetIndex !== visibleWeekIndex) {
-      headerPagerRef.current.setPage(targetIndex);
-      setVisibleWeekIndex(targetIndex);
+    if (prevSelectedDateIdRef.current !== selectedDateId) {
+      prevSelectedDateIdRef.current = selectedDateId;
+      const targetIndex = weekGroups.findIndex((g) =>
+        g.days.some((d) => d.dateId === selectedDateId)
+      );
+      if (targetIndex !== -1 && headerPagerRef.current) {
+        headerPagerRef.current.setPage(targetIndex);
+        setVisibleWeekIndex(targetIndex);
+      }
     }
-  }, [selectedDateId, visibleWeekIndex, weekGroups]);
+  }, [selectedDateId, weekGroups]);
 
   // Handle native PagerView swipe: ONLY update visible week index, NEVER mutate selectedDateId!
   const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
@@ -189,7 +193,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
         )}
       </View>
 
-      {/* Official Native PagerView: Swiping ONLY shifts visible buttons, never mutates selectedDateId */}
+      {/* Official Native PagerView: Swiping ONLY shifts visible buttons without snap-back */}
       <PagerView
         ref={headerPagerRef}
         style={styles.headerPagerView}
