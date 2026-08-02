@@ -69,17 +69,31 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
         const groupCarbs = groupFoods.reduce((acc, f) => acc + (f.carbs || 0), 0);
         const groupFat = groupFoods.reduce((acc, f) => acc + (f.fat || 0), 0);
 
+        const handleGroupHeaderPress = () => {
+          if (isSelectionMode && onToggleSelectGroup) {
+            onToggleSelectGroup(timeKey, groupFoodIds);
+          }
+        };
+
+        const handleGroupHeaderLongPress = () => {
+          if (onLongPressGroup) {
+            onLongPressGroup(timeKey, groupFoodIds);
+          }
+        };
+
         return (
           <View key={timeKey} style={styles.timestampBlock}>
-            {/* Inline Timestamp Header Row */}
+            {/* Inline Timestamp Header Row (Entire row is touchable & long-pressable) */}
             <View style={styles.timeHeaderRow}>
-              <View style={styles.headerLeftGroup}>
+              <TouchableOpacity
+                style={styles.headerRowTouchArea}
+                delayPressIn={0}
+                activeOpacity={0.7}
+                onPress={handleGroupHeaderPress}
+                onLongPress={handleGroupHeaderLongPress}>
                 {/* Group Selection Checkbox when in Selection Mode */}
                 {isSelectionMode && (
-                  <TouchableOpacity
-                    style={styles.groupCheckboxBtn}
-                    delayPressIn={0}
-                    onPress={() => onToggleSelectGroup && onToggleSelectGroup(timeKey, groupFoodIds)}>
+                  <View style={styles.groupCheckboxCircleWrapper}>
                     <View
                       style={[
                         styles.groupCheckboxCircle,
@@ -87,26 +101,13 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
                       ]}>
                       {isGroupFullySelected && <Text style={styles.checkmarkIcon}>✓</Text>}
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 )}
 
-                {/* Time Badge Pill (Pressable / Long-pressable to select whole group) */}
-                <TouchableOpacity
-                  style={styles.timeBadgePill}
-                  delayPressIn={0}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    if (isSelectionMode && onToggleSelectGroup) {
-                      onToggleSelectGroup(timeKey, groupFoodIds);
-                    }
-                  }}
-                  onLongPress={() => {
-                    if (onLongPressGroup) {
-                      onLongPressGroup(timeKey, groupFoodIds);
-                    }
-                  }}>
+                {/* Time Badge Pill */}
+                <View style={styles.timeBadgePill}>
                   <Text style={styles.timeBadgeText}>{timeKey}</Text>
-                </TouchableOpacity>
+                </View>
 
                 {/* Soft Muted Group Macro & Calorie Summary */}
                 <View style={styles.summaryStatsRow}>
@@ -114,7 +115,7 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
                     {groupCalories} kcal  ·  P {groupProtein}g  C {groupCarbs}g  G {groupFat}g
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
 
               {/* (+) Circular Add Button (hidden during selection mode) */}
               {!isSelectionMode && (
@@ -197,18 +198,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 8,
+    paddingBottom: 4,
     marginBottom: 4,
   },
-  headerLeftGroup: {
+  headerRowTouchArea: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 10,
     flex: 1,
     paddingRight: 8,
+    paddingVertical: 4,
   },
-  groupCheckboxBtn: {
+  groupCheckboxCircleWrapper: {
     paddingRight: 2,
   },
   groupCheckboxCircle: {
