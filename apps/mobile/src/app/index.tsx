@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
   userRow: {
@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
   },
   heroTop: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'baseline',
   },
   cardLabel: {
@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   },
   macrosGrid: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     gap: 6,
     marginTop: 4,
   },
@@ -267,7 +267,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     height: 48,
     borderRadius: 14,
-    justify-content: 'center',
+    justifyContent: 'center',
     alignItems: 'center',
   },
   primaryBtnText: {
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   },
   statsHeader: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
   statsTitle: {
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
   },
   weeklyBarRow: {
     flexDirection: 'row',
-    justify-content: 'space-between',
+    justifyContent: 'space-between',
     alignItems: 'flex-end',
     height: 70,
     paddingTop: 10,
