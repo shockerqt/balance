@@ -112,7 +112,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const weekGroups = useRef<WeekGroup[]>(generateWeekGroups()).current;
   const [visibleWeekIndex, setVisibleWeekIndex] = useState<number>(5);
 
-  // Sync PagerView page ONLY when selectedDateId explicitly changes (e.g. Ir a Hoy or day tap)
+  // Sync PagerView page ONLY when selectedDateId explicitly changes (e.g. Hoy button or day tap)
   useEffect(() => {
     if (prevSelectedDateIdRef.current !== selectedDateId) {
       prevSelectedDateIdRef.current = selectedDateId;
@@ -126,7 +126,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     }
   }, [selectedDateId, weekGroups]);
 
-  // Handle native PagerView swipe: ONLY update visible week index, NEVER mutate selectedDateId!
+  // Handle native PagerView swipe: ONLY update visible week index
   const handleWeekPageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pageIndex = e.nativeEvent.position;
     setVisibleWeekIndex(pageIndex);
@@ -166,9 +166,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Top Header: Month/Year Title & Smart 'Ir a Hoy' Button with discreet navigation arrows */}
+      {/* Top Header: Centered Date Title & Compact 'Hoy' Button */}
       <View style={styles.topHeaderRow}>
-        <View style={styles.titleBox}>
+        <View style={styles.titleBoxCentered}>
           <View style={styles.monthNavRow}>
             <TouchableOpacity onPress={handlePrevWeek} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={styles.navArrowText}>‹</Text>
@@ -188,12 +188,12 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
             style={styles.todayBtn}
             activeOpacity={0.7}
             onPress={() => onSelectDate(todayStr)}>
-            <Text style={styles.todayBtnText}>Ir a Hoy</Text>
+            <Text style={styles.todayBtnText}>Hoy</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Official Native PagerView: Swiping ONLY shifts visible buttons without snap-back */}
+      {/* Official Native PagerView */}
       <PagerView
         ref={headerPagerRef}
         style={styles.headerPagerView}
@@ -252,34 +252,41 @@ const styles = StyleSheet.create({
   topHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    position: 'relative',
+    minHeight: 36,
     marginBottom: 8,
   },
-  titleBox: {
-    flexDirection: 'column',
+  titleBoxCentered: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   monthNavRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   navArrowText: {
     color: '#3B82F6',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     marginTop: -2,
   },
   monthYearText: {
     color: '#F8FAFC',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
   fullDateText: {
     color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '400',
+    marginTop: 1,
   },
   todayBtn: {
+    position: 'absolute',
+    right: 0,
+    top: 4,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
