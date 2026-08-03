@@ -2,13 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import { useRouter } from 'expo-router';
 import { useMealStore, LoggedFoodItem, DayLog } from '@/hooks/use-meal-store';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { FluidTimelineFeed } from '@/components/meal/fluid-timeline-feed';
 import { TimeFoodModal } from '@/components/meal/time-food-modal';
 import { BatchMoveModal } from '@/components/meal/batch-move-modal';
-import { FoodSearchModal } from '@/components/meal/food-search-modal';
 
 // Helper to safely parse "YYYY-MM-DD" without UTC timezone shift
 const parseDateId = (dateId: string): Date => {
@@ -23,6 +23,7 @@ const parseDateId = (dateId: string): Date => {
 };
 
 export default function LogsScreen() {
+  const router = useRouter();
   const {
     selectedDateId,
     setSelectedDateId,
@@ -38,7 +39,6 @@ export default function LogsScreen() {
 
   // Modal States
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [foodSearchModalVisible, setFoodSearchModalVisible] = useState(false);
   const [selectedFood, setSelectedFood] = useState<LoggedFoodItem | null>(null);
   const [presetTime, setPresetTime] = useState<string>('08:30');
 
@@ -114,7 +114,7 @@ export default function LogsScreen() {
     );
   };
 
-  // Opens Food Search Sheet Modal with Smart Recommendations
+  // Navigates natively to Food Search FormSheet Screen (/food-search)
   const handleOpenAddModal = (time?: string) => {
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
@@ -122,8 +122,10 @@ export default function LogsScreen() {
     const currentTimeStr = `${hours}:${minutes}`;
     const targetTime = time || currentTimeStr;
 
-    setPresetTime(targetTime);
-    setFoodSearchModalVisible(true);
+    router.push({
+      pathname: '/food-search',
+      params: { dateId: selectedDateId, time: targetTime },
+    });
   };
 
   const handleOpenEditModal = (food: LoggedFoodItem) => {
@@ -307,15 +309,6 @@ export default function LogsScreen() {
           </View>
         </View>
       )}
-
-      {/* Food Search & Smart Recommendations Modal */}
-      <FoodSearchModal
-        visible={foodSearchModalVisible}
-        targetDateId={selectedDateId}
-        targetTime={presetTime}
-        onClose={() => setFoodSearchModalVisible(false)}
-        onConfirmAddFood={(foodData) => addFood(selectedDateId, foodData)}
-      />
 
       {/* Single Food Edit Modal */}
       <TimeFoodModal
