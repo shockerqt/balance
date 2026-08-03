@@ -1,53 +1,88 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-import '@/global.css';
-
 import { Platform } from 'react-native';
 
-export const Colors = {
-  light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
-  },
-} as const;
+export interface ThemePalette {
+  name: string;
+  background: string;
+  surface: string;
+  surfaceBorder: string;
+  cardBackground: string;
+  primary: string;
+  primaryHover: string;
+  primaryText: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  kcalCoral: string;
+  accentMuted: string;
+  // Aliases for standard Expo components
+  text: string;
+  backgroundElement: string;
+  backgroundSelected: string;
+}
 
-export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+export const Palettes: Record<string, ThemePalette> = {
+  // Paleta 1: Obsidian Deep & Cobalt Blue
+  obsidianCobalt: {
+    name: 'Obsidian & Cobalt',
+    background: '#080B11',
+    surface: '#0F172A',
+    surfaceBorder: '#1E293B',
+    cardBackground: '#131C2E',
+    primary: '#3B82F6',
+    primaryHover: '#2563EB',
+    primaryText: '#FFFFFF',
+    textPrimary: '#F8FAFC',
+    textSecondary: '#94A3B8',
+    textMuted: '#64748B',
+    kcalCoral: '#F87171',
+    accentMuted: '#1E293B',
+    text: '#F8FAFC',
+    backgroundElement: '#0F172A',
+    backgroundSelected: '#131C2E',
+  },
+
+  // Paleta 2: Midnight Cyber & Emerald Mint (Paleta Menta Eléctrica para Probar)
+  midnightEmerald: {
+    name: 'Midnight & Emerald Mint',
+    background: '#0B0E14',
+    surface: '#161B22',
+    surfaceBorder: '#21262D',
+    cardBackground: '#1C2128',
+    primary: '#10B981', // Menta Esmeralda Eléctrico
+    primaryHover: '#059669',
+    primaryText: '#042F2E',
+    textPrimary: '#F0F6FC',
+    textSecondary: '#8B949E',
+    textMuted: '#484F58',
+    kcalCoral: '#F59E0B', // Ámbar Energía
+    accentMuted: '#21262D',
+    text: '#F0F6FC',
+    backgroundElement: '#161B22',
+    backgroundSelected: '#1C2128',
+  },
+};
+
+// Paleta activa global (Cambiar esta clave altera el tema de toda la app al instante)
+export const ACTIVE_PALETTE_KEY: keyof typeof Palettes = 'midnightEmerald';
+
+export const ActiveTheme = Palettes[ACTIVE_PALETTE_KEY];
+
+// Backward-compatible exports for Expo components
+export const Colors = {
+  light: Palettes.obsidianCobalt,
+  dark: Palettes.midnightEmerald,
+};
+
+export type ThemeColor = keyof ThemePalette;
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
     sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
     mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
   },
 });
 
