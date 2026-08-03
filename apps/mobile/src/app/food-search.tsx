@@ -135,7 +135,7 @@ export default function FoodSearchScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Clean Top Header Bar */}
+      {/* 1. Clean Compact Top Header Bar */}
       <View style={styles.headerBar}>
         <TouchableOpacity style={styles.cancelBtn} delayPressIn={0} onPress={() => router.back()}>
           <Text style={styles.cancelBtnText}>Cancelar</Text>
@@ -164,7 +164,7 @@ export default function FoodSearchScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 2. Live Search Bar & Create Custom Button */}
+      {/* 2. Compact Search & Custom Food Section */}
       <View style={styles.searchSection}>
         <View style={styles.searchBarBox}>
           <Text style={styles.searchIcon}>🔍</Text>
@@ -192,8 +192,13 @@ export default function FoodSearchScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollList} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* 3. Section 1: ALIMENTOS PARA REGISTRAR (Top Active Staging Group) */}
+      {/* 3. Ultra-dense Native ScrollView */}
+      <ScrollView
+        style={styles.scrollList}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="automatic">
+        {/* Section 1: ALIMENTOS PARA REGISTRAR (Top Active Staging Group) */}
         {stagedCount > 0 && (
           <View style={styles.stagedSectionContainer}>
             <Text style={styles.stagedSectionHeader}>
@@ -212,12 +217,12 @@ export default function FoodSearchScreen() {
               return (
                 <View key={item.id} style={styles.stagedRowCard}>
                   <View style={styles.stagedCardMain}>
-                    <Text style={styles.stagedFoodName} numberOfLines={1}>
+                    <Text style={styles.stagedFoodName} numberOfLines={1} selectable>
                       {item.name}
                     </Text>
 
                     <View style={styles.stagedControlsRow}>
-                      {/* Inline Quantity Input with AutoFocus for last added */}
+                      {/* Low-Profile Inline Quantity Input with AutoFocus */}
                       <TextInput
                         style={styles.inlineQtyInput}
                         value={item.quantityStr}
@@ -257,7 +262,7 @@ export default function FoodSearchScreen() {
           </View>
         )}
 
-        {/* 4. Section 2: ⚡ SUGERIDOS PARA LAS HORA (Top 15 Collapsible) */}
+        {/* Section 2: ⚡ SUGERIDOS PARA LA HORA (Top 15 Collapsible) */}
         <TouchableOpacity
           style={styles.accordionHeader}
           delayPressIn={0}
@@ -272,32 +277,34 @@ export default function FoodSearchScreen() {
             {suggestedTop15.map((food) => (
               <TouchableOpacity
                 key={food.id}
-                style={styles.foodLibraryCard}
+                style={styles.foodLibraryCardCompact}
                 delayPressIn={0}
                 activeOpacity={0.7}
                 onPress={() => handleStageFood(food)}>
                 <View style={styles.foodCardLeft}>
-                  <Text style={styles.foodName}>{food.name}</Text>
-                  <View style={styles.foodMetaRow}>
-                    <Text style={styles.foodKcal}>{food.calories} kcal</Text>
-                    <Text style={styles.dot}>·</Text>
-                    <Text style={styles.foodMacros}>
+                  <Text style={styles.foodNameCompact} numberOfLines={1} selectable>
+                    {food.name}
+                  </Text>
+                  <View style={styles.foodMetaRowCompact}>
+                    <Text style={styles.foodKcalCompact}>{food.calories} kcal</Text>
+                    <Text style={styles.dotCompact}>·</Text>
+                    <Text style={styles.foodMacrosCompact}>
                       P {food.protein}g C {food.carbs}g G {food.fat}g
                     </Text>
-                    <Text style={styles.dot}>·</Text>
-                    <Text style={styles.basePortionText}>{food.portion}</Text>
+                    <Text style={styles.dotCompact}>·</Text>
+                    <Text style={styles.basePortionTextCompact}>{food.portion}</Text>
                   </View>
                 </View>
 
-                <View style={styles.addCircleBtn}>
-                  <Text style={styles.addCircleText}>+</Text>
+                <View style={styles.addCircleBtnCompact}>
+                  <Text style={styles.addCircleTextCompact}>+</Text>
                 </View>
               </TouchableOpacity>
             ))}
           </View>
         )}
 
-        {/* 5. Section 3: 📚 TODOS LOS ALIMENTOS (Collapsible) */}
+        {/* Section 3: 📚 TODOS LOS ALIMENTOS (Collapsible) */}
         <TouchableOpacity
           style={styles.accordionHeader}
           delayPressIn={0}
@@ -312,25 +319,27 @@ export default function FoodSearchScreen() {
             {libraryFoods.map((food) => (
               <TouchableOpacity
                 key={food.id}
-                style={styles.foodLibraryCard}
+                style={styles.foodLibraryCardCompact}
                 delayPressIn={0}
                 activeOpacity={0.7}
                 onPress={() => handleStageFood(food)}>
                 <View style={styles.foodCardLeft}>
-                  <Text style={styles.foodName}>{food.name}</Text>
-                  <View style={styles.foodMetaRow}>
-                    <Text style={styles.foodKcal}>{food.calories} kcal</Text>
-                    <Text style={styles.dot}>·</Text>
-                    <Text style={styles.foodMacros}>
+                  <Text style={styles.foodNameCompact} numberOfLines={1} selectable>
+                    {food.name}
+                  </Text>
+                  <View style={styles.foodMetaRowCompact}>
+                    <Text style={styles.foodKcalCompact}>{food.calories} kcal</Text>
+                    <Text style={styles.dotCompact}>·</Text>
+                    <Text style={styles.foodMacrosCompact}>
                       P {food.protein}g C {food.carbs}g G {food.fat}g
                     </Text>
-                    <Text style={styles.dot}>·</Text>
-                    <Text style={styles.basePortionText}>{food.portion}</Text>
+                    <Text style={styles.dotCompact}>·</Text>
+                    <Text style={styles.basePortionTextCompact}>{food.portion}</Text>
                   </View>
                 </View>
 
-                <View style={styles.addCircleBtn}>
-                  <Text style={styles.addCircleText}>+</Text>
+                <View style={styles.addCircleBtnCompact}>
+                  <Text style={styles.addCircleTextCompact}>+</Text>
                 </View>
               </TouchableOpacity>
             ))}
@@ -350,18 +359,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#1C2638',
   },
   cancelBtn: {
-    paddingVertical: 6,
-    paddingRight: 10,
+    paddingVertical: 4,
+    paddingRight: 8,
   },
   cancelBtnText: {
     color: '#8E9BAE',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   centerTimeBox: {
@@ -370,164 +379,173 @@ const styles = StyleSheet.create({
   },
   timeInput: {
     backgroundColor: '#1E293B',
-    borderRadius: 8,
+    borderRadius: 6,
+    borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#3B82F6',
     color: '#F8FAFC',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
   commitBtn: {
     backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    borderRadius: 6,
+    borderCurve: 'continuous',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   commitBtnDisabled: {
     backgroundColor: '#1E293B',
   },
   commitBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   commitBtnTextDisabled: {
     color: '#64748B',
   },
   searchSection: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 6,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   searchBarBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0E1420',
-    borderRadius: 12,
+    borderRadius: 8,
+    borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#1C2638',
-    paddingHorizontal: 12,
-    height: 42,
-    marginBottom: 8,
+    paddingHorizontal: 10,
+    height: 36,
+    marginBottom: 6,
   },
   searchIcon: {
-    fontSize: 14,
-    marginRight: 8,
+    fontSize: 13,
+    marginRight: 6,
   },
   searchInput: {
     flex: 1,
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
   },
   clearSearchIcon: {
     color: '#64748B',
-    fontSize: 14,
-    padding: 4,
+    fontSize: 13,
+    padding: 2,
   },
   createCustomBtn: {
     backgroundColor: '#1E293B',
-    borderRadius: 8,
+    borderRadius: 6,
+    borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#3B82F6',
-    paddingVertical: 8,
+    paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
   createCustomBtnText: {
     color: '#3B82F6',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   scrollList: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    paddingBottom: 40,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    paddingBottom: 30,
   },
   stagedSectionContainer: {
     backgroundColor: '#0E1420',
-    borderRadius: 14,
+    borderRadius: 10,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#3B82F6',
-    padding: 12,
-    marginBottom: 16,
+    padding: 10,
+    marginBottom: 12,
   },
   stagedSectionHeader: {
     color: '#3B82F6',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    marginBottom: 10,
-    letterSpacing: 0.5,
+    marginBottom: 8,
+    letterSpacing: 0.4,
   },
   stagedRowCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#161F2E',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
+    borderRadius: 8,
+    borderCurve: 'continuous',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: '#1C2638',
   },
   stagedCardMain: {
     flex: 1,
-    paddingRight: 8,
+    paddingRight: 6,
   },
   stagedFoodName: {
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   stagedControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 5,
   },
   inlineQtyInput: {
     backgroundColor: '#1E293B',
     borderRadius: 6,
+    borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#3B82F6',
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    minWidth: 44,
+    minWidth: 40,
+    height: 28,
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
   inlineUnitPill: {
     backgroundColor: '#1E293B',
     borderRadius: 6,
-    paddingHorizontal: 6,
+    borderCurve: 'continuous',
+    paddingHorizontal: 5,
     paddingVertical: 3,
     borderWidth: 1,
     borderColor: '#1C2638',
   },
   inlineUnitText: {
     color: '#3B82F6',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   dot: {
     color: '#475569',
-    fontSize: 11,
+    fontSize: 10,
   },
   stagedKcalText: {
     color: '#F87171',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
@@ -538,84 +556,90 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   removeStagedBtn: {
-    padding: 4,
+    padding: 3,
   },
   removeStagedIcon: {
     color: '#EF4444',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   accordionHeader: {
-    paddingVertical: 10,
-    marginBottom: 6,
+    paddingVertical: 6,
+    marginBottom: 4,
   },
   accordionHeaderTitle: {
     color: '#8E9BAE',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
   accordionContent: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
-  foodLibraryCard: {
+  foodLibraryCardCompact: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#0E1420',
-    borderRadius: 12,
+    borderRadius: 8,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#1C2638',
-    padding: 12,
-    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 5,
+    height: 42,
   },
   foodCardLeft: {
     flex: 1,
-    paddingRight: 10,
+    paddingRight: 8,
   },
-  foodName: {
+  foodNameCompact: {
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    marginBottom: 3,
+    marginBottom: 1,
   },
-  foodMetaRow: {
+  foodMetaRowCompact: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 4,
   },
-  foodKcal: {
+  foodKcalCompact: {
     color: '#F87171',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
-  foodMacros: {
+  dotCompact: {
+    color: '#475569',
+    fontSize: 10,
+  },
+  foodMacrosCompact: {
     color: '#8E9BAE',
     fontSize: 11,
     fontWeight: '400',
     fontVariant: ['tabular-nums'],
   },
-  basePortionText: {
+  basePortionTextCompact: {
     color: '#64748B',
     fontSize: 11,
     fontWeight: '400',
   },
-  addCircleBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  addCircleBtnCompact: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addCircleText: {
+  addCircleTextCompact: {
     color: '#3B82F6',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '500',
     marginTop: -1,
   },
