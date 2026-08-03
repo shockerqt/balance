@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 'react-native';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
 
@@ -23,6 +24,16 @@ interface StagedDraftItem {
 
 const AVAILABLE_UNITS = ['g', 'un', 'cc', 'porción', 'taza'];
 
+// Helper to convert "HH:MM" string to a Date object
+const timeStrToDate = (timeStr: string): Date => {
+  const d = new Date();
+  const parts = timeStr.split(':');
+  if (parts.length === 2) {
+    d.setHours(parseInt(parts[0], 10) || 8, parseInt(parts[1], 10) || 30, 0, 0);
+  }
+  return d;
+};
+
 export default function FoodSearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ dateId?: string; time?: string }>();
@@ -34,6 +45,7 @@ export default function FoodSearchScreen() {
   const { addMultipleFoods } = useMealStore();
 
   const [selectedTime, setSelectedTime] = useState(initialTime);
+  const [showAndroidTimePicker, setShowAndroidTimePicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [stagedItems, setStagedItems] = useState<StagedDraftItem[]>([]);
 
@@ -44,6 +56,17 @@ export default function FoodSearchScreen() {
   // Retrieve smart time-delta ranked recommendations (top 15)
   const allRecommended = getSmartRecommendations(selectedTime, searchQuery);
   const suggestedTop15 = searchQuery ? allRecommended : allRecommended.slice(0, 15);
+
+  const handleNativeTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowAndroidTimePicker(false);
+    }
+    if (date) {
+      const h = String(date.getHours()).padStart(2, '0');
+      const m = String(date.getMinutes()).padStart(2, '0');
+      setSelectedTime(`${h}:${m}`);
+    }
+  };
 
   const handleStageFood = (food: LibraryFoodItem) => {
     const match = food.portion.match(/^(\d+)\s*(.*)$/);
@@ -132,24 +155,43 @@ export default function FoodSearchScreen() {
   };
 
   const stagedCount = stagedItems.length;
+  const currentDateObj = timeStrToDate(selectedTime);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Clean Compact Top Header Bar */}
+      {/* 1. Clean Compact Top Header Bar with Native OS Time Picker */}
       <View style={styles.headerBar}>
         <TouchableOpacity style={styles.cancelBtn} delayPressIn={0} onPress={() => router.back()}>
           <Text style={styles.cancelBtnText}>Cancelar</Text>
         </TouchableOpacity>
 
-        {/* Editable Center Time Badge */}
+        {/* Center Native OS Time Picker */}
         <View style={styles.centerTimeBox}>
-          <TextInput
-            style={styles.timeInput}
-            value={selectedTime}
-            onChangeText={setSelectedTime}
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
-          />
+          {Platform.OS === 'ios' ? (
+            <DateTimePicker
+              value={currentDateObj}
+              mode="time"
+              display="compact"
+              onChange={handleNativeTimeChange}
+              themeVariant="dark"
+            />
+          ) : (
+            <TouchableOpacity
+              style={styles.timePickerBtn}
+              delayPressIn={0}
+              onPress={() => setShowAndroidTimePicker(true)}>
+              <Text style={styles.timePickerBtnText}>{selectedTime} 🕒</Text>
+            </TouchableOpacity>
+          )}
+
+          {Platform.OS === 'android' && showAndroidTimePicker && (
+            <DateTimePicker
+              value={currentDateObj}
+              mode="time"
+              display="default"
+              onChange={handleNativeTimeChange}
+            />
+          )}
         </View>
 
         {/* Top Right Batch Commit Button */}
@@ -377,18 +419,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  timeInput: {
+  timePickerBtn: {
     backgroundColor: '#1E293B',
-    borderRadius: 6,
+    borderRadius: 8,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#3B82F6',
-    color: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  timePickerBtnText: {
+    color: '#3B82F6',
     fontSize: 15,
     fontWeight: '700',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
   commitBtn: {
