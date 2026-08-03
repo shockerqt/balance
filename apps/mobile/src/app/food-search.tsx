@@ -44,7 +44,9 @@ export default function FoodSearchScreen() {
       incrementFoodFrequency(selectedFoodItem.id);
     }
     addFood(targetDateId, calculatedFood);
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    }
   };
 
   const handleFoodCreated = (newFood: LibraryFoodItem) => {
@@ -56,7 +58,7 @@ export default function FoodSearchScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* 1. Header Navigation Bar */}
       <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.backBtn} delayPressIn={0} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} delayPressIn={0} onPress={() => router.canGoBack() && router.back()}>
           <Text style={styles.backBtnText}>‹ Volver</Text>
         </TouchableOpacity>
 
