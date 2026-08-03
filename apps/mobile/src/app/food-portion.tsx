@@ -6,7 +6,7 @@ import { useMealStore } from '@/hooks/use-meal-store';
 
 export default function FoodPortionScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ foodId?: string; dateId?: string; time?: string }>();
+  const params = useLocalSearchParams<{ foodId?: string; dateId?: string; time?: string; mode?: string }>();
 
   const { libraryFoods, incrementFoodFrequency } = useFoodLibraryStore();
   const { addFood, selectedDateId } = useMealStore();
@@ -88,7 +88,7 @@ export default function FoodPortionScreen() {
           )}
         </View>
 
-        {/* Quantity & Portion Input */}
+        {/* Quantity & Portion Input with AutoFocus */}
         <View style={styles.quantitySection}>
           <Text style={styles.sectionLabel}>Cantidad y Porción</Text>
           <View style={styles.quantityInputRow}>
@@ -97,6 +97,8 @@ export default function FoodPortionScreen() {
               value={portionInput}
               onChangeText={setPortionInput}
               keyboardType="numeric"
+              autoFocus={true}
+              selectTextOnFocus={true}
               placeholder="100"
               placeholderTextColor="#64748B"
             />

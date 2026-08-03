@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
+import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
 
 export default function FoodSearchScreen() {
   const router = useRouter();
@@ -11,17 +12,31 @@ export default function FoodSearchScreen() {
   const targetDateId = params.dateId || '2026-08-02';
   const targetTime = params.time || '08:30';
 
-  const { getSmartRecommendations } = useFoodLibraryStore();
+  const { getSmartRecommendations, incrementFoodFrequency } = useFoodLibraryStore();
+  const { addMultipleFoods } = useMealStore();
+
   const [searchQuery, setSearchQuery] = useState('');
+  const [stagedFoods, setStagedFoods] = useState<Omit<LoggedFoodItem, 'id'>[]>([]);
 
   // Retrieve smart time-delta ranked food recommendations
   const recommendedFoods = getSmartRecommendations(targetTime, searchQuery);
 
   const handleSelectFoodItem = (food: LibraryFoodItem) => {
-    router.push({
-      pathname: '/food-portion',
-      params: { foodId: food.id, dateId: targetDateId, time: targetTime },
-    });
+    // Quick Add directly to staging draft queue with default portion
+    const newStagedFood: Omit<LoggedFoodItem, 'id'> = {
+      name: food.name,
+      portion: food.portion,
+      calories: food.calories,
+      protein: food.protein,
+      carbs: food.carbs,
+      fat: food.fat,
+      fiber: food.fiber || 0,
+      time: targetTime,
+      chileanSeals: food.chileanSeals,
+    };
+
+    incrementFoodFrequency(food.id);
+    setStagedFoods((prev) => [...prev, newStagedFood]);
   };
 
   const handleCreateCustomFood = () => {
@@ -30,6 +45,20 @@ export default function FoodSearchScreen() {
       params: { dateId: targetDateId, time: targetTime },
     });
   };
+
+  const handleCommitAllStaged = () => {
+    if (stagedFoods.length > 0) {
+      addMultipleFoods(targetDateId, stagedFoods);
+      router.back();
+    }
+  };
+
+  const handleRemoveStagedItem = (index: number) => {
+    setStagedFoods((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const totalStagedCalories = stagedFoods.reduce((acc, f) => acc + (f.calories || 0), 0);
+  const stagedCount = stagedFoods.length;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -42,7 +71,7 @@ export default function FoodSearchScreen() {
         <View style={styles.headerTitleContainer}>
           <Text style={styles.headerTitle}>Biblioteca de Alimentos</Text>
           <Text style={styles.headerSubtitle}>
-            Registrando a las <Text style={styles.timeHighlight}>{targetTime}</Text>
+            Fijado a las <Text style={styles.timeHighlight}>{targetTime}</Text>
           </Text>
         </View>
       </View>
@@ -66,7 +95,6 @@ export default function FoodSearchScreen() {
           )}
         </View>
 
-        {/* Button to Create Custom Food */}
         <TouchableOpacity
           style={styles.createCustomBtn}
           delayPressIn={0}
@@ -76,10 +104,29 @@ export default function FoodSearchScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Staged Draft Items Tray */}
+      {stagedCount > 0 && (
+        <View style={styles.stagedTrayBox}>
+          <Text style={styles.stagedTrayTitle}>Alimentos Listos para Agregar:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.stagedChipsScroll}>
+            {stagedFoods.map((item, idx) => (
+              <View key={idx} style={styles.stagedChip}>
+                <Text style={styles.stagedChipText}>
+                  {item.name} ({item.portion})
+                </Text>
+                <TouchableOpacity delayPressIn={0} onPress={() => handleRemoveStagedItem(idx)}>
+                  <Text style={styles.removeStagedText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* 3. Smart Recommendations List */}
       <ScrollView
         style={styles.scrollList}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, stagedCount > 0 && styles.scrollContentWithBar]}
         showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionHeadline}>
           {searchQuery
@@ -124,6 +171,22 @@ export default function FoodSearchScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
+
+      {/* Floating Multi-Add Commit Bar */}
+      {stagedCount > 0 && (
+        <View style={styles.floatingMultiAddBar}>
+          <View>
+            <Text style={styles.stagedCountLabel}>
+              {stagedCount} {stagedCount === 1 ? 'alimento seleccionado' : 'alimentos seleccionados'}
+            </Text>
+            <Text style={styles.stagedKcalSum}>{totalStagedCalories} kcal totales</Text>
+          </View>
+
+          <TouchableOpacity style={styles.commitAllBtn} delayPressIn={0} onPress={handleCommitAllStaged}>
+            <Text style={styles.commitAllBtnText}>Agregar Todo a las {targetTime}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -214,6 +277,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  stagedTrayBox: {
+    backgroundColor: '#0E1420',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1C2638',
+  },
+  stagedTrayTitle: {
+    color: '#8E9BAE',
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  stagedChipsScroll: {
+    flexDirection: 'row',
+  },
+  stagedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 8,
+    gap: 6,
+  },
+  stagedChipText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  removeStagedText: {
+    color: '#EF4444',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   scrollList: {
     flex: 1,
   },
@@ -221,6 +323,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     paddingBottom: 40,
+  },
+  scrollContentWithBar: {
+    paddingBottom: 90,
   },
   sectionHeadline: {
     color: '#8E9BAE',
@@ -311,5 +416,45 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '500',
     marginTop: -1,
+  },
+  floatingMultiAddBar: {
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: '#0E1420',
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: '#1C2638',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+  },
+  stagedCountLabel: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  stagedKcalSum: {
+    color: '#F87171',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 1,
+    fontVariant: ['tabular-nums'],
+  },
+  commitAllBtn: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  commitAllBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

@@ -30,6 +30,7 @@ interface MealStoreContextType {
   dayLogs: Record<string, DayLog>;
   currentDayLog: DayLog;
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
+  addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
   deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
@@ -43,7 +44,6 @@ const STORAGE_KEY = '@balance_meal_logs_v1';
 const safeStorage = {
   getItem: async (key: string): Promise<string | null> => {
     try {
-      // Dynamic require to prevent Metro module resolution crashes when native modules are added dynamically
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       return await AsyncStorage.getItem(key);
     } catch (e) {
@@ -205,6 +205,31 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     saveLogs({ ...dayLogs, [dateId]: updatedDay });
   };
 
+  const addMultipleFoods = (dateId: string, foodsData: Omit<LoggedFoodItem, 'id'>[]) => {
+    if (!foodsData || foodsData.length === 0) return;
+
+    const newFoods: LoggedFoodItem[] = foodsData.map((foodData, idx) => ({
+      ...foodData,
+      id: 'food_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).substring(2, 7),
+    }));
+
+    const existingDay = dayLogs[dateId] || {
+      dateId,
+      displayDate: dateId,
+      targetCalories: 2200,
+      targetProtein: 150,
+      targetCarbs: 220,
+      targetFat: 65,
+      targetFiber: 30,
+      foods: [],
+    };
+
+    const updatedFoods = [...existingDay.foods, ...newFoods];
+    const updatedDay = { ...existingDay, foods: updatedFoods };
+
+    saveLogs({ ...dayLogs, [dateId]: updatedDay });
+  };
+
   const updateFood = (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => {
     const existingDay = dayLogs[dateId];
     if (!existingDay) return;
@@ -256,6 +281,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         dayLogs,
         currentDayLog,
         addFood,
+        addMultipleFoods,
         updateFood,
         deleteFood,
         deleteMultipleFoods,
