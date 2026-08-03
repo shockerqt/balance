@@ -5,86 +5,174 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
 
+interface StagedDraftItem {
+  id: string; // unique draft id
+  originalFoodId: string;
+  name: string;
+  quantityStr: string;
+  unit: string;
+  baseQty: number;
+  baseCalories: number;
+  baseProtein: number;
+  baseCarbs: number;
+  baseFat: number;
+  baseFiber: number;
+  chileanSeals?: string[];
+  autoFocus?: boolean;
+}
+
+const AVAILABLE_UNITS = ['g', 'un', 'cc', 'porción', 'taza'];
+
 export default function FoodSearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ dateId?: string; time?: string }>();
 
   const targetDateId = params.dateId || '2026-08-02';
-  const targetTime = params.time || '08:30';
+  const initialTime = params.time || '08:30';
 
-  const { getSmartRecommendations, incrementFoodFrequency } = useFoodLibraryStore();
+  const { getSmartRecommendations, libraryFoods, incrementFoodFrequency } = useFoodLibraryStore();
   const { addMultipleFoods } = useMealStore();
 
+  const [selectedTime, setSelectedTime] = useState(initialTime);
   const [searchQuery, setSearchQuery] = useState('');
-  const [stagedFoods, setStagedFoods] = useState<Omit<LoggedFoodItem, 'id'>[]>([]);
+  const [stagedItems, setStagedItems] = useState<StagedDraftItem[]>([]);
 
-  // Retrieve smart time-delta ranked food recommendations
-  const recommendedFoods = getSmartRecommendations(targetTime, searchQuery);
+  // Section Collapsible States
+  const [isSuggestedExpanded, setIsSuggestedExpanded] = useState(true);
+  const [isAllFoodsExpanded, setIsAllFoodsExpanded] = useState(false);
 
-  const handleSelectFoodItem = (food: LibraryFoodItem) => {
-    // Quick Add directly to staging draft queue with default portion
-    const newStagedFood: Omit<LoggedFoodItem, 'id'> = {
+  // Retrieve smart time-delta ranked recommendations (top 15)
+  const allRecommended = getSmartRecommendations(selectedTime, searchQuery);
+  const suggestedTop15 = searchQuery ? allRecommended : allRecommended.slice(0, 15);
+
+  const handleStageFood = (food: LibraryFoodItem) => {
+    const match = food.portion.match(/^(\d+)\s*(.*)$/);
+    const parsedBaseQty = match ? parseFloat(match[1]) || 100 : 100;
+    const defaultUnit = match && match[2] ? match[2].trim() : 'g';
+
+    const newItem: StagedDraftItem = {
+      id: 'draft_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
+      originalFoodId: food.id,
       name: food.name,
-      portion: food.portion,
-      calories: food.calories,
-      protein: food.protein,
-      carbs: food.carbs,
-      fat: food.fat,
-      fiber: food.fiber || 0,
-      time: targetTime,
+      quantityStr: String(parsedBaseQty),
+      unit: defaultUnit,
+      baseQty: parsedBaseQty,
+      baseCalories: food.calories,
+      baseProtein: food.protein,
+      baseCarbs: food.carbs,
+      baseFat: food.fat,
+      baseFiber: food.fiber || 0,
       chileanSeals: food.chileanSeals,
+      autoFocus: true,
     };
 
     incrementFoodFrequency(food.id);
-    setStagedFoods((prev) => [...prev, newStagedFood]);
+    setStagedItems((prev) => [...prev, newItem]);
+  };
+
+  const handleUpdateStagedQuantity = (draftId: string, text: string) => {
+    setStagedItems((prev) =>
+      prev.map((item) => (item.id === draftId ? { ...item, quantityStr: text, autoFocus: false } : item))
+    );
+  };
+
+  const handleToggleStagedUnit = (draftId: string) => {
+    setStagedItems((prev) =>
+      prev.map((item) => {
+        if (item.id === draftId) {
+          const currentIdx = AVAILABLE_UNITS.indexOf(item.unit);
+          const nextIdx = (currentIdx + 1) % AVAILABLE_UNITS.length;
+          return { ...item, unit: AVAILABLE_UNITS[nextIdx], autoFocus: false };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handleRemoveStagedItem = (draftId: string) => {
+    setStagedItems((prev) => prev.filter((item) => item.id !== draftId));
   };
 
   const handleCreateCustomFood = () => {
     router.push({
       pathname: '/create-food',
-      params: { dateId: targetDateId, time: targetTime },
+      params: { dateId: targetDateId, time: selectedTime },
     });
   };
 
-  const handleCommitAllStaged = () => {
-    if (stagedFoods.length > 0) {
-      addMultipleFoods(targetDateId, stagedFoods);
-      router.back();
+  const handleCommitAll = () => {
+    if (stagedItems.length === 0) return;
+
+    const foodsToCommit: Omit<LoggedFoodItem, 'id'>[] = stagedItems.map((item) => {
+      const q = parseFloat(item.quantityStr) || item.baseQty;
+      const scale = q / item.baseQty;
+
+      return {
+        name: item.name,
+        portion: `${q}${item.unit}`,
+        calories: Math.round(item.baseCalories * scale),
+        protein: Math.round(item.baseProtein * scale),
+        carbs: Math.round(item.baseCarbs * scale),
+        fat: Math.round(item.baseFat * scale),
+        fiber: Math.round(item.baseFiber * scale),
+        time: selectedTime.trim() || initialTime,
+        chileanSeals: item.chileanSeals,
+      };
+    });
+
+    addMultipleFoods(targetDateId, foodsToCommit);
+    router.back();
+  };
+
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (text.trim().length > 0) {
+      setIsAllFoodsExpanded(true);
     }
   };
 
-  const handleRemoveStagedItem = (index: number) => {
-    setStagedFoods((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const totalStagedCalories = stagedFoods.reduce((acc, f) => acc + (f.calories || 0), 0);
-  const stagedCount = stagedFoods.length;
+  const stagedCount = stagedItems.length;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Header Navigation Bar */}
+      {/* 1. Clean Top Header Bar */}
       <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.backBtn} delayPressIn={0} onPress={() => router.back()}>
-          <Text style={styles.backBtnText}>‹ Volver</Text>
+        <TouchableOpacity style={styles.cancelBtn} delayPressIn={0} onPress={() => router.back()}>
+          <Text style={styles.cancelBtnText}>Cancelar</Text>
         </TouchableOpacity>
 
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Biblioteca de Alimentos</Text>
-          <Text style={styles.headerSubtitle}>
-            Fijado a las <Text style={styles.timeHighlight}>{targetTime}</Text>
-          </Text>
+        {/* Editable Center Time Badge */}
+        <View style={styles.centerTimeBox}>
+          <TextInput
+            style={styles.timeInput}
+            value={selectedTime}
+            onChangeText={setSelectedTime}
+            keyboardType="numbers-and-punctuation"
+            maxLength={5}
+          />
         </View>
+
+        {/* Top Right Batch Commit Button */}
+        <TouchableOpacity
+          style={[styles.commitBtn, stagedCount === 0 && styles.commitBtnDisabled]}
+          delayPressIn={0}
+          disabled={stagedCount === 0}
+          onPress={handleCommitAll}>
+          <Text style={[styles.commitBtnText, stagedCount === 0 && styles.commitBtnTextDisabled]}>
+            Agregar ({stagedCount})
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {/* 2. Live Search Bar & Create Custom Food Button */}
+      {/* 2. Live Search Bar & Create Custom Button */}
       <View style={styles.searchSection}>
         <View style={styles.searchBarBox}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
             value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Buscar por nombre o categoría..."
+            onChangeText={handleSearchChange}
+            placeholder="Buscar por nombre..."
             placeholderTextColor="#64748B"
             autoCapitalize="none"
           />
@@ -104,89 +192,151 @@ export default function FoodSearchScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Staged Draft Items Tray */}
-      {stagedCount > 0 && (
-        <View style={styles.stagedTrayBox}>
-          <Text style={styles.stagedTrayTitle}>Alimentos Listos para Agregar:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.stagedChipsScroll}>
-            {stagedFoods.map((item, idx) => (
-              <View key={idx} style={styles.stagedChip}>
-                <Text style={styles.stagedChipText}>
-                  {item.name} ({item.portion})
-                </Text>
-                <TouchableOpacity delayPressIn={0} onPress={() => handleRemoveStagedItem(idx)}>
-                  <Text style={styles.removeStagedText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* 3. Smart Recommendations List */}
-      <ScrollView
-        style={styles.scrollList}
-        contentContainerStyle={[styles.scrollContent, stagedCount > 0 && styles.scrollContentWithBar]}
-        showsVerticalScrollIndicator={false}>
-        <Text style={styles.sectionHeadline}>
-          {searchQuery
-            ? `Resultados para "${searchQuery}" (${recommendedFoods.length})`
-            : `⚡ Sugeridos para las ${targetTime}`}
-        </Text>
-
-        {recommendedFoods.map((food) => (
-          <TouchableOpacity
-            key={food.id}
-            style={styles.foodLibraryCard}
-            delayPressIn={0}
-            activeOpacity={0.7}
-            onPress={() => handleSelectFoodItem(food)}>
-            <View style={styles.foodCardLeft}>
-              <Text style={styles.foodName}>{food.name}</Text>
-
-              <View style={styles.foodMetaRow}>
-                <Text style={styles.foodKcal}>{food.calories} kcal</Text>
-                <Text style={styles.dot}>·</Text>
-                <Text style={styles.foodMacros}>
-                  P {food.protein}g  C {food.carbs}g  G {food.fat}g
-                </Text>
-                <Text style={styles.dot}>·</Text>
-                <Text style={styles.basePortionText}>{food.portion}</Text>
-              </View>
-
-              {food.chileanSeals && food.chileanSeals.length > 0 && (
-                <View style={styles.sealsRow}>
-                  {food.chileanSeals.map((seal, idx) => (
-                    <Text key={idx} style={styles.sealTag}>
-                      {seal}
-                    </Text>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            <View style={styles.addArrowCircle}>
-              <Text style={styles.addArrowText}>+</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Floating Multi-Add Commit Bar */}
-      {stagedCount > 0 && (
-        <View style={styles.floatingMultiAddBar}>
-          <View>
-            <Text style={styles.stagedCountLabel}>
-              {stagedCount} {stagedCount === 1 ? 'alimento seleccionado' : 'alimentos seleccionados'}
+      <ScrollView style={styles.scrollList} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* 3. Section 1: ALIMENTOS PARA REGISTRAR (Top Active Staging Group) */}
+        {stagedCount > 0 && (
+          <View style={styles.stagedSectionContainer}>
+            <Text style={styles.stagedSectionHeader}>
+              🛒 ALIMENTOS PARA REGISTRAR ({stagedCount})
             </Text>
-            <Text style={styles.stagedKcalSum}>{totalStagedCalories} kcal totales</Text>
-          </View>
 
-          <TouchableOpacity style={styles.commitAllBtn} delayPressIn={0} onPress={handleCommitAllStaged}>
-            <Text style={styles.commitAllBtnText}>Agregar Todo a las {targetTime}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+            {stagedItems.map((item, idx) => {
+              const q = parseFloat(item.quantityStr) || item.baseQty;
+              const scale = q / item.baseQty;
+              const calcKcal = Math.round(item.baseCalories * scale);
+              const calcP = Math.round(item.baseProtein * scale);
+              const calcC = Math.round(item.baseCarbs * scale);
+              const calcF = Math.round(item.baseFat * scale);
+              const isLastAdded = idx === stagedItems.length - 1;
+
+              return (
+                <View key={item.id} style={styles.stagedRowCard}>
+                  <View style={styles.stagedCardMain}>
+                    <Text style={styles.stagedFoodName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+
+                    <View style={styles.stagedControlsRow}>
+                      {/* Inline Quantity Input with AutoFocus for last added */}
+                      <TextInput
+                        style={styles.inlineQtyInput}
+                        value={item.quantityStr}
+                        onChangeText={(txt) => handleUpdateStagedQuantity(item.id, txt)}
+                        keyboardType="numeric"
+                        autoFocus={isLastAdded && item.autoFocus}
+                        selectTextOnFocus={true}
+                      />
+
+                      {/* Inline Unit Toggle Chip */}
+                      <TouchableOpacity
+                        style={styles.inlineUnitPill}
+                        delayPressIn={0}
+                        onPress={() => handleToggleStagedUnit(item.id)}>
+                        <Text style={styles.inlineUnitText}>{item.unit} ▾</Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.dot}>·</Text>
+                      <Text style={styles.stagedKcalText}>{calcKcal} kcal</Text>
+                      <Text style={styles.dot}>·</Text>
+                      <Text style={styles.stagedMacroText}>
+                        P {calcP}g C {calcC}g G {calcF}g
+                      </Text>
+                    </View>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.removeStagedBtn}
+                    delayPressIn={0}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => handleRemoveStagedItem(item.id)}>
+                    <Text style={styles.removeStagedIcon}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* 4. Section 2: ⚡ SUGERIDOS PARA LAS HORA (Top 15 Collapsible) */}
+        <TouchableOpacity
+          style={styles.accordionHeader}
+          delayPressIn={0}
+          onPress={() => setIsSuggestedExpanded(!isSuggestedExpanded)}>
+          <Text style={styles.accordionHeaderTitle}>
+            {isSuggestedExpanded ? '▼' : '▶'} ⚡ SUGERIDOS PARA LAS {selectedTime} ({suggestedTop15.length})
+          </Text>
+        </TouchableOpacity>
+
+        {isSuggestedExpanded && (
+          <View style={styles.accordionContent}>
+            {suggestedTop15.map((food) => (
+              <TouchableOpacity
+                key={food.id}
+                style={styles.foodLibraryCard}
+                delayPressIn={0}
+                activeOpacity={0.7}
+                onPress={() => handleStageFood(food)}>
+                <View style={styles.foodCardLeft}>
+                  <Text style={styles.foodName}>{food.name}</Text>
+                  <View style={styles.foodMetaRow}>
+                    <Text style={styles.foodKcal}>{food.calories} kcal</Text>
+                    <Text style={styles.dot}>·</Text>
+                    <Text style={styles.foodMacros}>
+                      P {food.protein}g C {food.carbs}g G {food.fat}g
+                    </Text>
+                    <Text style={styles.dot}>·</Text>
+                    <Text style={styles.basePortionText}>{food.portion}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.addCircleBtn}>
+                  <Text style={styles.addCircleText}>+</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {/* 5. Section 3: 📚 TODOS LOS ALIMENTOS (Collapsible) */}
+        <TouchableOpacity
+          style={styles.accordionHeader}
+          delayPressIn={0}
+          onPress={() => setIsAllFoodsExpanded(!isAllFoodsExpanded)}>
+          <Text style={styles.accordionHeaderTitle}>
+            {isAllFoodsExpanded ? '▼' : '▶'} 📚 TODOS LOS ALIMENTOS ({libraryFoods.length})
+          </Text>
+        </TouchableOpacity>
+
+        {isAllFoodsExpanded && (
+          <View style={styles.accordionContent}>
+            {libraryFoods.map((food) => (
+              <TouchableOpacity
+                key={food.id}
+                style={styles.foodLibraryCard}
+                delayPressIn={0}
+                activeOpacity={0.7}
+                onPress={() => handleStageFood(food)}>
+                <View style={styles.foodCardLeft}>
+                  <Text style={styles.foodName}>{food.name}</Text>
+                  <View style={styles.foodMetaRow}>
+                    <Text style={styles.foodKcal}>{food.calories} kcal</Text>
+                    <Text style={styles.dot}>·</Text>
+                    <Text style={styles.foodMacros}>
+                      P {food.protein}g C {food.carbs}g G {food.fat}g
+                    </Text>
+                    <Text style={styles.dot}>·</Text>
+                    <Text style={styles.basePortionText}>{food.portion}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.addCircleBtn}>
+                  <Text style={styles.addCircleText}>+</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -199,43 +349,59 @@ const styles = StyleSheet.create({
   headerBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#1C2638',
   },
-  backBtn: {
-    paddingRight: 12,
-    paddingVertical: 4,
+  cancelBtn: {
+    paddingVertical: 6,
+    paddingRight: 10,
   },
-  backBtnText: {
-    color: '#3B82F6',
-    fontSize: 16,
+  cancelBtnText: {
+    color: '#8E9BAE',
+    fontSize: 14,
     fontWeight: '600',
   },
-  headerTitleContainer: {
-    flex: 1,
+  centerTimeBox: {
     alignItems: 'center',
-    paddingRight: 40,
+    justifyContent: 'center',
   },
-  headerTitle: {
+  timeInput: {
+    backgroundColor: '#1E293B',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
     color: '#F8FAFC',
     fontSize: 16,
     fontWeight: '700',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
   },
-  headerSubtitle: {
-    color: '#8E9BAE',
-    fontSize: 12,
-    marginTop: 1,
+  commitBtn: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
   },
-  timeHighlight: {
-    color: '#3B82F6',
+  commitBtnDisabled: {
+    backgroundColor: '#1E293B',
+  },
+  commitBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '700',
+  },
+  commitBtnTextDisabled: {
+    color: '#64748B',
   },
   searchSection: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
   searchBarBox: {
     flexDirection: 'row',
@@ -245,8 +411,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1C2638',
     paddingHorizontal: 12,
-    height: 44,
-    marginBottom: 10,
+    height: 42,
+    marginBottom: 8,
   },
   searchIcon: {
     fontSize: 14,
@@ -255,7 +421,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     color: '#F8FAFC',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
   },
   clearSearchIcon: {
@@ -265,56 +431,17 @@ const styles = StyleSheet.create({
   },
   createCustomBtn: {
     backgroundColor: '#1E293B',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#3B82F6',
-    paddingVertical: 10,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   createCustomBtnText: {
     color: '#3B82F6',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  stagedTrayBox: {
-    backgroundColor: '#0E1420',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
-  },
-  stagedTrayTitle: {
-    color: '#8E9BAE',
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  stagedChipsScroll: {
-    flexDirection: 'row',
-  },
-  stagedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginRight: 8,
-    gap: 6,
-  },
-  stagedChipText: {
-    color: '#F8FAFC',
     fontSize: 12,
     fontWeight: '600',
-  },
-  removeStagedText: {
-    color: '#EF4444',
-    fontSize: 12,
-    fontWeight: '700',
   },
   scrollList: {
     flex: 1,
@@ -324,16 +451,112 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingBottom: 40,
   },
-  scrollContentWithBar: {
-    paddingBottom: 90,
+  stagedSectionContainer: {
+    backgroundColor: '#0E1420',
+    borderRadius: 14,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    padding: 12,
+    marginBottom: 16,
   },
-  sectionHeadline: {
-    color: '#8E9BAE',
+  stagedSectionHeader: {
+    color: '#3B82F6',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 10,
+    letterSpacing: 0.5,
+  },
+  stagedRowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#161F2E',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#1C2638',
+  },
+  stagedCardMain: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  stagedFoodName: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  stagedControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  inlineQtyInput: {
+    backgroundColor: '#1E293B',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 44,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  inlineUnitPill: {
+    backgroundColor: '#1E293B',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#1C2638',
+  },
+  inlineUnitText: {
+    color: '#3B82F6',
     fontSize: 12,
     fontWeight: '600',
-    marginBottom: 10,
-    textTransform: 'uppercase',
+  },
+  dot: {
+    color: '#475569',
+    fontSize: 11,
+  },
+  stagedKcalText: {
+    color: '#F87171',
+    fontSize: 12,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  stagedMacroText: {
+    color: '#8E9BAE',
+    fontSize: 11,
+    fontWeight: '400',
+    fontVariant: ['tabular-nums'],
+  },
+  removeStagedBtn: {
+    padding: 4,
+  },
+  removeStagedIcon: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  accordionHeader: {
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  accordionHeaderTitle: {
+    color: '#8E9BAE',
+    fontSize: 12,
+    fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  accordionContent: {
+    marginBottom: 12,
   },
   foodLibraryCard: {
     flexDirection: 'row',
@@ -344,8 +567,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: '#1C2638',
-    padding: 14,
-    marginBottom: 10,
+    padding: 12,
+    marginBottom: 8,
   },
   foodCardLeft: {
     flex: 1,
@@ -353,9 +576,9 @@ const styles = StyleSheet.create({
   },
   foodName: {
     color: '#F8FAFC',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   foodMetaRow: {
     flexDirection: 'row',
@@ -365,96 +588,35 @@ const styles = StyleSheet.create({
   },
   foodKcal: {
     color: '#F87171',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
-  dot: {
-    color: '#475569',
-    fontSize: 12,
-  },
   foodMacros: {
     color: '#8E9BAE',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '400',
     fontVariant: ['tabular-nums'],
   },
   basePortionText: {
     color: '#64748B',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '400',
   },
-  sealsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginTop: 6,
-  },
-  sealTag: {
-    color: '#EF4444',
-    fontSize: 9,
-    fontWeight: '700',
-    backgroundColor: '#2A1A20',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#EF4444',
-  },
-  addArrowCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  addCircleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#1E293B',
     borderWidth: 1,
     borderColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addArrowText: {
+  addCircleText: {
     color: '#3B82F6',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '500',
     marginTop: -1,
-  },
-  floatingMultiAddBar: {
-    position: 'absolute',
-    bottom: 20,
-    left: 16,
-    right: 16,
-    backgroundColor: '#0E1420',
-    borderRadius: 16,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: '#1C2638',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
-  },
-  stagedCountLabel: {
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  stagedKcalSum: {
-    color: '#F87171',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 1,
-    fontVariant: ['tabular-nums'],
-  },
-  commitAllBtn: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  commitAllBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
   },
 });
