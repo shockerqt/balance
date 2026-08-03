@@ -2,4 +2,6 @@ pub mod ai;
 pub mod auth;
 pub mod food;
 pub mod meal;
+pub mod sync;
 pub mod user;
+

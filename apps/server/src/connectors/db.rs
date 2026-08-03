@@ -1,5 +1,6 @@
 use super::food::FoodDatasource;
 use super::meal::MealDatasource;
+use super::sync::SyncDatasource;
 use super::user::UserDatasource;
 use sqlx::postgres::PgPoolOptions;
 
@@ -8,6 +9,7 @@ pub struct Database {
     pub user: UserDatasource,
     pub food: FoodDatasource,
     pub meal: MealDatasource,
+    pub sync: SyncDatasource,
 }
 
 impl Database {
@@ -21,6 +23,7 @@ impl Database {
             user: UserDatasource { pool: pool.clone() },
             food: FoodDatasource { pool: pool.clone() },
             meal: MealDatasource { pool: pool.clone() },
+            sync: SyncDatasource::new(pool.clone()),
         })
     }
 }

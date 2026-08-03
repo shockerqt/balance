@@ -14,6 +14,7 @@ use modules::{
     auth::{middleware::auth, routes::auth_routes},
     food::routes::food_routes,
     meal::routes::meal_routes,
+    sync::routes::sync_routes,
     user::routes::user_routes,
 };
 use std::sync::Arc;
@@ -57,6 +58,7 @@ async fn main() {
             food_routes().route_layer(middleware::from_fn(auth)),
         )
         .nest("/ai", ai_routes())
+        .merge(sync_routes().route_layer(middleware::from_fn(auth)))
         .nest_service("/mockups", ServeDir::new("static/mockups"))
         .layer(
             ServiceBuilder::new()
