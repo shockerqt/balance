@@ -2,9 +2,16 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
+
+// Safe require for RNDateTimePicker to prevent module evaluation failure on un-updated Dev Clients
+let RNDateTimePicker: any = null;
+try {
+  RNDateTimePicker = require('@react-native-community/datetimepicker').default;
+} catch (e) {
+  RNDateTimePicker = null;
+}
 
 interface StagedDraftItem {
   id: string; // unique draft id
@@ -34,7 +41,7 @@ const timeStrToDate = (timeStr: string): Date => {
   return d;
 };
 
-export default function FoodSearchScreen() {
+export function FoodSearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ dateId?: string; time?: string }>();
 
@@ -57,7 +64,7 @@ export default function FoodSearchScreen() {
   const allRecommended = getSmartRecommendations(selectedTime, searchQuery);
   const suggestedTop15 = searchQuery ? allRecommended : allRecommended.slice(0, 15);
 
-  const handleNativeTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+  const handleNativeTimeChange = (_event: any, date?: Date) => {
     if (Platform.OS === 'android') {
       setShowAndroidTimePicker(false);
     }
@@ -167,8 +174,8 @@ export default function FoodSearchScreen() {
 
         {/* Center Native OS Time Picker */}
         <View style={styles.centerTimeBox}>
-          {Platform.OS === 'ios' ? (
-            <DateTimePicker
+          {RNDateTimePicker && Platform.OS === 'ios' ? (
+            <RNDateTimePicker
               value={currentDateObj}
               mode="time"
               display="compact"
@@ -184,8 +191,8 @@ export default function FoodSearchScreen() {
             </TouchableOpacity>
           )}
 
-          {Platform.OS === 'android' && showAndroidTimePicker && (
-            <DateTimePicker
+          {RNDateTimePicker && Platform.OS === 'android' && showAndroidTimePicker && (
+            <RNDateTimePicker
               value={currentDateObj}
               mode="time"
               display="default"
@@ -391,6 +398,8 @@ export default function FoodSearchScreen() {
     </SafeAreaView>
   );
 }
+
+export default FoodSearchScreen;
 
 const styles = StyleSheet.create({
   container: {
