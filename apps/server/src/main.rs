@@ -14,7 +14,7 @@ use modules::{
     auth::{middleware::auth, routes::auth_routes},
     food::routes::food_routes,
     meal::routes::meal_routes,
-    sync::routes::sync_routes,
+    sync::routes::{public_template_routes, sync_routes},
     user::routes::user_routes,
 };
 use std::sync::Arc;
@@ -50,6 +50,7 @@ async fn main() {
     let gemini_client = Arc::new(GeminiClient::new(gemini_api_key));
 
     let app = Router::new()
+        .merge(public_template_routes()) // Public Unauthenticated Endpoint
         .nest("/me", user_routes().route_layer(middleware::from_fn(auth)))
         .nest("/auth", auth_routes())
         .nest("/meals", meal_routes())

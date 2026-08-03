@@ -14,7 +14,8 @@ pub struct UserPreferencesRow {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct MealTemplateRow {
     pub id: Uuid,
-    pub user_id: i32,
+    pub user_id: Option<i32>,
+    pub is_official: bool,
     pub name: String,
     pub details: Value,
     pub updated_at: i64,
@@ -110,6 +111,21 @@ impl SyncDatasource {
     }
 
     // --- MEAL TEMPLATES ---
+    pub async fn get_official_templates(&self) -> Result<Vec<MealTemplateRow>, sqlx::Error> {
+        let rows = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            FROM meal_templates
+            WHERE is_official = TRUE AND deleted_at IS NULL
+            ORDER BY name ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
     pub async fn pull_meal_templates(
         &self,
         user_id: i32,
@@ -119,9 +135,9 @@ impl SyncDatasource {
     ) -> Result<Vec<MealTemplateRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, MealTemplateRow>(
             r#"
-            SELECT id, user_id, name, details, updated_at, deleted_at
+            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
             FROM meal_templates
-            WHERE user_id = $1
+            WHERE (user_id = $1 OR is_official = TRUE)
               AND (updated_at > $2 OR (updated_at = $2 AND id > COALESCE($3, '00000000-0000-0000-0000-000000000000'::uuid)))
             ORDER BY updated_at ASC, id ASC
             LIMIT $4
@@ -147,14 +163,19 @@ impl SyncDatasource {
         deleted_at: Option<i64>,
     ) -> Result<Option<MealTemplateRow>, sqlx::Error> {
         let existing = sqlx::query_as::<_, MealTemplateRow>(
-            "SELECT id, user_id, name, details, updated_at, deleted_at FROM meal_templates WHERE id = $1 AND user_id = $2",
+            "SELECT id, user_id, is_official, name, details, updated_at, deleted_at FROM meal_templates WHERE id = $1",
         )
         .bind(id)
-        .bind(user_id)
         .fetch_optional(&self.pool)
         .await?;
 
         if let Some(ref current) = existing {
+            // Protection: Reject mutations on Official Templates
+            if current.is_official {
+                tracing::warn!("Blocked attempt to mutate official template id={}", id);
+                return Ok(Some(current.clone()));
+            }
+
             if current.updated_at >= updated_at {
                 return Ok(Some(current.clone()));
             }
@@ -162,8 +183,8 @@ impl SyncDatasource {
 
         let _res = sqlx::query(
             r#"
-            INSERT INTO meal_templates (id, user_id, name, details, updated_at, deleted_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at)
+            VALUES ($1, $2, FALSE, $3, $4, $5, $6)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 details = EXCLUDED.details,

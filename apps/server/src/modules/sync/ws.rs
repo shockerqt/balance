@@ -1,6 +1,7 @@
 use axum::{
     Extension, Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
 };
@@ -47,6 +48,38 @@ pub enum IncomingMessage {
 
 pub fn sync_routes() -> Router {
     Router::new().route("/ws/sync", get(ws_handler))
+}
+
+pub fn public_template_routes() -> Router {
+    Router::new().route("/api/templates/official", get(get_official_templates_handler))
+}
+
+// GET /api/templates/official (Public Unauthenticated Endpoint)
+async fn get_official_templates_handler(
+    Extension(db): Extension<Arc<Database>>,
+) -> impl IntoResponse {
+    match db.sync.get_official_templates().await {
+        Ok(templates) => {
+            let docs: Vec<Value> = templates
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "id": r.id.to_string(),
+                        "name": r.name,
+                        "details": r.details,
+                        "isOfficial": r.is_official,
+                        "updatedAt": r.updated_at,
+                        "_deleted": false
+                    })
+                })
+                .collect();
+            (StatusCode::OK, axum::Json(json!({ "templates": docs }))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch official templates: {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch official templates").into_response()
+        }
+    }
 }
 
 async fn ws_handler(
@@ -151,6 +184,7 @@ async fn handle_pull(
                         "id": r.id.to_string(),
                         "name": r.name,
                         "details": r.details,
+                        "isOfficial": r.is_official,
                         "updatedAt": r.updated_at,
                         "_deleted": r.deleted_at.is_some(),
                     })
@@ -277,6 +311,7 @@ async fn handle_push(
                             "id": conflict.id.to_string(),
                             "name": conflict.name,
                             "details": conflict.details,
+                            "isOfficial": conflict.is_official,
                             "updatedAt": conflict.updated_at,
                             "_deleted": conflict.deleted_at.is_some(),
                         }));

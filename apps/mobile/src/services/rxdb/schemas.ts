@@ -31,6 +31,9 @@ export const MEAL_TEMPLATES_SCHEMA = {
     name: {
       type: 'string',
     },
+    isOfficial: {
+      type: 'boolean',
+    },
     details: {
       type: 'object', // Lax Schema
     },

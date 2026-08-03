@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { syncClient } from '@/services/rxdb/sync-client';
+import { fetchOfficialTemplates } from '@/services/rxdb/official-templates';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -14,8 +15,10 @@ export interface UserProfile {
 interface AuthContextType {
   user: UserProfile | null;
   isAuthenticated: boolean;
+  isGuest: boolean;
   isLoading: boolean;
   loginWithGoogle: () => Promise<void>;
+  enableGuestMode: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -25,6 +28,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [isGuest, setIsGuest] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const checkSession = async () => {
@@ -36,7 +40,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
-        // Connect RxDB WebSocket replication
+        setIsGuest(false);
+        // Post-Login: Connect WebSocket sync to push local guest logs & templates to server
         syncClient.connect();
       } else {
         setUser(null);
@@ -52,6 +57,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     checkSession();
   }, []);
+
+  const enableGuestMode = async () => {
+    setIsGuest(true);
+    setUser(null);
+    // In Guest Mode: Fetch official immutable templates without opening WebSocket
+    const templates = await fetchOfficialTemplates();
+    console.log('[Guest Mode] Loaded official templates:', templates.length);
+  };
 
   const loginWithGoogle = async () => {
     setIsLoading(true);
@@ -79,6 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Ignore
     }
     setUser(null);
+    setIsGuest(false);
   };
 
   return (
@@ -86,8 +100,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         isAuthenticated: !!user,
+        isGuest,
         isLoading,
         loginWithGoogle,
+        enableGuestMode,
         logout,
       }}>
       {children}

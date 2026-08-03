@@ -6,14 +6,19 @@ import { useRouter } from 'expo-router';
 
 export default function LoginScreen() {
   const theme = useTheme();
-  const { loginWithGoogle, isLoading, isAuthenticated } = useAuth();
+  const { loginWithGoogle, enableGuestMode, isLoading, isAuthenticated, isGuest } = useAuth();
   const router = useRouter();
 
   React.useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated || isGuest) {
       router.replace('/(tabs)/logs');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isGuest]);
+
+  const handleGuestPress = async () => {
+    await enableGuestMode();
+    router.replace('/(tabs)/logs');
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -66,9 +71,9 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => router.replace('/(tabs)/logs')}
+            onPress={handleGuestPress}
             style={styles.guestButton}>
-            <Text style={[styles.guestButtonText, { color: theme.textSecondary }]}>Continuar como Invitado (Modo Offline)</Text>
+            <Text style={[styles.guestButtonText, { color: theme.textSecondary }]}>Continuar como Invitado (Librería Oficial)</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -76,7 +81,7 @@ export default function LoginScreen() {
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={[styles.footerText, { color: theme.textMuted }]}>
-          Balance App · Protocolo de Replicación RxDB + Rust Axum
+          Balance App · Librería Oficial & Protocolo RxDB WebSocket
         </Text>
       </View>
     </View>
