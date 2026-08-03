@@ -22,6 +22,33 @@ export default function RootLayout() {
                 contentStyle: { backgroundColor: 'transparent' },
               }}
             />
+            <Stack.Screen
+              name="food-portion"
+              options={{
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                sheetAllowedDetents: [0.65, 0.9],
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            />
+            <Stack.Screen
+              name="create-food"
+              options={{
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                sheetAllowedDetents: [0.85, 1.0],
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            />
+            <Stack.Screen
+              name="date-picker"
+              options={{
+                presentation: 'formSheet',
+                sheetGrabberVisible: true,
+                sheetAllowedDetents: [0.6],
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            />
           </Stack>
         </ThemeProvider>
       </FoodLibraryProvider>

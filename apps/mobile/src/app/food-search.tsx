@@ -3,9 +3,6 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
-import { useMealStore } from '@/hooks/use-meal-store';
-import { FoodPortionModal } from '@/components/meal/food-portion-modal';
-import { CreateCustomFoodModal } from '@/components/meal/create-custom-food-modal';
 
 export default function FoodSearchScreen() {
   const router = useRouter();
@@ -14,51 +11,31 @@ export default function FoodSearchScreen() {
   const targetDateId = params.dateId || '2026-08-02';
   const targetTime = params.time || '08:30';
 
-  const { getSmartRecommendations, incrementFoodFrequency } = useFoodLibraryStore();
-  const { addFood } = useMealStore();
-
+  const { getSmartRecommendations } = useFoodLibraryStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedFoodItem, setSelectedFoodItem] = useState<LibraryFoodItem | null>(null);
-  const [portionModalVisible, setPortionModalVisible] = useState(false);
-  const [createCustomModalVisible, setCreateCustomModalVisible] = useState(false);
 
   // Retrieve smart time-delta ranked food recommendations
   const recommendedFoods = getSmartRecommendations(targetTime, searchQuery);
 
   const handleSelectFoodItem = (food: LibraryFoodItem) => {
-    setSelectedFoodItem(food);
-    setPortionModalVisible(true);
+    router.push({
+      pathname: '/food-portion',
+      params: { foodId: food.id, dateId: targetDateId, time: targetTime },
+    });
   };
 
-  const handleConfirmAddFood = (calculatedFood: {
-    name: string;
-    portion: string;
-    calories: number;
-    protein: number;
-    carbs: number;
-    fat: number;
-    fiber?: number;
-    time: string;
-  }) => {
-    if (selectedFoodItem) {
-      incrementFoodFrequency(selectedFoodItem.id);
-    }
-    addFood(targetDateId, calculatedFood);
-    if (router.canGoBack()) {
-      router.back();
-    }
-  };
-
-  const handleFoodCreated = (newFood: LibraryFoodItem) => {
-    setSelectedFoodItem(newFood);
-    setPortionModalVisible(true);
+  const handleCreateCustomFood = () => {
+    router.push({
+      pathname: '/create-food',
+      params: { dateId: targetDateId, time: targetTime },
+    });
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* 1. Header Navigation Bar */}
       <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.backBtn} delayPressIn={0} onPress={() => router.canGoBack() && router.back()}>
+        <TouchableOpacity style={styles.backBtn} delayPressIn={0} onPress={() => router.back()}>
           <Text style={styles.backBtnText}>‹ Volver</Text>
         </TouchableOpacity>
 
@@ -94,7 +71,7 @@ export default function FoodSearchScreen() {
           style={styles.createCustomBtn}
           delayPressIn={0}
           activeOpacity={0.7}
-          onPress={() => setCreateCustomModalVisible(true)}>
+          onPress={handleCreateCustomFood}>
           <Text style={styles.createCustomBtnText}>+ Crear Alimento Personalizado</Text>
         </TouchableOpacity>
       </View>
@@ -147,22 +124,6 @@ export default function FoodSearchScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-
-      {/* Step 2: Portion & Quantity Modal */}
-      <FoodPortionModal
-        visible={portionModalVisible}
-        foodItem={selectedFoodItem}
-        targetTime={targetTime}
-        onClose={() => setPortionModalVisible(false)}
-        onConfirmAdd={handleConfirmAddFood}
-      />
-
-      {/* Create Custom Food Modal */}
-      <CreateCustomFoodModal
-        visible={createCustomModalVisible}
-        onClose={() => setCreateCustomModalVisible(false)}
-        onFoodCreated={handleFoodCreated}
-      />
     </SafeAreaView>
   );
 }
