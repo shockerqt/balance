@@ -39,28 +39,37 @@ interface MealStoreContextType {
 }
 
 const STORAGE_KEY = '@balance_meal_logs_v1';
+const memoryCache: Record<string, string> = {};
 
-// Safe Storage Adapter with fallback
+// Safe Storage Adapter with robust fallback
 const safeStorage = {
   getItem: async (key: string): Promise<string | null> => {
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      return await AsyncStorage.getItem(key);
-    } catch (e) {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        return window.localStorage.getItem(key);
+      if (AsyncStorage && typeof AsyncStorage.getItem === 'function') {
+        const val = await AsyncStorage.getItem(key);
+        if (val !== null) return val;
       }
-      return null;
+    } catch (e) {
+      // Fallback
     }
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+    return memoryCache[key] || null;
   },
   setItem: async (key: string, value: string): Promise<void> => {
+    memoryCache[key] = value;
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      await AsyncStorage.setItem(key, value);
-    } catch (e) {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem(key, value);
+      if (AsyncStorage && typeof AsyncStorage.setItem === 'function') {
+        await AsyncStorage.setItem(key, value);
       }
+    } catch (e) {
+      // Fallback
+    }
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
     }
   },
 };
