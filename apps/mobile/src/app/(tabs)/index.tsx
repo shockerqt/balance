@@ -8,8 +8,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMealStore } from '@/hooks/use-meal-store';
+import { useTheme } from '@/hooks/use-theme';
+import { useRouter } from 'expo-router';
 
 export default function SummaryScreen() {
+  const theme = useTheme();
+  const router = useRouter();
   const { currentDayLog } = useMealStore();
 
   const totalCal = currentDayLog.foods.reduce((sum, f) => sum + (f.calories || 0), 0);
@@ -29,99 +33,121 @@ export default function SummaryScreen() {
   const fPercent = Math.min(Math.round((totalF / currentDayLog.targetFat) * 100), 100);
   const fibPercent = Math.min(Math.round((totalFib / currentDayLog.targetFiber) * 100), 100);
 
+  const handleOpenAddModal = () => {
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const currentTimeStr = `${hours}:${minutes}`;
+
+    router.push({
+      pathname: '/food-search',
+      params: { dateId: currentDayLog.dateId, time: currentTimeStr },
+    });
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.userRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>FJ</Text>
+            <View style={[styles.avatar, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
+              <Text style={[styles.avatarText, { color: theme.textPrimary }]}>FJ</Text>
             </View>
             <View>
-              <Text style={styles.greetingText}>Hola, Francisco 👋</Text>
-              <Text style={styles.brandTitle}>Balance Tracker</Text>
+              <Text style={[styles.greetingText, { color: theme.textSecondary }]}>Hola, Francisco 👋</Text>
+              <Text style={[styles.brandTitle, { color: theme.textPrimary }]}>Resumen Diario</Text>
             </View>
           </View>
-          <View style={styles.streakBadge}>
-            <Text style={styles.streakText}>🔥 5 Días</Text>
+          <View style={[styles.streakBadge, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
+            <Text style={[styles.streakText, { color: theme.kcalCoral }]}>🔥 5 Días</Text>
           </View>
         </View>
 
-        {/* Hero Gauge Card */}
-        <View style={styles.heroCard}>
+        {/* Hero Calorie Gauge Card */}
+        <View style={[styles.heroCard, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
           <View style={styles.heroTop}>
             <View>
-              <Text style={styles.cardLabel}>CALORÍAS RESTANTES</Text>
+              <Text style={[styles.cardLabel, { color: theme.textMuted }]}>CALORÍAS RESTANTES</Text>
               <View style={styles.calRow}>
-                <Text style={styles.calMain}>{calRemaining}</Text>
-                <Text style={styles.calTarget}>/ {currentDayLog.targetCalories} kcal</Text>
+                <Text style={[styles.calMain, { color: theme.textPrimary }]}>{calRemaining}</Text>
+                <Text style={[styles.calTarget, { color: theme.textSecondary }]}>/ {currentDayLog.targetCalories} kcal</Text>
               </View>
             </View>
-            <View style={styles.gaugeBox}>
-              <Text style={styles.gaugePercent}>{calPercent}%</Text>
+            <View style={[styles.gaugeBox, { backgroundColor: theme.cardBackground }]}>
+              <Text style={[styles.gaugePercent, { color: theme.primary }]}>{calPercent}%</Text>
             </View>
           </View>
 
           {/* Calorie Progress Bar */}
-          <View style={styles.progressBarBg}>
-            <View style={[styles.progressBarFill, { width: `${calPercent}%` }]} />
+          <View style={[styles.progressBarBg, { backgroundColor: theme.surfaceBorder }]}>
+            <View
+              style={[
+                styles.progressBarFill,
+                { width: `${calPercent}%`, backgroundColor: theme.primary },
+                totalCal > currentDayLog.targetCalories && { backgroundColor: theme.kcalCoral },
+              ]}
+            />
           </View>
 
           {/* 4 Macros Grid */}
           <View style={styles.macrosGrid}>
-            <View style={styles.macroBox}>
-              <Text style={styles.macroLabel}>PROTEÍNA</Text>
-              <Text style={styles.macroVal}>{totalP}g</Text>
-              <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: `${pPercent}%`, backgroundColor: '#6366F1' }]} />
+            <View style={[styles.macroBox, { backgroundColor: theme.cardBackground, borderColor: theme.surfaceBorder }]}>
+              <Text style={[styles.macroLabel, { color: theme.textMuted }]}>PROTEÍNA</Text>
+              <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalP}g</Text>
+              <View style={[styles.miniBarBg, { backgroundColor: theme.surfaceBorder }]}>
+                <View style={[styles.miniBarFill, { width: `${pPercent}%`, backgroundColor: theme.primary }]} />
               </View>
             </View>
 
-            <View style={styles.macroBox}>
-              <Text style={styles.macroLabel}>CARBS</Text>
-              <Text style={styles.macroVal}>{totalC}g</Text>
-              <View style={styles.miniBarBg}>
+            <View style={[styles.macroBox, { backgroundColor: theme.cardBackground, borderColor: theme.surfaceBorder }]}>
+              <Text style={[styles.macroLabel, { color: theme.textMuted }]}>CARBS</Text>
+              <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalC}g</Text>
+              <View style={[styles.miniBarBg, { backgroundColor: theme.surfaceBorder }]}>
                 <View style={[styles.miniBarFill, { width: `${cPercent}%`, backgroundColor: '#10B981' }]} />
               </View>
             </View>
 
-            <View style={styles.macroBox}>
-              <Text style={styles.macroLabel}>GRASAS</Text>
-              <Text style={styles.macroVal}>{totalF}g</Text>
-              <View style={styles.miniBarBg}>
-                <View style={[styles.miniBarFill, { width: `${fPercent}%`, backgroundColor: '#F59E0B' }]} />
+            <View style={[styles.macroBox, { backgroundColor: theme.cardBackground, borderColor: theme.surfaceBorder }]}>
+              <Text style={[styles.macroLabel, { color: theme.textMuted }]}>GRASAS</Text>
+              <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalF}g</Text>
+              <View style={[styles.miniBarBg, { backgroundColor: theme.surfaceBorder }]}>
+                <View style={[styles.miniBarFill, { width: `${fPercent}%`, backgroundColor: theme.kcalCoral }]} />
               </View>
             </View>
 
-            <View style={styles.macroBox}>
-              <Text style={styles.macroLabel}>FIBRA</Text>
-              <Text style={styles.macroVal}>{totalFib}g</Text>
-              <View style={styles.miniBarBg}>
+            <View style={[styles.macroBox, { backgroundColor: theme.cardBackground, borderColor: theme.surfaceBorder }]}>
+              <Text style={[styles.macroLabel, { color: theme.textMuted }]}>FIBRA</Text>
+              <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalFib}g</Text>
+              <View style={[styles.miniBarBg, { backgroundColor: theme.surfaceBorder }]}>
                 <View style={[styles.miniBarFill, { width: `${fibPercent}%`, backgroundColor: '#06B6D4' }]} />
               </View>
             </View>
           </View>
         </View>
 
-        {/* Primary AI Scan Button */}
-        <TouchableOpacity style={styles.primaryScanBtn} activeOpacity={0.8}>
-          <Text style={styles.primaryBtnText}>📷 Escanear Comida con IA</Text>
+        {/* Primary Quick Add Button */}
+        <TouchableOpacity
+          style={[styles.primaryAddBtn, { backgroundColor: theme.primary }]}
+          activeOpacity={0.8}
+          delayPressIn={0}
+          onPress={handleOpenAddModal}>
+          <Text style={[styles.primaryBtnText, { color: theme.primaryText }]}>+ Registrar Comida</Text>
         </TouchableOpacity>
 
         {/* Weekly Stats Widget */}
-        <View style={styles.statsCard}>
+        <View style={[styles.statsCard, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
           <View style={styles.statsHeader}>
-            <Text style={styles.statsTitle}>Promedio de los últimos 7 días</Text>
-            <Text style={styles.statsValue}>2,010 kcal/día</Text>
+            <Text style={[styles.statsTitle, { color: theme.textSecondary }]}>Promedio últimos 7 días</Text>
+            <Text style={[styles.statsValue, { color: theme.textPrimary }]}>2,010 kcal/día</Text>
           </View>
           <View style={styles.weeklyBarRow}>
             {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((day, idx) => (
               <View key={idx} style={styles.dayCol}>
-                <View style={styles.barTrack}>
-                  <View style={[styles.barFill, { height: `${60 + (idx % 3) * 15}%` }]} />
+                <View style={[styles.barTrack, { backgroundColor: theme.surfaceBorder }]}>
+                  <View style={[styles.barFill, { height: `${60 + (idx % 3) * 15}%`, backgroundColor: theme.primary }]} />
                 </View>
-                <Text style={styles.dayLabel}>{day}</Text>
+                <Text style={[styles.dayLabel, { color: theme.textMuted }]}>{day}</Text>
               </View>
             ))}
           </View>
@@ -134,7 +160,6 @@ export default function SummaryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#090C15',
   },
   scrollContent: {
     padding: 20,
@@ -155,45 +180,35 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#334155',
   },
   avatarText: {
-    color: '#F8FAFC',
     fontWeight: '700',
     fontSize: 16,
   },
   greetingText: {
-    color: '#94A3B8',
     fontSize: 13,
   },
   brandTitle: {
-    color: '#F8FAFC',
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
   },
   streakBadge: {
-    backgroundColor: '#1E293B',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#334155',
   },
   streakText: {
-    color: '#F59E0B',
     fontSize: 13,
     fontWeight: '600',
   },
   heroCard: {
-    backgroundColor: '#111726',
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#1E293B',
     marginBottom: 20,
   },
   heroTop: {
@@ -203,7 +218,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   cardLabel: {
-    color: '#94A3B8',
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.8,
@@ -215,36 +229,32 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   calMain: {
-    color: '#F8FAFC',
     fontSize: 32,
     fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   calTarget: {
-    color: '#64748B',
     fontSize: 14,
     fontWeight: '500',
   },
   gaugeBox: {
-    backgroundColor: '#1E293B',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
   gaugePercent: {
-    color: '#10B981',
     fontWeight: '700',
     fontSize: 13,
+    fontVariant: ['tabular-nums'],
   },
   progressBarBg: {
     height: 8,
-    backgroundColor: '#1E293B',
     borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 20,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#3B82F6',
     borderRadius: 4,
   },
   macrosGrid: {
@@ -254,27 +264,23 @@ const styles = StyleSheet.create({
   },
   macroBox: {
     flex: 1,
-    backgroundColor: '#161E2E',
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1E293B',
   },
   macroLabel: {
-    color: '#64748B',
     fontSize: 10,
     fontWeight: '700',
     marginBottom: 2,
   },
   macroVal: {
-    color: '#F8FAFC',
     fontSize: 14,
     fontWeight: '700',
     marginBottom: 6,
+    fontVariant: ['tabular-nums'],
   },
   miniBarBg: {
     height: 4,
-    backgroundColor: '#1E293B',
     borderRadius: 2,
     overflow: 'hidden',
   },
@@ -282,8 +288,7 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 2,
   },
-  primaryScanBtn: {
-    backgroundColor: '#3B82F6',
+  primaryAddBtn: {
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
@@ -291,16 +296,13 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   primaryBtnText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
   statsCard: {
-    backgroundColor: '#111726',
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#1E293B',
   },
   statsHeader: {
     flexDirection: 'row',
@@ -309,14 +311,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   statsTitle: {
-    color: '#94A3B8',
     fontSize: 13,
     fontWeight: '500',
   },
   statsValue: {
-    color: '#F8FAFC',
     fontSize: 13,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   weeklyBarRow: {
     flexDirection: 'row',
@@ -332,18 +333,15 @@ const styles = StyleSheet.create({
   barTrack: {
     width: 8,
     height: 60,
-    backgroundColor: '#1E293B',
     borderRadius: 4,
     justifyContent: 'flex-end',
     overflow: 'hidden',
   },
   barFill: {
     width: '100%',
-    backgroundColor: '#3B82F6',
     borderRadius: 4,
   },
   dayLabel: {
-    color: '#64748B',
     fontSize: 11,
     fontWeight: '600',
   },
