@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import { useTheme } from '@/hooks/use-theme';
 
 interface StickyMacroHeaderProps {
   foods: LoggedFoodItem[];
@@ -19,6 +20,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
   targetFat = 65,
   targetFiber = 30,
 }) => {
+  const theme = useTheme();
   const totalCal = foods.reduce((sum, f) => sum + (f.calories || 0), 0);
   const totalP = foods.reduce((sum, f) => sum + (f.protein || 0), 0);
   const totalC = foods.reduce((sum, f) => sum + (f.carbs || 0), 0);
@@ -29,44 +31,44 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
   const isOverCal = totalCal > targetCalories;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.surface, borderBottomColor: theme.surfaceBorder }]}>
       {/* Primary Metrics Row */}
       <View style={styles.topRow}>
         <View style={styles.calBox}>
-          <Text style={[styles.calMain, isOverCal && styles.calOverText]}>
-            {totalCal} <Text style={styles.calTarget}>/ {targetCalories} kcal</Text>
+          <Text style={[styles.calMain, { color: theme.textPrimary }, isOverCal && { color: theme.kcalCoral }]}>
+            {totalCal} <Text style={[styles.calTarget, { color: theme.textSecondary }]}>/ {targetCalories} kcal</Text>
           </Text>
-          <View style={styles.badgeBox}>
-            <Text style={styles.badgeText}>{calPercent}%</Text>
+          <View style={[styles.badgeBox, { backgroundColor: theme.cardBackground }]}>
+            <Text style={[styles.badgeText, { color: theme.textSecondary }]}>{calPercent}%</Text>
           </View>
         </View>
 
         <View style={styles.macrosRow}>
-          <Text style={styles.macroText}>
-            P <Text style={styles.macroVal}>{totalP}g</Text>
+          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
+            P <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalP}g</Text>
           </Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.macroText}>
-            C <Text style={styles.macroVal}>{totalC}g</Text>
+          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
+            C <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalC}g</Text>
           </Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.macroText}>
-            G <Text style={styles.macroVal}>{totalF}g</Text>
+          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
+            G <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalF}g</Text>
           </Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.macroText}>
-            F <Text style={styles.macroVal}>{totalFib}g</Text>
+          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
+            F <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalFib}g</Text>
           </Text>
         </View>
       </View>
 
-      {/* Ultra-thin neutral progress bar */}
-      <View style={styles.barBg}>
+      {/* Thin progress bar */}
+      <View style={[styles.barBg, { backgroundColor: theme.surfaceBorder }]}>
         <View
           style={[
             styles.barFill,
-            { width: `${calPercent}%` },
-            isOverCal && { backgroundColor: '#EF4444' },
+            { width: `${calPercent}%`, backgroundColor: theme.primary },
+            isOverCal && { backgroundColor: theme.kcalCoral },
           ]}
         />
       </View>
@@ -76,9 +78,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#0E1420',
     borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
@@ -94,26 +94,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   calMain: {
-    color: '#F8FAFC',
     fontSize: 15,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   calTarget: {
-    color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '400',
   },
-  calOverText: {
-    color: '#EF4444',
-  },
   badgeBox: {
-    backgroundColor: '#1C2638',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
   },
   badgeText: {
-    color: '#94A3B8',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -123,27 +117,23 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   macroText: {
-    color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '400',
   },
   macroVal: {
-    color: '#F8FAFC',
     fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
   dot: {
-    color: '#475569',
     fontSize: 12,
   },
   barBg: {
-    height: 3,
-    backgroundColor: '#1C2638',
+    height: 4,
     borderRadius: 2,
     overflow: 'hidden',
   },
   barFill: {
     height: '100%',
-    backgroundColor: '#3B82F6',
     borderRadius: 2,
   },
 });

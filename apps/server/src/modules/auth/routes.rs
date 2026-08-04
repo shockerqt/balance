@@ -36,8 +36,10 @@ pub fn auth_routes() -> Router {
     let google_token_url = TokenUrl::new("https://www.googleapis.com/oauth2/v3/token".to_string())
         .expect("Invalid token endpoint URL");
 
+    let redirect_url_str = std::env::var("OAUTH_REDIRECT_URL")
+        .unwrap_or_else(|_| "http://localhost:8080/auth/google/callback".to_string());
     let redirect_url =
-        RedirectUrl::new("http://localhost:8080/auth/google/callback".to_string())
+        RedirectUrl::new(redirect_url_str)
             .expect("Invalid redirect URL");
 
     let client = BasicClient::new(google_client_id)

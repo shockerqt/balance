@@ -15,7 +15,6 @@ El dominio gira en torno a usuarios, alimentos (`foods`) y comidas (`meals`), co
 │   ├── dashboard/   # SPA React 19 + Vite + TanStack Router/Query + Tailwind v4
 │   └── server/      # API Axum (Rust 2024) con sqlx/Postgres, OAuth Google, JWT, Gemini
 ├── packages/
-│   ├── ui/                 # Librería shadcn/Radix compartida (@workspace/ui)
 │   ├── eslint-config/      # Config ESLint compartida (@workspace/eslint-config)
 │   └── typescript-config/  # tsconfig base/nextjs/react-library (@workspace/typescript-config)
 ├── package.json            # Workspaces pnpm + scripts dev

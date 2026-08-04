@@ -22,6 +22,13 @@ pub async fn auth(
     let token = jar
         .get("token")
         .map(|c| c.value().to_string())
+        .or_else(|| {
+            req.headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .map(|s| s.to_string())
+        })
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let token_data = Claims::decode_jwt(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;

@@ -20,6 +20,8 @@ interface AuthContextType {
   loginWithGoogle: () => Promise<void>;
   enableGuestMode: () => Promise<void>;
   logout: () => Promise<void>;
+  setAuthToken: (token: string | null) => void;
+  checkSession: (tokenOverride?: string) => Promise<void>;
 }
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://144.22.47.0:8080';
@@ -31,11 +33,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isGuest, setIsGuest] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  const checkSession = async () => {
+  const [authToken, setAuthToken] = useState<string | null>(null);
+
+  const checkSession = async (tokenOverride?: string) => {
     try {
+      const activeToken = tokenOverride || authToken;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (activeToken) {
+        headers['Authorization'] = `Bearer ${activeToken}`;
+      }
       const response = await fetch(`${API_BASE_URL}/me`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       });
       if (response.ok) {
         const userData = await response.json();
@@ -69,14 +78,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     setIsLoading(true);
     try {
-      const authUrl = `${API_BASE_URL}/auth/google`;
       const redirectUrl = 'balance://auth-callback';
+      const authUrl = `${API_BASE_URL}/auth/google?redirect_uri=${encodeURIComponent(redirectUrl)}`;
 
       const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
 
-      if (result.type === 'success') {
-        console.log('[Auth] Google OAuth redirect success');
-        await checkSession();
+      if (result.type === 'success' && result.url) {
+        console.log('[Auth] Google OAuth redirect success:', result.url);
+        let extractedToken: string | undefined;
+        try {
+          const urlObj = new URL(result.url);
+          extractedToken = urlObj.searchParams.get('token') || undefined;
+        } catch {
+          const match = result.url.match(/[?&]token=([^&]+)/);
+          if (match) extractedToken = match[1];
+        }
+        if (extractedToken) {
+          setAuthToken(extractedToken);
+        }
+        await checkSession(extractedToken);
       }
     } catch (e) {
       console.error('[Auth] Error in Google login flow', e);
@@ -93,6 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setUser(null);
     setIsGuest(false);
+    setAuthToken(null);
   };
 
   return (
@@ -105,6 +126,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithGoogle,
         enableGuestMode,
         logout,
+        setAuthToken,
+        checkSession,
       }}>
       {children}
     </AuthContext.Provider>

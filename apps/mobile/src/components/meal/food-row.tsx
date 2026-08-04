@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import { useTheme } from '@/hooks/use-theme';
 
 interface FoodRowProps {
   food: LoggedFoodItem;
@@ -19,6 +20,8 @@ export const FoodRow: React.FC<FoodRowProps> = ({
   isSelected = false,
   onToggleSelect,
 }) => {
+  const theme = useTheme();
+
   const handlePress = () => {
     if (isSelectionMode && onToggleSelect) {
       onToggleSelect(food.id);
@@ -35,37 +38,45 @@ export const FoodRow: React.FC<FoodRowProps> = ({
 
   return (
     <TouchableOpacity
-      style={[styles.container, isSelected && styles.containerSelected]}
+      style={[
+        styles.container,
+        { backgroundColor: theme.cardBackground },
+        isSelected && { backgroundColor: theme.accentMuted, borderWidth: 1, borderColor: theme.primary },
+      ]}
       delayPressIn={0}
       activeOpacity={0.7}
       onPress={handlePress}
       onLongPress={handleLongPress}>
-      {/* Selection Mode Checkbox Indicator */}
       {isSelectionMode && (
         <View style={styles.checkboxWrapper}>
-          <View style={[styles.checkboxCircle, isSelected && styles.checkboxCircleSelected]}>
-            {isSelected && <Text style={styles.checkmarkIcon}>✓</Text>}
+          <View
+            style={[
+              styles.checkboxCircle,
+              { borderColor: theme.textMuted },
+              isSelected && { backgroundColor: theme.primary, borderColor: theme.primary },
+            ]}>
+            {isSelected && <Text style={[styles.checkmarkIcon, { color: theme.primaryText }]}>✓</Text>}
           </View>
         </View>
       )}
 
       <View style={styles.mainContent}>
         {/* Line 1: Name */}
-        <Text style={styles.nameText} numberOfLines={1}>
+        <Text style={[styles.nameText, { color: theme.textPrimary }]} numberOfLines={1}>
           {food.name}
         </Text>
 
         {/* Line 2: Kcal · P C G · Portion */}
         <View style={styles.detailRow}>
-          <Text style={styles.kcalText}>{food.calories} kcal</Text>
-          <Text style={styles.dot}>·</Text>
-          <Text style={styles.macroText}>
+          <Text style={[styles.kcalText, { color: theme.kcalCoral }]}>{food.calories} kcal</Text>
+          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
             P {food.protein}g  C {food.carbs}g  G {food.fat}g
           </Text>
           {food.portion ? (
             <>
-              <Text style={styles.dot}>·</Text>
-              <Text style={styles.portionText}>{food.portion}</Text>
+              <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
+              <Text style={[styles.portionText, { color: theme.textMuted }]}>{food.portion}</Text>
             </>
           ) : null}
         </View>
@@ -76,16 +87,13 @@ export const FoodRow: React.FC<FoodRowProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
-    borderRadius: 10,
-  },
-  containerSelected: {
-    backgroundColor: '#1E293B',
+    marginBottom: 6,
+    borderRadius: 12,
   },
   checkboxWrapper: {
     marginRight: 10,
@@ -97,16 +105,10 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#64748B',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxCircleSelected: {
-    backgroundColor: '#3B82F6',
-    borderColor: '#3B82F6',
-  },
   checkmarkIcon: {
-    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
     marginTop: -1,
@@ -116,7 +118,6 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   nameText: {
-    color: '#F8FAFC',
     fontSize: 15,
     fontWeight: '600',
     marginBottom: 3,
@@ -128,22 +129,20 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   kcalText: {
-    color: '#F87171',
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
   },
   macroText: {
-    color: '#8E9BAE',
     fontSize: 13,
     fontWeight: '400',
+    fontVariant: ['tabular-nums'],
   },
   portionText: {
-    color: '#64748B',
     fontSize: 13,
     fontWeight: '400',
   },
   dot: {
-    color: '#475569',
     fontSize: 12,
   },
 });

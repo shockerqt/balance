@@ -26,11 +26,16 @@ use crate::{
 
 use super::routes::GoogleOAuthClient;
 
+pub struct PendingAuth {
+    pub pkce_verifier: PkceCodeVerifier,
+    pub redirect_uri: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct OAuthState {
     pub client: GoogleOAuthClient,
     /// Keyed by the CSRF state secret. One entry per in-flight OAuth flow.
-    pub pending: Arc<Mutex<HashMap<String, PkceCodeVerifier>>>,
+    pub pending: Arc<Mutex<HashMap<String, PendingAuth>>>,
 }
 
 pub fn google_routes(state: OAuthState) -> Router {
@@ -41,8 +46,16 @@ pub fn google_routes(state: OAuthState) -> Router {
         .with_state(Arc::new(state))
 }
 
-// GET /auth/google
-async fn login_with_google(State(state): State<Arc<OAuthState>>) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+struct LoginQuery {
+    redirect_uri: Option<String>,
+}
+
+// GET /auth/google?redirect_uri=...
+async fn login_with_google(
+    State(state): State<Arc<OAuthState>>,
+    Query(query): Query<LoginQuery>,
+) -> impl IntoResponse {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
     let (auth_url, csrf_token) = state
         .client
@@ -57,7 +70,13 @@ async fn login_with_google(State(state): State<Arc<OAuthState>>) -> impl IntoRes
         .pending
         .lock()
         .unwrap()
-        .insert(csrf_token.secret().clone(), pkce_verifier);
+        .insert(
+            csrf_token.secret().clone(),
+            PendingAuth {
+                pkce_verifier,
+                redirect_uri: query.redirect_uri,
+            },
+        );
 
     Redirect::temporary(auth_url.as_ref())
 }
@@ -101,12 +120,14 @@ async fn google_callback(
 ) -> Result<impl IntoResponse, CallbackError> {
     // CSRF + race condition: look up verifier by the received state secret.
     // If it's not in the map, the state was forged or already consumed.
-    let pkce_verifier = state
+    let pending_auth = state
         .pending
         .lock()
         .unwrap()
         .remove(&query.state)
         .ok_or((StatusCode::BAD_REQUEST, "invalid or expired oauth state"))?;
+
+    let pkce_verifier = pending_auth.pkce_verifier;
 
     let http_client = reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
@@ -191,7 +212,15 @@ async fn google_callback(
         (StatusCode::INTERNAL_SERVER_ERROR, "login failed")
     })?;
 
-    let redirect_url = std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000/".to_string());
+    let redirect_url = if let Some(target) = pending_auth.redirect_uri {
+        if target.contains('?') {
+            format!("{}&token={}", target, jwt)
+        } else {
+            format!("{}?token={}", target, jwt)
+        }
+    } else {
+        std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000/".to_string())
+    };
     let cookie = format!(
         "token={}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age={}",
         jwt,

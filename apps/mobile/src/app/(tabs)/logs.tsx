@@ -9,8 +9,8 @@ import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { FluidTimelineFeed } from '@/components/meal/fluid-timeline-feed';
 import { TimeFoodModal } from '@/components/meal/time-food-modal';
 import { BatchMoveModal } from '@/components/meal/batch-move-modal';
+import { useTheme } from '@/hooks/use-theme';
 
-// Helper to safely parse "YYYY-MM-DD" without UTC timezone shift
 const parseDateId = (dateId: string): Date => {
   const parts = dateId.split('-');
   if (parts.length === 3) {
@@ -23,6 +23,7 @@ const parseDateId = (dateId: string): Date => {
 };
 
 export default function LogsScreen() {
+  const theme = useTheme();
   const router = useRouter();
   const {
     selectedDateId,
@@ -47,7 +48,6 @@ export default function LogsScreen() {
   const [selectedFoodIds, setSelectedFoodIds] = useState<Set<string>>(new Set());
   const [batchMoveModalVisible, setBatchMoveModalVisible] = useState(false);
 
-  // Helper to generate 5 continuous weeks (35 days)
   const generateMultiWeekDateIds = (): string[] => {
     const dates: string[] = [];
     const validBaseDate = parseDateId(selectedDateId);
@@ -82,7 +82,6 @@ export default function LogsScreen() {
     activePageIndex = weekDateIds.indexOf(selectedDateId);
   }
 
-  // Exit selection mode when date changes
   useEffect(() => {
     setIsSelectionMode(false);
     setSelectedFoodIds(new Set());
@@ -114,7 +113,6 @@ export default function LogsScreen() {
     );
   };
 
-  // Navigates natively to Food Search FormSheet Screen (/food-search)
   const handleOpenAddModal = (time?: string) => {
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
@@ -147,7 +145,6 @@ export default function LogsScreen() {
     deleteFood(currentDayLog.dateId, foodId);
   };
 
-  // Selection Mode Handlers
   const handleLongPressFood = (food: LoggedFoodItem) => {
     if (!isSelectionMode) {
       setIsSelectionMode(true);
@@ -216,7 +213,7 @@ export default function LogsScreen() {
   const selectedCount = selectedFoodIds.size;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       {/* 1. Date Strip Navigation Header */}
       <DateStripHeader
         selectedDateId={selectedDateId}
@@ -276,35 +273,35 @@ export default function LogsScreen() {
       {/* Floating Add Action Button */}
       {!isSelectionMode && (
         <TouchableOpacity
-          style={styles.floatingAddBtn}
+          style={[styles.floatingAddBtn, { backgroundColor: theme.primary }]}
           delayPressIn={0}
           activeOpacity={0.8}
           onPress={() => handleOpenAddModal()}>
-          <Text style={styles.floatingAddIcon}>+</Text>
+          <Text style={[styles.floatingAddIcon, { color: theme.primaryText }]}>+</Text>
         </TouchableOpacity>
       )}
 
       {/* Single Consolidated Bottom Floating Batch Action Bar */}
       {isSelectionMode && (
-        <View style={styles.bottomBatchBar}>
-          <TouchableOpacity style={styles.batchBarBtnCancel} delayPressIn={0} onPress={handleCancelSelection}>
-            <Text style={styles.batchBarBtnCancelText}>Cancelar</Text>
+        <View style={[styles.bottomBatchBar, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
+          <TouchableOpacity style={[styles.batchBarBtnCancel, { backgroundColor: theme.accentMuted }]} delayPressIn={0} onPress={handleCancelSelection}>
+            <Text style={[styles.batchBarBtnCancelText, { color: theme.textSecondary }]}>Cancelar</Text>
           </TouchableOpacity>
 
-          <Text style={styles.batchBarCountText}>
+          <Text style={[styles.batchBarCountText, { color: theme.textPrimary }]}>
             {selectedCount} {selectedCount === 1 ? 'seleccionado' : 'seleccionados'}
           </Text>
 
           <View style={styles.batchBarActionsGroup}>
             <TouchableOpacity
-              style={styles.batchBarBtnMove}
+              style={[styles.batchBarBtnMove, { backgroundColor: theme.accentMuted, borderColor: theme.primary }]}
               delayPressIn={0}
               onPress={() => setBatchMoveModalVisible(true)}>
-              <Text style={styles.batchBarBtnMoveText}>Mover</Text>
+              <Text style={[styles.batchBarBtnMoveText, { color: theme.primary }]}>Mover</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.batchBarBtnDelete} delayPressIn={0} onPress={handleBatchDelete}>
-              <Text style={styles.batchBarBtnDeleteText}>Eliminar</Text>
+            <TouchableOpacity style={[styles.batchBarBtnDelete, { backgroundColor: theme.kcalCoral }]} delayPressIn={0} onPress={handleBatchDelete}>
+              <Text style={[styles.batchBarBtnDeleteText, { color: '#FFFFFF' }]}>Eliminar</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -334,7 +331,6 @@ export default function LogsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#080B11',
   },
   pagerView: {
     flex: 1,
@@ -349,14 +345,12 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#3B82F6',
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 5,
-    boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
+    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
   },
   floatingAddIcon: {
-    color: '#FFFFFF',
     fontSize: 28,
     fontWeight: '400',
     marginTop: -2,
@@ -366,11 +360,9 @@ const styles = StyleSheet.create({
     bottom: 24,
     left: 16,
     right: 16,
-    backgroundColor: '#0E1420',
     borderRadius: 16,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#1C2638',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -382,15 +374,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#1E293B',
   },
   batchBarBtnCancelText: {
-    color: '#8E9BAE',
     fontSize: 13,
     fontWeight: '600',
   },
   batchBarCountText: {
-    color: '#F8FAFC',
     fontSize: 13,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
@@ -404,12 +393,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#1E293B',
     borderWidth: 1,
-    borderColor: '#3B82F6',
   },
   batchBarBtnMoveText: {
-    color: '#3B82F6',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -417,10 +403,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#EF4444',
   },
   batchBarBtnDeleteText: {
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
   },

@@ -2,13 +2,14 @@ import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 import { useRouter } from 'expo-router';
+import { useTheme } from '@/hooks/use-theme';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
 interface DateItem {
-  dateId: string; // "YYYY-MM-DD"
-  dayName: string; // "L", "M", "M", "J", "V", "S", "D"
-  dayNumber: number; // 2, 28, 29...
+  dateId: string;
+  dayName: string;
+  dayNumber: number;
   isToday: boolean;
 }
 
@@ -33,7 +34,6 @@ const DAY_NAMES_FULL_ES = [
   'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'
 ];
 
-// Helper to safely parse "YYYY-MM-DD" without UTC timezone shift
 const parseDateId = (dateId: string): Date => {
   const parts = dateId.split('-');
   if (parts.length === 3) {
@@ -57,13 +57,13 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   onSelectDate,
   weekStartsOn = 'monday',
 }) => {
+  const theme = useTheme();
   const router = useRouter();
   const { width: windowWidth } = useWindowDimensions();
   const pagerRef = useRef<PagerView>(null);
 
   const todayDateId = useRef<string>(formatDateId(new Date())).current;
 
-  // Helper to generate 7 continuous days for a week starting from a base Monday/Sunday
   const buildWeekDays = (baseDate: Date): DateItem[] => {
     const dayOfWeek = baseDate.getDay();
     let startOffset = 0;
@@ -96,7 +96,6 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     return days;
   };
 
-  // Generate 5 continuous weeks (2 past, current, 2 future)
   const generateFiveWeeks = (centerDateId: string): WeekGroup[] => {
     const centerDate = parseDateId(centerDateId);
     const weeks: WeekGroup[] = [];
@@ -107,7 +106,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
       const days = buildWeekDays(wDate);
       weeks.push({
-        weekIndex: offset + 2, // 0, 1, 2, 3, 4
+        weekIndex: offset + 2,
         startDateId: days[0].dateId,
         days,
       });
@@ -117,7 +116,6 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   const weeksList = useRef<WeekGroup[]>(generateFiveWeeks(selectedDateId)).current;
 
-  // Find active week index in pager
   const findActiveWeekIndex = (dateId: string): number => {
     const idx = weeksList.findIndex((w) => w.days.some((d) => d.dateId === dateId));
     return idx !== -1 ? idx : 2;
@@ -142,7 +140,6 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     }
   };
 
-  // Day-by-Day Navigation Handlers (-1 / +1 Day)
   const handlePrevDay = () => {
     const curr = parseDateId(selectedDateId);
     curr.setDate(curr.getDate() - 1);
@@ -155,7 +152,6 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     onSelectDate(formatDateId(curr));
   };
 
-  // Option A Compact Date Hierarchy formatting
   const selDateObj = parseDateId(selectedDateId);
   const dayNameFull = DAY_NAMES_FULL_ES[selDateObj.getDay()];
   const dayNum = selDateObj.getDate();
@@ -167,48 +163,47 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const line2Text = isSelectedToday ? `${dayNum} de ${monthNameFull}` : `${monthNameFull}, ${yearNum}`;
 
   return (
-    <View style={styles.container}>
-      {/* 1. Header Row with Day-by-Day Navigation & Fixed Date Box */}
+    <View style={[styles.container, { backgroundColor: theme.background, borderBottomColor: theme.surfaceBorder }]}>
+      {/* 1. Header Row */}
       <View style={styles.topHeaderRow}>
         <View style={styles.fixedDateNavBox}>
           <TouchableOpacity
-            style={styles.navArrowBtn}
+            style={[styles.navArrowBtn, { backgroundColor: theme.surface }]}
             delayPressIn={0}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handlePrevDay}>
-            <Text style={styles.navArrowText}>‹</Text>
+            <Text style={[styles.navArrowText, { color: theme.primary }]}>‹</Text>
           </TouchableOpacity>
 
-          {/* Center Date Display (Opens Expo Router FormSheet DatePicker) */}
           <TouchableOpacity
             style={styles.dateTitleBox}
             delayPressIn={0}
             activeOpacity={0.7}
             onPress={() => router.push('/date-picker')}>
-            <Text style={styles.headlineTitle}>{line1Text}</Text>
-            <Text style={styles.subtitleContext}>{line2Text}</Text>
+            <Text style={[styles.headlineTitle, { color: theme.textPrimary }]}>{line1Text}</Text>
+            <Text style={[styles.subtitleContext, { color: theme.textSecondary }]}>{line2Text}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.navArrowBtn}
+            style={[styles.navArrowBtn, { backgroundColor: theme.surface }]}
             delayPressIn={0}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handleNextDay}>
-            <Text style={styles.navArrowText}>›</Text>
+            <Text style={[styles.navArrowText, { color: theme.primary }]}>›</Text>
           </TouchableOpacity>
         </View>
 
         {!isSelectedToday && (
           <TouchableOpacity
-            style={styles.todayPillBtn}
+            style={[styles.todayPillBtn, { backgroundColor: theme.surface, borderColor: theme.primary }]}
             delayPressIn={0}
             onPress={() => onSelectDate(todayDateId)}>
-            <Text style={styles.todayPillText}>Hoy</Text>
+            <Text style={[styles.todayPillText, { color: theme.primary }]}>Hoy</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* 2. Hardware Accelerated Week Strip Pager */}
+      {/* 2. Week Strip Pager */}
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
@@ -225,8 +220,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     key={item.dateId}
                     style={[
                       styles.dayPill,
-                      isSelected && styles.dayPillSelected,
-                      item.isToday && !isSelected && styles.dayPillToday,
+                      { backgroundColor: theme.surface, borderColor: theme.surfaceBorder },
+                      isSelected && { backgroundColor: theme.primary, borderColor: theme.primary },
+                      item.isToday && !isSelected && { borderColor: theme.primary },
                     ]}
                     delayPressIn={0}
                     activeOpacity={0.7}
@@ -234,8 +230,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     <Text
                       style={[
                         styles.dayNameText,
-                        isSelected && styles.dayNameTextSelected,
-                        item.isToday && !isSelected && styles.dayNameTextToday,
+                        { color: theme.textMuted },
+                        isSelected && { color: theme.primaryText, fontWeight: '700' },
+                        item.isToday && !isSelected && { color: theme.primary },
                       ]}>
                       {item.dayName}
                     </Text>
@@ -243,8 +240,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     <Text
                       style={[
                         styles.dayNumberText,
-                        isSelected && styles.dayNumberTextSelected,
-                        item.isToday && !isSelected && styles.dayNumberTextToday,
+                        { color: theme.textPrimary },
+                        isSelected && { color: theme.primaryText },
+                        item.isToday && !isSelected && { color: theme.primary },
                       ]}>
                       {item.dayNumber}
                     </Text>
@@ -261,11 +259,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#080B11',
     paddingTop: 8,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
   },
   topHeaderRow: {
     alignItems: 'center',
@@ -285,12 +281,10 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',
   },
   navArrowText: {
-    color: '#3B82F6',
     fontSize: 24,
     fontWeight: '300',
     marginTop: -2,
@@ -301,13 +295,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   headlineTitle: {
-    color: '#F8FAFC',
     fontSize: 17,
     fontWeight: '700',
     textAlign: 'center',
   },
   subtitleContext: {
-    color: '#8E9BAE',
     fontSize: 12,
     fontWeight: '500',
     textAlign: 'center',
@@ -316,15 +308,12 @@ const styles = StyleSheet.create({
   todayPillBtn: {
     position: 'absolute',
     right: 16,
-    backgroundColor: '#1E293B',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#3B82F6',
   },
   todayPillText: {
-    color: '#3B82F6',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -346,43 +335,19 @@ const styles = StyleSheet.create({
     height: 54,
     borderRadius: 12,
     borderCurve: 'continuous',
-    backgroundColor: '#0E1420',
     borderWidth: 1,
-    borderColor: '#1C2638',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 6,
   },
-  dayPillSelected: {
-    backgroundColor: '#3B82F6',
-    borderColor: '#3B82F6',
-  },
-  dayPillToday: {
-    borderColor: '#3B82F6',
-  },
   dayNameText: {
-    color: '#64748B',
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 2,
   },
-  dayNameTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  dayNameTextToday: {
-    color: '#3B82F6',
-  },
   dayNumberText: {
-    color: '#F8FAFC',
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
-  },
-  dayNumberTextSelected: {
-    color: '#FFFFFF',
-  },
-  dayNumberTextToday: {
-    color: '#3B82F6',
   },
 });
