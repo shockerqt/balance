@@ -193,7 +193,7 @@ export function FoodSearchScreen() {
               style={styles.timePickerBtn}
               delayPressIn={0}
               onPress={() => setShowAndroidTimePicker(true)}>
-              <Text style={styles.timePickerBtnText}>{selectedTime} 🕒</Text>
+              <Text style={styles.timePickerBtnText}>{selectedTime}</Text>
             </TouchableOpacity>
           )}
 
@@ -222,7 +222,6 @@ export function FoodSearchScreen() {
       {/* 2. Compact Search & Custom Food Section */}
       <View style={styles.searchSection}>
         <View style={styles.searchBarBox}>
-          <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
             value={searchQuery}
@@ -233,7 +232,7 @@ export function FoodSearchScreen() {
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity delayPressIn={0} onPress={() => setSearchQuery('')}>
-              <Text style={styles.clearSearchIcon}>✕</Text>
+              <Text style={styles.clearSearchIcon}>×</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -257,7 +256,7 @@ export function FoodSearchScreen() {
         {stagedCount > 0 && (
           <View style={styles.stagedSectionContainer}>
             <Text style={styles.stagedSectionHeader}>
-              🛒 ALIMENTOS PARA REGISTRAR ({stagedCount})
+              PARA REGISTRAR ({stagedCount})
             </Text>
 
             {stagedItems.map((item, idx) => (
@@ -274,7 +273,7 @@ export function FoodSearchScreen() {
         )}
 
         <CollapsibleSection
-          title="⚡ SUGERIDOS PARA LA HORA"
+          title="SUGERIDOS PARA LA HORA"
           count={suggestedTop15.length}
           expanded={isSuggestedExpanded}
           onToggle={() => setIsSuggestedExpanded(!isSuggestedExpanded)}>
@@ -284,7 +283,7 @@ export function FoodSearchScreen() {
         </CollapsibleSection>
 
         <CollapsibleSection
-          title="📚 TODOS LOS ALIMENTOS"
+          title="TODOS LOS ALIMENTOS"
           count={libraryFoods.length}
           expanded={isAllFoodsExpanded}
           onToggle={() => setIsAllFoodsExpanded(!isAllFoodsExpanded)}>

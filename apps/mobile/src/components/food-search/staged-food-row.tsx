@@ -1,7 +1,7 @@
 import React from 'react';
 import { TextInput, TouchableOpacity, View } from 'react-native';
 import { makeStyles } from '@/theme';
-import { Text } from '@/components/ui';
+import { Icon, Text } from '@/components/ui';
 
 /* Fila de la lista de preparacion. El calculo de macros escalados
    estaba inline dentro del map de la pantalla. */
@@ -85,9 +85,7 @@ export const StagedFoodRow: React.FC<{
         delayPressIn={0}
         hitSlop={8}
         onPress={() => onRemove(item.id)}>
-        <Text variant="bodyStrong" tone="muted">
-          ✕
-        </Text>
+        <Icon name="x" size={15} tone="muted" />
       </TouchableOpacity>
     </View>
   );

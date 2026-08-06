@@ -2,7 +2,7 @@ import React from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { makeStyles } from '@/theme';
-import { Text } from '@/components/ui';
+import { Icon, Text } from '@/components/ui';
 
 /* ============================================================
    Asiento del libro.
@@ -42,11 +42,7 @@ export const LedgerFoodRow: React.FC<{
       onLongPress={() => onLongPress?.(food)}>
       {isSelectionMode ? (
         <View style={[styles.check, isSelected && styles.checkOn]}>
-          {isSelected ? (
-            <Text variant="caption" tone="onPrimary">
-              ✓
-            </Text>
-          ) : null}
+          {isSelected ? <Icon name="check" size={12} tone="onPrimary" /> : null}
         </View>
       ) : null}
 

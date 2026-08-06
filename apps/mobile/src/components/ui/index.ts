@@ -4,6 +4,8 @@ export { Card } from './Card';
 export type { CardProps } from './Card';
 export { Field } from './Field';
 export type { FieldProps } from './Field';
+export { Icon } from './Icon';
+export type { IconProps } from './Icon';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 export { ProgressBar } from './ProgressBar';

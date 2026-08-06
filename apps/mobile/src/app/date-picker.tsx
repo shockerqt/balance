@@ -89,7 +89,7 @@ export default function DatePickerScreen() {
       {/* Header Bar */}
       <View style={styles.headerBar}>
         <TouchableOpacity style={styles.closeBtn} delayPressIn={0} onPress={() => router.back()}>
-          <Text style={styles.closeBtnText}>✕ Cerrar</Text>
+          <Text style={styles.closeBtnText}>Cerrar</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Seleccionar Fecha</Text>
       </View>

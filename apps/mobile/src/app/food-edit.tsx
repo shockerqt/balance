@@ -3,7 +3,7 @@ import { ScrollView, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LoggedFoodItem, useMealStore } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
-import { Button, Field, Input, Sheet, Text } from '@/components/ui';
+import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
 
 /* ============================================================
    Editar un registro.
@@ -94,9 +94,7 @@ export default function FoodEditScreen() {
             style={styles.disclosure}
             delayPressIn={0}
             onPress={() => setShowMacros((v) => !v)}>
-            <Text variant="bodyStrong" tone="secondary" style={styles.caret}>
-              {showMacros ? '▾' : '▸'}
-            </Text>
+            <Icon name={showMacros ? 'chevron-down' : 'chevron-right'} size={16} />
             <Text variant="bodyStrong" tone="secondary">
               Editar valores nutricionales
             </Text>
@@ -143,7 +141,6 @@ const useStyles = makeStyles((t) => ({
     borderBottomWidth: t.border.hairline,
     borderColor: t.colors.border,
   },
-  caret: { width: 14 },
   spacer: { flex: 1 },
   macros: { flexDirection: 'row', flexWrap: 'wrap' },
   macroField: { flexGrow: 1, flexBasis: '45%' },

@@ -252,9 +252,9 @@ funcional de `setState`.
 
 ### 5.5 Datos falsos presentados como reales en Resumen
 
-- Avatar `"FJ"` y saludo `"Hola, Francisco 👋"` — hardcodeados, no salen de
+- Avatar `"FJ"` y saludo `"Hola, Francisco "` — hardcodeados, no salen de
   `useAuth()`, que sí tiene `user.name` y `user.picture`.
-- Racha `"🔥 5 Días"` — literal.
+- Racha `"5 Días"` — literal.
 - `"2,010 kcal/día"` — literal.
 - Las barras del gráfico semanal son `60 + (idx % 3) * 15`. **El widget de
   estadísticas semanales es decorativo**: no lee datos.

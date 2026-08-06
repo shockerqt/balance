@@ -1,23 +1,23 @@
-# 📘 Balance - Guía Técnica y Arquitectura del Proyecto
+# Balance - Guía Técnica y Arquitectura del Proyecto
 
 Esta guía contiene la documentación técnica completa del monorepo **Balance**, los comandos para encender el entorno de desarrollo, el funcionamiento de la aplicación móvil con Expo SDK 57, los puertos de red y la automatización CI/CD en GitHub Actions.
 
 ---
 
-## 🏗️ 1. Arquitectura del Monorepo
+## 1. Arquitectura del Monorepo
 
 El proyecto está estructurado como un monorepo modular:
 
 - **`apps/mobile`**: Aplicación móvil nativa en **React Native + Expo SDK 57** (con React 19, React Native 0.86, Expo Router v6 y `expo-dev-client@57.0.10`).
 - **`apps/dashboard`**: Panel Web administrativo en **React 19 + Vite 8 + Tailwind CSS v4 + Base UI** preset Shadcn `b6YqzcHxSM`. Compilado y sirviéndose en vivo en:
-  👉 `http://144.22.47.0:8080/mockups/`
+  `http://144.22.47.0:8080/mockups/`
 - **`apps/server`**: API REST backend en **Rust (Axum) + PostgreSQL (SQLx)**. Ejecutándose como servicio del sistema en `/opt/balance-server` (`balance-server.service`).
 
 ---
 
-## 📱 2. Desarrollo Móvil (`apps/mobile`)
+## 2. Desarrollo Móvil (`apps/mobile`)
 
-### 🚀 Cómo Encender el Servidor Móvil
+### Cómo Encender el Servidor Móvil
 Desde la raíz del repositorio (`/home/ubuntu/workspace/balance`), ejecuta:
 
 ```bash
@@ -27,14 +27,14 @@ make mobile
 Esto ejecuta automáticamente el comando configurado:
 `REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081`
 
-### 📝 Captura de Logs en Tiempo Real
+### Captura de Logs en Tiempo Real
 - El comando `make mobile` utiliza `script` para mantener los gráficos ASCII del código QR en tu terminal mientras canaliza todo el registro a:
-  👉 `/tmp/metro.log`
+  `/tmp/metro.log`
 - Si ocurre algún aviso o error en el teléfono, los registros quedan guardados en `/tmp/metro.log`.
 
 ---
 
-## 🌐 3. Conexión del Teléfono al VPS (Red y Puertos)
+## 3. Conexión del Teléfono al VPS (Red y Puertos)
 
 1. **IP Pública del VPS**: `144.22.47.0`
 2. **Puerto Estático Dedicado para Metro**: `8081` (rango permitido en firewall: `8081-8085`).
@@ -49,9 +49,9 @@ Esto ejecuta automáticamente el comando configurado:
 
 ---
 
-## ⚙️ 4. Automatización CI/CD (GitHub Actions)
+## 4. Automatización CI/CD (GitHub Actions)
 
-### 📲 A. Compilación del APK Móvil (`.github/workflows/build-mobile.yml`)
+### A. Compilación del APK Móvil (`.github/workflows/build-mobile.yml`)
 - **Evento**: Se activa automáticamente al hacer `git push` en `apps/mobile/**` o manualmente mediante `workflow_dispatch`.
 - **Optimizaciones**:
   - Utiliza **Node 24**, **Java 17 (JDK)** y **Gradle Cache (`gradle/actions/setup-gradle@v4`)**.
@@ -59,13 +59,13 @@ Esto ejecuta automáticamente el comando configurado:
   - Tiempo de compilación en GitHub Actions: **~3 a 5 minutos**.
 - **Artefactos**: El binario `.apk` compilado (`balance-mobile-sdk57-dev`) queda disponible en la solapa *Actions* de GitHub para instalar en el teléfono.
 
-### 🦀 B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
+### B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
 - **Evento**: Se activa al modificar `apps/server/**` o mediante `workflow_dispatch`.
 - **Despliegue**: Compila el binario ARM64 con `cross` y lo sube mediante SSH a `/opt/balance-server`, ejecutando `sudo systemctl restart balance-server`.
 
 ---
 
-## 🎨 5. Interfaces construidas
+## 5. Interfaces construidas
 
 Lo que existe hoy en el móvil:
 
@@ -86,6 +86,6 @@ declara colores ni tamaños— están en `CLAUDE.md`.
 > **Pendiente, no construido**: representar los sellos con la forma octogonal
 > real del reglamento chileno. Hoy son etiquetas rectangulares.
 
-## 📋 6. Reglas de trabajo
+## 6. Reglas de trabajo
 
 Están en `CLAUDE.md`, junto con las convenciones de código.
