@@ -21,6 +21,9 @@ import { LedgerFoodRow } from './ledger-food-row';
 const RAIL_W = 56;
 const DOT = 20;
 const PAD_RIGHT = 8;
+const NODE_TOP = 6;
+/** Centro del punto medido desde el borde superior del slot. */
+const NODE_CENTER = NODE_TOP + DOT / 2;
 
 /**
  * El eje del riel. La linea y el punto se derivan de aqui, no se
@@ -92,15 +95,20 @@ export const HourRailFeed: React.FC<{
         </Text>
       ) : null}
 
-      {rail.map(({ hour, foods: hourFoods }) => {
+      {rail.map(({ hour, foods: hourFoods }, index) => {
         const filled = hourFoods.length > 0;
         const ids = hourFoods.map((f) => f.id);
         const totals = filled ? sumFoods(hourFoods) : null;
+        const isLast = index === rail.length - 1;
 
         return (
           <View key={hour} style={[styles.slot, !filled && styles.slotEmpty]}>
             <View style={styles.rail}>
-              <View style={styles.line} />
+              {/* Arriba la linea sube hasta el borde y engancha con el slot
+                  anterior; abajo se corta en el ultimo nodo, para que el dia
+                  termine donde termina el contenido. */}
+              <View style={styles.lineTop} />
+              {!isLast ? <View style={styles.lineBottom} /> : null}
               <View style={styles.nodeBox}>
                 <HourNode hour={hour} filled={filled} onPress={() => onAddAtHour(hour)} />
               </View>
@@ -155,15 +163,23 @@ const useStyles = makeStyles((t) => ({
 
   rail: { width: RAIL_W },
   /* Ambos cuelgan del mismo eje: por eso quedan centrados entre si. */
-  line: {
+  lineTop: {
     position: 'absolute',
     left: AXIS - 0.5,
     top: 0,
+    height: NODE_CENTER,
+    width: t.border.hairline,
+    backgroundColor: t.colors.border,
+  },
+  lineBottom: {
+    position: 'absolute',
+    left: AXIS - 0.5,
+    top: NODE_CENTER,
     bottom: 0,
     width: t.border.hairline,
     backgroundColor: t.colors.border,
   },
-  nodeBox: { position: 'absolute', right: PAD_RIGHT, top: 6 },
+  nodeBox: { position: 'absolute', right: PAD_RIGHT, top: NODE_TOP },
 
   node: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   hour: { fontVariant: ['tabular-nums'] },
