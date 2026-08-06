@@ -31,6 +31,8 @@ function Navigation() {
         <Stack.Screen name="food-portion" options={sheet([0.65, 0.9])} />
         <Stack.Screen name="create-food" options={sheet([0.85, 1.0])} />
         <Stack.Screen name="date-picker" options={sheet([0.6])} />
+        <Stack.Screen name="food-edit" options={sheet([0.6, 0.95])} />
+        <Stack.Screen name="batch-move" options={sheet([0.55])} />
       </Stack>
     </NavigationThemeProvider>
   );

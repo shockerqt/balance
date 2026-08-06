@@ -1,19 +1,24 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 'react-native';
+import { ScrollView, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { makeStyles, useTheme } from '@/theme';
+import { Button, Field, Input, Sheet, Text } from '@/components/ui';
 
-const CHILEAN_SEALS_OPTIONS = [
-  'ALTO EN CALORÍAS',
-  'ALTO EN SODIO',
-  'ALTO EN AZÚCARES',
-  'ALTO EN GRASAS SATURADAS',
+/* Crear un alimento propio para la biblioteca. Usa las mismas
+   primitivas que el resto de las hojas: antes traia sus propios
+   inputs, etiquetas y boton, que no coincidian con ninguno. */
+
+const SELLOS = [
+  'Alto en calorías',
+  'Alto en sodio',
+  'Alto en azúcares',
+  'Alto en grasas saturadas',
 ];
 
 export default function CreateFoodScreen() {
-  const theme = useTheme();
   const styles = useStyles();
+  const theme = useTheme();
   const router = useRouter();
   const { addCustomFood } = useFoodLibraryStore();
 
@@ -24,19 +29,17 @@ export default function CreateFoodScreen() {
   const [carbs, setCarbs] = useState('');
   const [fat, setFat] = useState('');
   const [fiber, setFiber] = useState('');
-  const [selectedSeals, setSelectedSeals] = useState<Set<string>>(new Set());
+  const [seals, setSeals] = useState<Set<string>>(new Set());
 
-  const toggleSeal = (seal: string) => {
-    const next = new Set(selectedSeals);
-    if (next.has(seal)) {
-      next.delete(seal);
-    } else {
-      next.add(seal);
-    }
-    setSelectedSeals(next);
-  };
+  const toggleSeal = (seal: string) =>
+    setSeals((prev) => {
+      const next = new Set(prev);
+      if (next.has(seal)) next.delete(seal);
+      else next.add(seal);
+      return next;
+    });
 
-  const handleSave = () => {
+  const save = () => {
     if (!name.trim()) return;
 
     const created = addCustomFood({
@@ -48,258 +51,96 @@ export default function CreateFoodScreen() {
       fat: parseFloat(fat) || 0,
       fiber: parseFloat(fiber) || 0,
       typicalTime: '12:00',
-      chileanSeals: Array.from(selectedSeals),
+      chileanSeals: Array.from(seals).map((s) => s.toUpperCase()),
       category: 'Personalizados',
     });
 
-    router.replace({
-      pathname: '/food-portion',
-      params: { foodId: created.id },
-    });
+    router.replace({ pathname: '/food-portion', params: { foodId: created.id } });
   };
 
+  const macros = [
+    { label: 'Calorías', value: calories, set: setCalories },
+    { label: 'Proteína', value: protein, set: setProtein },
+    { label: 'Carbohidratos', value: carbs, set: setCarbs },
+    { label: 'Grasas', value: fat, set: setFat },
+    { label: 'Fibra', value: fiber, set: setFiber },
+  ];
+
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Header Bar */}
-        <View style={styles.headerBar}>
-          <TouchableOpacity style={styles.cancelBtn} delayPressIn={0} onPress={() => router.back()}>
-            <Text style={styles.cancelBtnText}>✕ Cancelar</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Crear Alimento</Text>
-        </View>
-
-        <Text style={styles.subtitle}>
-          Define las métricas por porción base para guardarlo en tu biblioteca personal.
-        </Text>
-
-        {/* Name & Base Portion */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Nombre del Alimento</Text>
-          <TextInput
-            style={styles.textInput}
+    <Sheet
+      title="Crear alimento"
+      subtitle="Los valores son por porción base"
+      closeLabel="Cancelar">
+      <ScrollView
+        contentContainerStyle={[styles.content, { gap: theme.space.xl }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled">
+        <Field label="Nombre">
+          <Input
             value={name}
             onChangeText={setName}
-            placeholder="Ej. Pan de Masa Madre"
-            placeholderTextColor={theme.colors.textMuted}
+            placeholder="Pan de masa madre"
+            autoFocus
           />
+        </Field>
+
+        <Field label="Porción base" hint="La cantidad a la que corresponden los valores">
+          <Input value={portion} onChangeText={setPortion} placeholder="100g" />
+        </Field>
+
+        <View style={[styles.macros, { gap: theme.space.lg }]}>
+          {macros.map((m) => (
+            <Field key={m.label} label={m.label} style={styles.macroField}>
+              <Input
+                variant="number"
+                value={m.value}
+                onChangeText={m.set}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+            </Field>
+          ))}
         </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Porción Base (ej. 100g o 1 unidad)</Text>
-          <TextInput
-            style={styles.textInput}
-            value={portion}
-            onChangeText={setPortion}
-            placeholder="100g"
-            placeholderTextColor={theme.colors.textMuted}
-          />
-        </View>
-
-        {/* Macro Inputs Grid */}
-        <View style={styles.macrosRow}>
-          <View style={[styles.inputGroup, styles.flexCell]}>
-            <Text style={styles.label}>Kcal</Text>
-            <TextInput
-              style={styles.textInputNumber}
-              value={calories}
-              onChangeText={setCalories}
-              keyboardType="numeric"
-              placeholder="250"
-              placeholderTextColor={theme.colors.textMuted}
-            />
-          </View>
-
-          <View style={[styles.inputGroup, styles.flexCell]}>
-            <Text style={styles.label}>Proteínas (g)</Text>
-            <TextInput
-              style={styles.textInputNumber}
-              value={protein}
-              onChangeText={setProtein}
-              keyboardType="numeric"
-              placeholder="12"
-              placeholderTextColor={theme.colors.textMuted}
-            />
-          </View>
-        </View>
-
-        <View style={styles.macrosRow}>
-          <View style={[styles.inputGroup, styles.flexCell]}>
-            <Text style={styles.label}>Carbos (g)</Text>
-            <TextInput
-              style={styles.textInputNumber}
-              value={carbs}
-              onChangeText={setCarbs}
-              keyboardType="numeric"
-              placeholder="30"
-              placeholderTextColor={theme.colors.textMuted}
-            />
-          </View>
-
-          <View style={[styles.inputGroup, styles.flexCell]}>
-            <Text style={styles.label}>Grasas (g)</Text>
-            <TextInput
-              style={styles.textInputNumber}
-              value={fat}
-              onChangeText={setFat}
-              keyboardType="numeric"
-              placeholder="5"
-              placeholderTextColor={theme.colors.textMuted}
-            />
-          </View>
-        </View>
-
-        {/* Chilean Health Seals */}
-        <View style={styles.sealsSection}>
-          <Text style={styles.label}>Sellos Minsal Chile (Opcional)</Text>
-          <View style={styles.sealsGrid}>
-            {CHILEAN_SEALS_OPTIONS.map((seal) => {
-              const isSelected = selectedSeals.has(seal);
+        <Field label="Sellos" hint="Los que trae el envase, si corresponde">
+          <View style={[styles.seals, { gap: theme.space.sm }]}>
+            {SELLOS.map((seal) => {
+              const on = seals.has(seal);
               return (
                 <TouchableOpacity
                   key={seal}
-                  style={[styles.sealChip, isSelected && styles.sealChipSelected]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  style={[styles.seal, on && styles.sealOn]}
                   delayPressIn={0}
                   onPress={() => toggleSeal(seal)}>
-                  <Text style={[styles.sealChipText, isSelected && styles.sealChipTextSelected]}>
+                  <Text variant="caption" tone={on ? 'onPrimary' : 'secondary'}>
                     {seal}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-        </View>
+        </Field>
 
-        {/* Confirm Save Button */}
-        <TouchableOpacity
-          style={[styles.confirmBtn, !name.trim() && styles.confirmBtnDisabled]}
-          delayPressIn={0}
-          disabled={!name.trim()}
-          onPress={handleSave}>
-          <Text style={styles.confirmBtnText}>Guardar Alimento</Text>
-        </TouchableOpacity>
+        <Button title="Guardar y ajustar porción" onPress={save} disabled={!name.trim()} />
       </ScrollView>
-    </View>
+    </Sheet>
   );
 }
 
 const useStyles = makeStyles((t) => ({
-  container: {
-    flex: 1,
-    backgroundColor: t.colors.surface,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  headerBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  cancelBtn: {
-    paddingRight: 12,
-  },
-  cancelBtnText: {
-    color: t.colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  headerTitle: {
-    color: t.colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginLeft: 'auto',
-    marginRight: 'auto',
-    paddingRight: 60,
-  },
-  subtitle: {
-    color: t.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 16,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  flexCell: {
-    flex: 1,
-  },
-  macrosRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  label: {
-    color: t.colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  textInput: {
-    backgroundColor: t.colors.border,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-    color: t.colors.text,
-    fontSize: 15,
-    fontWeight: '600',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  textInputNumber: {
-    backgroundColor: t.colors.border,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-    color: t.colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontVariant: ['tabular-nums'],
-  },
-  sealsSection: {
-    marginTop: 6,
-    marginBottom: 20,
-  },
-  sealsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  sealChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: t.colors.border,
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-  },
-  sealChipSelected: {
-    borderColor: t.colors.danger,
+  content: { padding: t.space.xl, paddingBottom: t.space.xxxl },
+  macros: { flexDirection: 'row', flexWrap: 'wrap' },
+  macroField: { flexGrow: 1, flexBasis: '45%' },
+  seals: { flexDirection: 'row', flexWrap: 'wrap' },
+  seal: {
+    paddingHorizontal: t.space.md,
+    paddingVertical: t.space.sm,
+    borderRadius: t.radius.sm,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.border,
     backgroundColor: t.colors.surfaceRaised,
   },
-  sealChipText: {
-    color: t.colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  sealChipTextSelected: {
-    color: t.colors.danger,
-  },
-  confirmBtn: {
-    backgroundColor: t.colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmBtnDisabled: {
-    opacity: 0.5,
-  },
-  confirmBtnText: {
-    color: t.colors.onPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-  },
+  sealOn: { backgroundColor: t.colors.danger, borderColor: t.colors.danger },
 }));

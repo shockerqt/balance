@@ -8,8 +8,6 @@ import { buildDateWindow, currentTimeString } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
-import { TimeFoodModal } from '@/components/meal/time-food-modal';
-import { BatchMoveModal } from '@/components/meal/batch-move-modal';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
 import { Screen } from '@/components/ui';
@@ -32,19 +30,10 @@ export default function LogsScreen() {
     setSelectedDateId,
     currentDayLog,
     dayLogs,
-    addFood,
-    updateFood,
-    deleteFood,
     deleteMultipleFoods,
-    moveMultipleFoodsTime,
   } = useMealStore();
 
   const selection = useFoodSelection();
-
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [foodToEdit, setFoodToEdit] = useState<LoggedFoodItem | null>(null);
-  const [presetTime, setPresetTime] = useState('08:30');
-  const [batchMoveVisible, setBatchMoveVisible] = useState(false);
 
   // La ventana se reconstruye solo cuando el dia sale de ella.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
@@ -75,24 +64,12 @@ export default function LogsScreen() {
   const openEdit = useCallback(
     (food: LoggedFoodItem) => {
       if (selection.isSelectionMode) return;
-      setFoodToEdit(food);
-      setPresetTime(food.time);
-      setEditModalVisible(true);
+      router.push({
+        pathname: '/food-edit',
+        params: { dateId: selectedDateId, foodId: food.id },
+      });
     },
-    [selection.isSelectionMode]
-  );
-
-  const saveFood = useCallback(
-    (data: Omit<LoggedFoodItem, 'id'>, foodId?: string) => {
-      if (foodId) updateFood(currentDayLog.dateId, foodId, data);
-      else addFood(currentDayLog.dateId, data);
-    },
-    [addFood, updateFood, currentDayLog.dateId]
-  );
-
-  const removeFood = useCallback(
-    (foodId: string) => deleteFood(currentDayLog.dateId, foodId),
-    [deleteFood, currentDayLog.dateId]
+    [router, selectedDateId, selection.isSelectionMode]
   );
 
   const batchDelete = useCallback(() => {
@@ -102,15 +79,12 @@ export default function LogsScreen() {
     selection.clear();
   }, [deleteMultipleFoods, selectedDateId, selection]);
 
-  const batchMove = useCallback(
-    (newTime: string) => {
-      const ids = Array.from(selection.selectedIds);
-      if (!ids.length) return;
-      moveMultipleFoodsTime(selectedDateId, ids, newTime);
-      selection.clear();
-    },
-    [moveMultipleFoodsTime, selectedDateId, selection]
-  );
+  const openBatchMove = useCallback(() => {
+    const ids = Array.from(selection.selectedIds);
+    if (!ids.length) return;
+    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
+    selection.clear();
+  }, [router, selectedDateId, selection]);
 
   const onPageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const target = dateWindow[e.nativeEvent.position];
@@ -171,28 +145,14 @@ export default function LogsScreen() {
         <BatchActionBar
           count={selection.selectedCount}
           onCancel={selection.clear}
-          onMove={() => setBatchMoveVisible(true)}
+          onMove={openBatchMove}
           onDelete={batchDelete}
         />
       ) : (
         <FloatingAddButton onPress={() => openFoodSearch()} />
       )}
 
-      <TimeFoodModal
-        visible={editModalVisible}
-        initialTime={presetTime}
-        foodToEdit={foodToEdit}
-        onClose={() => setEditModalVisible(false)}
-        onSave={saveFood}
-        onDelete={removeFood}
-      />
 
-      <BatchMoveModal
-        visible={batchMoveVisible}
-        selectedCount={selection.selectedCount}
-        onClose={() => setBatchMoveVisible(false)}
-        onConfirmMove={batchMove}
-      />
     </Screen>
   );
 }
