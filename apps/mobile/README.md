@@ -1,56 +1,40 @@
-# Welcome to your Expo app 👋
+# balance · mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
-
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+App de registro nutricional en Expo 57 / React Native 0.86, con expo-router.
 
 ```bash
-npm run reset-project
+npm install
+npm run start          # Metro; con `make mobile` desde la raíz queda el log en /tmp/metro.log
+npm run android        # o ios / web
+npx tsc --noEmit       # verificación de tipos (lenta: volcar a archivo antes de filtrar)
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Estructura
 
-### Other setup steps
+```
+src/
+  app/            rutas (expo-router, por convención de archivos)
+    (tabs)/       Resumen y Registros
+  components/
+    ui/           primitivas: Screen, Card, Text, Button, ProgressBar, Sheet
+    meal/         UI del dominio
+    summary/      piezas del Resumen
+  theme/          tokens, paletas, provider y makeStyles
+  hooks/          stores de dominio y sesión
+  services/       almacenamiento, configuración y sincronización
+  lib/            utilidades puras (fechas, porciones)
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## Antes de escribir código
 
-## Learn more
+Las convenciones están en el `CLAUDE.md` de la raíz. La que más pesa:
 
-To learn more about developing your project with Expo, look at the following resources:
+> Una pantalla nunca declara un color, un tamaño de fuente ni un espaciado
+> literal. Todo sale de `src/theme/`.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Y la API de Expo cambió en la 57: consultar
+[los docs de esa versión](https://docs.expo.dev/versions/v57.0.0/) antes de usar
+APIs de Expo.
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+`ANALYSIS.md` documenta el estado del que se partió y la reestructuración que se
+aplicó, por si hace falta el contexto de por qué las cosas están donde están.

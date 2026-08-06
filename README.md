@@ -1,76 +1,91 @@
 # balance
 
-Monorepo con una API en Rust (Axum + Postgres) y un dashboard web en React (Vite + TanStack), más una librería de UI compartida basada en shadcn.
+Registro nutricional: anotas lo que comes y lo contrastas con tus objetivos diarios.
 
-## Estructura
+Monorepo con tres aplicaciones independientes —no comparten dependencias entre
+sí, cada una se instala y se ejecuta por su cuenta.
 
 ```
 apps/
-  dashboard/   # SPA React 19 + Vite + TanStack Router/Query + Tailwind v4
-  server/      # API Axum (Rust 2024) con sqlx, OAuth Google, JWT, Gemini
-packages/
-  ui/                 # Componentes shadcn/Radix compartidos (@workspace/ui)
-  eslint-config/      # Config ESLint compartida
-  typescript-config/  # tsconfig base/nextjs/react-library
+  mobile/      App Expo 57 / React Native 0.86 con expo-router
+  dashboard/   SPA React 19 + Vite 8 + TanStack Router/Query + Tailwind v4
+  server/      API Axum (Rust 2024) con SQLx/Postgres, OAuth Google, JWT y Gemini
 ```
 
 ## Requisitos
 
-- [pnpm](https://pnpm.io) `10.12.x` (declarado en `packageManager`)
-- [Rust](https://rustup.rs) edition 2024 y `cargo`
-- [`cargo-watch`](https://crates.io/crates/cargo-watch) para hot reload del server (`cargo install cargo-watch`)
-- Postgres accesible vía `DATABASE_URL`
+- **Node 24** (ver `apps/mobile/.node-version`)
+- **npm** — no pnpm ni yarn, ver [Gestor de paquetes](#gestor-de-paquetes)
+- **Rust** edition 2024 y `cargo`, más [`cargo-watch`](https://crates.io/crates/cargo-watch) para el hot reload del server
+- **Postgres** accesible vía `DATABASE_URL`
 
-## Setup
+## Puesta en marcha
+
+Cada aplicación instala sus dependencias por separado:
 
 ```bash
-pnpm install
+npm install                        # utilidades de la raíz (concurrently, prettier)
+npm --prefix apps/dashboard install
+npm --prefix apps/mobile install
 ```
 
-Crear `apps/server/.env` con las variables que necesita la API:
+El server necesita `apps/server/.env` con:
 
-- `DATABASE_URL` — cadena de conexión a Postgres
-- `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` — credenciales OAuth de Google
+```env
+DATABASE_URL=postgres://meal_admin:...@localhost:5432/meal_logger
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+> El server lee el `.env` desde `apps/server/.env`, no desde la raíz: la ruta está
+> fija en `main.rs`.
 
 ## Desarrollo
 
 ```bash
-pnpm dev              # levanta dashboard (:3000) + server (:8080) en paralelo
-pnpm dev:dashboard    # solo el dashboard
-pnpm dev:server       # solo la API (cargo watch -x run -p server)
+make dev        # dashboard (:3000) + server (:8080) en paralelo
+make mobile     # Metro para el móvil (:8081), con los logs en /tmp/metro.log
+make build      # compila dashboard y server
+make check      # verificación rápida del server
+make test       # typecheck del dashboard y tests del server
 ```
 
-- Dashboard: http://localhost:3000
-- API: http://localhost:8080
-- Swagger UI: http://localhost:8080/docs
-
-## Build y test
+O directamente:
 
 ```bash
-pnpm --filter dashboard build     # build de producción del dashboard
-pnpm --filter dashboard test      # tests con Vitest
-cargo build -p server             # build de la API
-cargo clippy -p server            # lints de Rust
+npm run dev:dashboard
+npm run dev:server
+npm --prefix apps/mobile run start
 ```
 
-## Añadir componentes shadcn
+| Servicio | URL |
+|---|---|
+| Dashboard | http://localhost:3000 |
+| API | http://localhost:8080 |
+| Swagger | http://localhost:8080/docs |
 
-Desde la raíz, apuntando al dashboard:
+El dashboard asume el server en `:8080` y el server permite CORS desde `:3000`.
+Si cambias un puerto, cambia el otro.
 
-```bash
-pnpm dlx shadcn@latest add button -c apps/dashboard
-```
+## Gestor de paquetes
 
-Si el componente es reutilizable, promuévelo a `packages/ui/src/components`.
+**npm, y cada aplicación con su propio `package-lock.json`.**
 
-## Túnel SSH a la base de datos
+El proyecto usó un workspace de pnpm, pero ninguna aplicación llegó a compartir
+dependencias con otra: el dashboard y el móvil no declaraban ni una dependencia
+`@workspace/*`, y los paquetes compartidos solo los consumía el `package.json` de
+la raíz. Se pagaba el costo de la maquinaria —tres lockfiles, uno de ellos
+duplicado, y una herramienta más que instalar— sin recibir el beneficio.
 
-```bash
-ssh -L 5433:localhost:5432 ubuntu@146.235.245.221
-```
+Si en el futuro hay código realmente compartido entre aplicaciones, ahí sí
+conviene reintroducir un workspace. Con React Native y React web las primitivas
+de interfaz rara vez se comparten tal cual, así que no se dio por supuesto.
 
-Luego apunta `DATABASE_URL` a `postgres://...@localhost:5433/...`.
+## Documentación
 
-## Más contexto
-
-Para convenciones del repo, layout detallado por app, comandos por paquete y notas operativas, ver [`CLAUDE.md`](./CLAUDE.md).
+| Documento | Para qué |
+|---|---|
+| `README.md` | Qué es y cómo levantarlo |
+| `CLAUDE.md` | Convenciones y reglas para trabajar en el código |
+| `DEVELOPMENT_GUIDE.md` | Operación: VPS, puertos, red y CI/CD |
+| `apps/mobile/ANALYSIS.md` | Análisis del estado del móvil y su reestructuración |

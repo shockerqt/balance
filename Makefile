@@ -1,7 +1,7 @@
 .PHONY: dev build check test mobile mobile-clear
 
 dev:
-	pnpm dev
+	npm run dev
 
 mobile:
 	script -q -c "npm --prefix apps/mobile run start -- $(FLAGS)" /tmp/metro.log
@@ -13,7 +13,7 @@ check:
 	cargo check -p server
 
 build:
-	pnpm --filter dashboard build && cargo build -p server
+	npm --prefix apps/dashboard run build && cargo build -p server
 
 test:
-	pnpm --filter dashboard test && cargo test -p server
+	npm --prefix apps/dashboard run typecheck && cargo test -p server

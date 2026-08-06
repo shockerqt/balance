@@ -65,21 +65,27 @@ Esto ejecuta automáticamente el comando configurado:
 
 ---
 
-## 🎨 5. Diseño e Interfaces Construidas
+## 🎨 5. Interfaces construidas
 
-- **Estilo Visual inspirada en Cal AI**:
-  - Fondo oscuro (`#090C15` / `#111726`).
-  - Anillo indicador circular de calorías ingeridas / meta (`360 / 2,200 kcal`).
-  - 4 barras de macronutrientes (Proteína, Carbohidratos, Grasas y Fibra).
-  - Botón destacado de **Escanear Comida con IA**.
-  - Octágonos de advertencia chilenos del MINSAL (**`ALTO EN AZÚCARES`**).
-  - Navegación deslizable horizontal por gestos de swipe entre días en la pantalla de registros (`apps/mobile/src/app/logs.tsx`).
+Lo que existe hoy en el móvil:
 
----
+- **Resumen** (`(tabs)/index.tsx`): calorías restantes sobre el objetivo, barra
+  de avance y cuatro macros (proteína, carbohidratos, grasas y fibra), más el
+  promedio de los últimos 7 días leído del registro real.
+- **Registros** (`(tabs)/logs.tsx`): navegación entre días deslizando en
+  horizontal, cabecera de macros fija y el detalle agrupado por hora, con
+  selección múltiple para mover o eliminar en lote.
+- **Hojas del stack raíz**: buscar alimento, ajustar porción, crear alimento
+  propio y elegir fecha.
+- Los **sellos del MINSAL** existen como dato (`chileanSeals`) y se muestran como
+  etiquetas junto al alimento.
 
-## 📋 6. Reglas de Trabajo del Proyecto
+Las decisiones de estilo —tokens, primitivas y la regla de que una pantalla no
+declara colores ni tamaños— están en `CLAUDE.md`.
 
-1. **Aprobación Previa de Cambios**: Ante cualquier consulta, investigación o diagnóstico, presentar la propuesta explicada y esperar la confirmación del usuario antes de modificar archivos o ejecutar comandos de edición.
-2. **Importación de SafeAreaView**: Utilizar siempre `import { SafeAreaView } from 'react-native-safe-area-context';` para evitar warnings de obsolescencia en React Native.
-3. **Nombres de Propiedades de Estilos**: Usar estrictamente **camelCase** para estilos de React Native (ej: `justifyContent: 'space-between'`), nunca guiones de CSS web (`justify-content`).
-4. **Revisiones Mínimas Obligatorias tras Cada Cambio**: Tras realizar cualquier modificación de código, ejecutar inmediatamente una verificación mínima (`npx tsc --noEmit` y revisión silenciosa de logs de Metro) para asegurar cero errores antes de notificar la finalización de la tarea.
+> **Pendiente, no construido**: representar los sellos con la forma octogonal
+> real del reglamento chileno. Hoy son etiquetas rectangulares.
+
+## 📋 6. Reglas de trabajo
+
+Están en `CLAUDE.md`, junto con las convenciones de código.
