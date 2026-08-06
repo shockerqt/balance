@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
+import { Button, Icon, Input, Sheet, Text } from '@/components/ui';
 import { LibraryFoodRow } from '@/components/food-search/library-food-row';
 import { CollapsibleSection } from '@/components/food-search/collapsible-section';
 import { StagedFoodRow } from '@/components/food-search/staged-food-row';
@@ -171,84 +171,64 @@ export function FoodSearchScreen() {
   const currentDateObj = timeStrToDate(selectedTime);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* 1. Clean Compact Top Header Bar with Native OS Time Picker */}
-      <View style={styles.headerBar}>
-        <TouchableOpacity style={styles.cancelBtn} delayPressIn={0} onPress={() => router.back()}>
-          <Text style={styles.cancelBtnText}>Cancelar</Text>
-        </TouchableOpacity>
-
-        {/* Center Native OS Time Picker */}
-        <View style={styles.centerTimeBox}>
-          {RNDateTimePicker && Platform.OS === 'ios' ? (
-            <RNDateTimePicker
-              value={currentDateObj}
-              mode="time"
-              display="compact"
-              onChange={handleNativeTimeChange}
-              themeVariant="dark"
-            />
-          ) : (
-            <TouchableOpacity
-              style={styles.timePickerBtn}
-              delayPressIn={0}
-              onPress={() => setShowAndroidTimePicker(true)}>
-              <Text style={styles.timePickerBtnText}>{selectedTime}</Text>
-            </TouchableOpacity>
-          )}
-
-          {RNDateTimePicker && Platform.OS === 'android' && showAndroidTimePicker && (
-            <RNDateTimePicker
-              value={currentDateObj}
-              mode="time"
-              display="default"
-              onChange={handleNativeTimeChange}
-            />
-          )}
-        </View>
-
-        {/* Top Right Batch Commit Button */}
-        <TouchableOpacity
-          style={[styles.commitBtn, stagedCount === 0 && styles.commitBtnDisabled]}
-          delayPressIn={0}
+    <Sheet
+      title="Registrar"
+      subtitle={selectedTime}
+      onSubtitlePress={Platform.OS === 'android' ? () => setShowAndroidTimePicker(true) : undefined}
+      closeLabel="Cancelar"
+      footer={
+        <Button
+          title={stagedCount ? `Agregar (${stagedCount})` : 'Agregar'}
           disabled={stagedCount === 0}
-          onPress={handleCommitAll}>
-          <Text style={[styles.commitBtnText, stagedCount === 0 && styles.commitBtnTextDisabled]}>
-            Agregar ({stagedCount})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* 2. Compact Search & Custom Food Section */}
-      <View style={styles.searchSection}>
-        <View style={styles.searchBarBox}>
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            placeholder="Buscar por nombre..."
-            placeholderTextColor={theme.colors.textMuted}
-            autoCapitalize="none"
+          onPress={handleCommitAll}
+        />
+      }>
+      {/* El selector nativo: en iOS va inline junto al subtitulo; en
+          Android se abre al tocarlo. */}
+      {RNDateTimePicker && Platform.OS === 'ios' ? (
+        <View style={styles.timeRow}>
+          <RNDateTimePicker
+            value={currentDateObj}
+            mode="time"
+            display="compact"
+            onChange={handleNativeTimeChange}
+            themeVariant={theme.scheme === 'dark' ? 'dark' : 'light'}
           />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity delayPressIn={0} onPress={() => setSearchQuery('')}>
-              <Text style={styles.clearSearchIcon}>×</Text>
-            </TouchableOpacity>
-          )}
         </View>
+      ) : null}
+
+      {RNDateTimePicker && Platform.OS === 'android' && showAndroidTimePicker && (
+        <RNDateTimePicker
+          value={currentDateObj}
+          mode="time"
+          display="default"
+          onChange={handleNativeTimeChange}
+        />
+      )}
+
+      <View style={styles.searchSection}>
+        <Input
+          value={searchQuery}
+          onChangeText={handleSearchChange}
+          placeholder="Buscar alimento"
+          autoCapitalize="none"
+        />
 
         <TouchableOpacity
-          style={styles.createCustomBtn}
+          accessibilityRole="button"
+          style={styles.createCustom}
           delayPressIn={0}
           activeOpacity={0.7}
           onPress={handleCreateCustomFood}>
-          <Text style={styles.createCustomBtnText}>+ Crear Alimento Personalizado</Text>
+          <Icon name="plus" size={14} tone="accent" />
+          <Text variant="bodyStrong" tone="accent">
+            Crear alimento propio
+          </Text>
         </TouchableOpacity>
       </View>
 
       {/* 3. Ultra-dense Native ScrollView */}
       <ScrollView
-        style={styles.scrollList}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior="automatic">
@@ -293,141 +273,46 @@ export function FoodSearchScreen() {
         </CollapsibleSection>
 
       </ScrollView>
-    </SafeAreaView>
+    </Sheet>
   );
 }
 
 export default FoodSearchScreen;
 
 const useStyles = makeStyles((t) => ({
-  container: {
-    flex: 1,
-    backgroundColor: t.colors.background,
-  },
-  headerBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: t.colors.surfaceRaised,
-  },
-  cancelBtn: {
-    paddingVertical: 4,
-    paddingRight: 8,
-  },
-  cancelBtnText: {
-    color: t.colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  centerTimeBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timePickerBtn: {
-    backgroundColor: t.colors.border,
-    borderRadius: 8,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: t.colors.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  timePickerBtnText: {
-    color: t.colors.primary,
-    fontSize: 15,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  commitBtn: {
-    backgroundColor: t.colors.primary,
-    borderRadius: 6,
-    borderCurve: 'continuous',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  commitBtnDisabled: {
-    backgroundColor: t.colors.border,
-  },
-  commitBtnText: {
-    color: t.colors.onPrimary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  commitBtnTextDisabled: {
-    color: t.colors.textMuted,
+  timeRow: {
+    alignItems: 'flex-start',
+    paddingHorizontal: t.space.xl,
+    paddingTop: t.space.md,
   },
   searchSection: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 4,
+    padding: t.space.xl,
+    paddingTop: t.space.md,
+    gap: t.space.md,
   },
-  searchBarBox: {
+  createCustom: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: t.colors.surface,
-    borderRadius: 8,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-    paddingHorizontal: 10,
-    height: 36,
-    marginBottom: 6,
+    gap: t.space.sm,
+    paddingVertical: t.space.sm,
   },
-  searchIcon: {
-    fontSize: 13,
-    marginRight: 6,
-  },
-  searchInput: {
-    flex: 1,
-    color: t.colors.text,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  clearSearchIcon: {
-    color: t.colors.textMuted,
-    fontSize: 13,
-    padding: 2,
-  },
-  createCustomBtn: {
-    backgroundColor: t.colors.border,
-    borderRadius: 6,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: t.colors.primary,
-    paddingVertical: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  createCustomBtnText: {
-    color: t.colors.primary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  scrollList: {
-    flex: 1,
-  },
+
   scrollContent: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    paddingBottom: 30,
+    paddingBottom: t.space.xxl,
   },
   stagedSectionContainer: {
-    backgroundColor: t.colors.surface,
-    borderRadius: 10,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: t.colors.primary,
-    padding: 10,
-    marginBottom: 12,
+    borderTopWidth: t.border.rule,
+    borderBottomWidth: t.border.rule,
+    borderColor: t.colors.text,
+    marginBottom: t.space.lg,
   },
   stagedSectionHeader: {
-    color: t.colors.primary,
-    fontSize: 11,
+    color: t.colors.textMuted,
+    fontSize: 10,
     fontWeight: '700',
-    marginBottom: 8,
-    letterSpacing: 0.4,
+    letterSpacing: 1,
+    paddingHorizontal: t.space.lg,
+    paddingTop: t.space.md,
+    paddingBottom: t.space.sm,
   },
 }));

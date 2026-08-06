@@ -1,57 +1,66 @@
 import React from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useTheme } from '@/theme';
+import { makeStyles } from '@/theme';
 import { Text } from './Text';
 
-/* Cabecera comun de los cuatro sheets del stack raiz. Cada uno la
-   resolvia por su cuenta, con paddings y pesos distintos. */
+/* ============================================================
+   Hoja del router.
+
+   Abre con una regla gruesa, que es el recurso del lenguaje para
+   iniciar un panel, y sobre `surface` en vez de `background`. Antes
+   la hoja y la pantalla de atras compartian color, asi que no habia
+   nada que separara una de otra al abrirse.
+   ============================================================ */
 
 export interface SheetProps {
   title: string;
   subtitle?: string;
-  /** Accion a la derecha del titulo. */
+  /** Hace el subtitulo tocable: sirve para abrir un selector. */
+  onSubtitlePress?: () => void;
+  /** Accion a la derecha del titulo. Por defecto, cerrar. */
   action?: React.ReactNode;
-  /** Por defecto cierra el sheet volviendo atras. */
   onClose?: () => void;
   closeLabel?: string;
+  /** Barra fija al pie, para la accion principal. */
+  footer?: React.ReactNode;
   children: React.ReactNode;
 }
 
 export const Sheet: React.FC<SheetProps> = ({
   title,
   subtitle,
+  onSubtitlePress,
   action,
   onClose,
   closeLabel = 'Cerrar',
+  footer,
   children,
 }) => {
-  const theme = useTheme();
+  const styles = useStyles();
   const router = useRouter();
-
   const close = onClose ?? (() => router.back());
 
+  const subtitleNode = subtitle ? (
+    <Text variant="caption" tone={onSubtitlePress ? 'accent' : 'secondary'}>
+      {subtitle}
+    </Text>
+  ) : null;
+
   return (
-    <View style={[styles.fill, { backgroundColor: theme.colors.background }]}>
-      <View
-        style={[
-          styles.header,
-          {
-            paddingHorizontal: theme.space.xl,
-            paddingTop: theme.space.lg,
-            paddingBottom: theme.space.md,
-            borderBottomWidth: theme.border.hairline,
-            borderBottomColor: theme.colors.border,
-            gap: theme.space.md,
-          },
-        ]}>
+    <View style={styles.sheet}>
+      <View style={styles.openingRule} />
+
+      <View style={styles.header}>
         <View style={styles.titleBlock}>
           <Text variant="title">{title}</Text>
-          {subtitle ? (
-            <Text variant="caption" tone="secondary">
-              {subtitle}
-            </Text>
-          ) : null}
+          {onSubtitlePress ? (
+            <TouchableOpacity accessibilityRole="button" onPress={onSubtitlePress} hitSlop={8}>
+              {subtitleNode}
+            </TouchableOpacity>
+          ) : (
+            subtitleNode
+          )}
         </View>
 
         {action ?? (
@@ -63,17 +72,36 @@ export const Sheet: React.FC<SheetProps> = ({
         )}
       </View>
 
-      {children}
+      <View style={styles.body}>{children}</View>
+
+      {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  fill: { flex: 1 },
+const useStyles = makeStyles((t) => ({
+  sheet: { flex: 1, backgroundColor: t.colors.surface },
+  /** La regla que abre el panel. */
+  openingRule: { height: t.border.ruleHeavy, backgroundColor: t.colors.text },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: t.space.md,
+    paddingHorizontal: t.space.xl,
+    paddingTop: t.space.lg,
+    paddingBottom: t.space.md,
+    borderBottomWidth: t.border.hairline,
+    borderBottomColor: t.colors.border,
   },
-  titleBlock: { flexShrink: 1 },
-});
+  titleBlock: { flexShrink: 1, gap: 2 },
+  body: { flex: 1 },
+  footer: {
+    paddingHorizontal: t.space.xl,
+    paddingTop: t.space.md,
+    paddingBottom: t.space.xl,
+    borderTopWidth: t.border.rule,
+    borderTopColor: t.colors.text,
+    backgroundColor: t.colors.surface,
+  },
+}));
