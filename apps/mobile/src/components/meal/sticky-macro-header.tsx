@@ -38,9 +38,6 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
           <Text style={[styles.calMain, { color: theme.colors.text }, isOverCal && { color: theme.colors.danger }]}>
             {totalCal} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {targetCalories} kcal</Text>
           </Text>
-          <View style={[styles.badgeBox, { backgroundColor: theme.colors.surfaceRaised }]}>
-            <Text style={[styles.badgeText, { color: theme.colors.textSecondary }]}>{calPercent}%</Text>
-          </View>
         </View>
 
         <View style={styles.macrosRow}>
@@ -101,15 +98,6 @@ const styles = StyleSheet.create({
   calTarget: {
     fontSize: 12,
     fontWeight: '400',
-  },
-  badgeBox: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
   },
   macrosRow: {
     flexDirection: 'row',

@@ -3,9 +3,13 @@ import { PaletteColors, Theme, border, radius, space, type } from './tokens';
 /* ============================================================
    Paletas.
 
-   Cada una llena el mismo contrato, asi que agregar una es
-   escribir un bloque de colores: ni las pantallas ni las
-   primitivas cambian.
+   El lenguaje es el de un libro contable: se anotan consumos contra
+   un presupuesto. De ahi salen el papel, la tinta y el rojo — "estar
+   en rojo" es pasarse del objetivo, y es la unica señal de color.
+
+   Cada paleta llena el mismo contrato, asi que agregar una es
+   escribir un bloque de colores: ni las pantallas ni las primitivas
+   cambian.
    ============================================================ */
 
 const build = (
@@ -15,99 +19,71 @@ const build = (
   colors: PaletteColors
 ): Theme => ({ key, name, scheme, colors, type, space, radius, border });
 
-const midnightEmerald = build('midnightEmerald', 'Midnight & Emerald', 'dark', {
-  background: '#0B0E14',
-  surface: '#161B22',
-  surfaceRaised: '#1C2128',
-  border: '#21262D',
+/** Papel de libro contable: el verde palido del formulario continuo. */
+const libro = build('libro', 'Libro', 'light', {
+  background: '#F2F5EE',
+  surface: '#FFFFFF',
+  surfaceRaised: '#E9EEE2',
+  border: '#CFD8C6',
 
-  primary: '#10B981',
-  primaryPressed: '#059669',
-  onPrimary: '#042F2E',
+  primary: '#1A1D19',
+  primaryPressed: '#000000',
+  onPrimary: '#F2F5EE',
 
-  text: '#F0F6FC',
-  textSecondary: '#8B949E',
-  textMuted: '#6E7681',
+  text: '#1A1D19',
+  textSecondary: '#5C6358',
+  textMuted: '#8D9487',
+
+  scrim: 'rgba(26, 29, 25, 0.42)',
+  shadow: '#1A1D19',
+
+  danger: '#B4232A',
+  success: '#3F6B3A',
+
+  macroProtein: '#1A1D19',
+  macroCarbs: '#5C6358',
+  macroFat: '#8D9487',
+  macroFiber: '#B0B7A8',
+});
+
+/** El mismo libro de noche: tinta invertida sobre verde muy oscuro. */
+const libroNoche = build('libroNoche', 'Libro de noche', 'dark', {
+  background: '#12160F',
+  surface: '#1A1F16',
+  surfaceRaised: '#232A1E',
+  border: '#333C2C',
+
+  primary: '#EEF2E6',
+  primaryPressed: '#FFFFFF',
+  onPrimary: '#12160F',
+
+  text: '#EEF2E6',
+  textSecondary: '#9AA392',
+  textMuted: '#656E5D',
 
   scrim: 'rgba(0, 0, 0, 0.6)',
   shadow: '#000000',
 
-  danger: '#F87171',
-  success: '#34D399',
+  danger: '#FF6B6B',
+  success: '#8FBF7F',
 
-  macroProtein: '#10B981',
-  macroCarbs: '#38BDF8',
-  macroFat: '#F59E0B',
-  macroFiber: '#A78BFA',
-});
-
-const obsidianCobalt = build('obsidianCobalt', 'Obsidian & Cobalt', 'dark', {
-  background: '#080B11',
-  surface: '#0F172A',
-  surfaceRaised: '#131C2E',
-  border: '#1E293B',
-
-  primary: '#3B82F6',
-  primaryPressed: '#2563EB',
-  onPrimary: '#FFFFFF',
-
-  text: '#F8FAFC',
-  textSecondary: '#94A3B8',
-  textMuted: '#64748B',
-
-  scrim: 'rgba(0, 0, 0, 0.65)',
-  shadow: '#000000',
-
-  danger: '#F87171',
-  success: '#4ADE80',
-
-  macroProtein: '#3B82F6',
-  macroCarbs: '#22D3EE',
-  macroFat: '#F87171',
-  macroFiber: '#C084FC',
-});
-
-/**
- * Paleta clara real. Antes `Colors.light` apuntaba a una paleta
- * oscura, asi que el modo claro del sistema entregaba un tema oscuro.
- */
-const daylight = build('daylight', 'Daylight', 'light', {
-  background: '#F7F8FA',
-  surface: '#FFFFFF',
-  surfaceRaised: '#F1F3F6',
-  border: '#E2E5EA',
-
-  primary: '#047857',
-  primaryPressed: '#065F46',
-  onPrimary: '#FFFFFF',
-
-  text: '#111827',
-  textSecondary: '#4B5563',
-  textMuted: '#6B7280',
-
-  scrim: 'rgba(17, 24, 39, 0.45)',
-  shadow: '#111827',
-
-  danger: '#B91C1C',
-  success: '#047857',
-
-  macroProtein: '#047857',
-  macroCarbs: '#0369A1',
-  macroFat: '#B45309',
-  macroFiber: '#6D28D9',
+  macroProtein: '#EEF2E6',
+  macroCarbs: '#9AA392',
+  macroFat: '#656E5D',
+  macroFiber: '#4C5545',
 });
 
 export const palettes = {
-  midnightEmerald,
-  obsidianCobalt,
-  daylight,
+  libro,
+  libroNoche,
 } as const;
 
 export type PaletteKey = keyof typeof palettes;
 
-export const DEFAULT_PALETTE: PaletteKey = 'midnightEmerald';
+/** Cuando el sistema esta en oscuro y el usuario no eligio. */
+export const DEFAULT_PALETTE: PaletteKey = 'libroNoche';
 
-/** La paleta que se usa cuando el sistema esta en modo claro y el usuario no eligio. */
-export const LIGHT_PALETTE: PaletteKey = 'daylight';
+/** Cuando el sistema esta en claro y el usuario no eligio. */
+export const LIGHT_PALETTE: PaletteKey = 'libro';
 
 export const paletteList = Object.values(palettes);

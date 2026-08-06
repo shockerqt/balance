@@ -66,15 +66,17 @@ export type TypeVariant =
   | 'numberLarge';
 
 export const type: Record<TypeVariant, TextStyle> = {
-  display: { fontSize: 32, fontWeight: '800', letterSpacing: -0.5 },
-  title: { fontSize: 20, fontWeight: '800', letterSpacing: -0.2 },
-  heading: { fontSize: 16, fontWeight: '700' },
-  body: { fontSize: 14, fontWeight: '400' },
-  bodyStrong: { fontSize: 14, fontWeight: '600' },
-  label: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
-  caption: { fontSize: 12, fontWeight: '500' },
-  number: { fontSize: 14, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  numberLarge: { fontSize: 32, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  display: { fontSize: 28, fontWeight: '700', letterSpacing: -0.4 },
+  title: { fontSize: 18, fontWeight: '700', letterSpacing: -0.2 },
+  heading: { fontSize: 15, fontWeight: '600' },
+  body: { fontSize: 13, fontWeight: '400' },
+  bodyStrong: { fontSize: 13, fontWeight: '600' },
+  /** Etiquetas en caja alta: el renglon de cabecera del libro. */
+  label: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  caption: { fontSize: 11, fontWeight: '500' },
+  /** Toda cifra va tabular: en un libro las columnas deben alinearse. */
+  number: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  numberLarge: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
 };
 
 /** Escala de espaciado. Multiplos de 4. */
@@ -97,9 +99,15 @@ export const radius = {
   pill: 999,
 } as const;
 
-/** Grosor de bordes. */
+/**
+ * Grosor de reglas. En el lenguaje del libro contable el peso del
+ * filete codifica la jerarquia: la regla gruesa abre el panel, la
+ * media separa secciones y el pelo separa asientos.
+ */
 export const border = {
   hairline: 1,
+  rule: 2,
+  ruleHeavy: 3,
 } as const;
 
 export type Space = keyof typeof space;

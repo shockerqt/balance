@@ -7,7 +7,7 @@ import { useFoodSelection } from '@/hooks/use-food-selection';
 import { buildDateWindow, currentTimeString } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
-import { FluidTimelineFeed } from '@/components/meal/fluid-timeline-feed';
+import { HourRailFeed } from '@/components/meal/hour-rail-feed';
 import { TimeFoodModal } from '@/components/meal/time-food-modal';
 import { BatchMoveModal } from '@/components/meal/batch-move-modal';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
@@ -150,17 +150,16 @@ export default function LogsScreen() {
           return (
             <View key={dateId} style={styles.page}>
               {isNearby ? (
-                <FluidTimelineFeed
+                <HourRailFeed
                   foods={log.foods}
                   onSelectFood={openEdit}
-                  onAddAtTime={openFoodSearch}
-                  onDeleteFood={removeFood}
+                  onAddAtHour={openFoodSearch}
                   isSelectionMode={selection.isSelectionMode}
-                  selectedFoodIds={selection.selectedIds as Set<string>}
+                  selectedFoodIds={selection.selectedIds}
                   onLongPressFood={selection.startFromFood}
-                  onLongPressGroup={(_timeKey, ids) => selection.startFromGroup(ids)}
+                  onLongPressGroup={selection.startFromGroup}
                   onToggleSelectFood={selection.toggleFood}
-                  onToggleSelectGroup={(_timeKey, ids) => selection.toggleGroup(ids)}
+                  onToggleSelectGroup={selection.toggleGroup}
                 />
               ) : null}
             </View>
