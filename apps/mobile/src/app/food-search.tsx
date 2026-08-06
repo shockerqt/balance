@@ -7,6 +7,7 @@ import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
 import { LibraryFoodRow } from '@/components/food-search/library-food-row';
 import { CollapsibleSection } from '@/components/food-search/collapsible-section';
+import { StagedFoodRow } from '@/components/food-search/staged-food-row';
 
 // Safe require for RNDateTimePicker to prevent module evaluation failure on un-updated Dev Clients
 let RNDateTimePicker: any = null;
@@ -259,60 +260,16 @@ export function FoodSearchScreen() {
               🛒 ALIMENTOS PARA REGISTRAR ({stagedCount})
             </Text>
 
-            {stagedItems.map((item, idx) => {
-              const q = parseFloat(item.quantityStr) || item.baseQty;
-              const scale = q / item.baseQty;
-              const calcKcal = Math.round(item.baseCalories * scale);
-              const calcP = Math.round(item.baseProtein * scale);
-              const calcC = Math.round(item.baseCarbs * scale);
-              const calcF = Math.round(item.baseFat * scale);
-              const isLastAdded = idx === stagedItems.length - 1;
-
-              return (
-                <View key={item.id} style={styles.stagedRowCard}>
-                  <View style={styles.stagedCardMain}>
-                    <Text style={styles.stagedFoodName} numberOfLines={1} selectable>
-                      {item.name}
-                    </Text>
-
-                    <View style={styles.stagedControlsRow}>
-                      {/* Low-Profile Inline Quantity Input with AutoFocus */}
-                      <TextInput
-                        style={styles.inlineQtyInput}
-                        value={item.quantityStr}
-                        onChangeText={(txt) => handleUpdateStagedQuantity(item.id, txt)}
-                        keyboardType="numeric"
-                        autoFocus={isLastAdded && item.autoFocus}
-                        selectTextOnFocus={true}
-                      />
-
-                      {/* Inline Unit Toggle Chip */}
-                      <TouchableOpacity
-                        style={styles.inlineUnitPill}
-                        delayPressIn={0}
-                        onPress={() => handleToggleStagedUnit(item.id)}>
-                        <Text style={styles.inlineUnitText}>{item.unit} ▾</Text>
-                      </TouchableOpacity>
-
-                      <Text style={styles.dot}>·</Text>
-                      <Text style={styles.stagedKcalText}>{calcKcal} kcal</Text>
-                      <Text style={styles.dot}>·</Text>
-                      <Text style={styles.stagedMacroText}>
-                        P {calcP}g C {calcC}g G {calcF}g
-                      </Text>
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.removeStagedBtn}
-                    delayPressIn={0}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => handleRemoveStagedItem(item.id)}>
-                    <Text style={styles.removeStagedIcon}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
+            {stagedItems.map((item, idx) => (
+              <StagedFoodRow
+                key={item.id}
+                item={item}
+                autoFocus={idx === stagedItems.length - 1 && !!item.autoFocus}
+                onChangeQuantity={handleUpdateStagedQuantity}
+                onToggleUnit={handleToggleStagedUnit}
+                onRemove={handleRemoveStagedItem}
+              />
+            ))}
           </View>
         )}
 
@@ -473,88 +430,5 @@ const useStyles = makeStyles((t) => ({
     fontWeight: '700',
     marginBottom: 8,
     letterSpacing: 0.4,
-  },
-  stagedRowCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: t.colors.surface,
-    borderRadius: 8,
-    borderCurve: 'continuous',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-  },
-  stagedCardMain: {
-    flex: 1,
-    paddingRight: 6,
-  },
-  stagedFoodName: {
-    color: t.colors.text,
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 3,
-  },
-  stagedControlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  inlineQtyInput: {
-    backgroundColor: t.colors.border,
-    borderRadius: 6,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: t.colors.primary,
-    color: t.colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    minWidth: 40,
-    height: 28,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-  },
-  inlineUnitPill: {
-    backgroundColor: t.colors.border,
-    borderRadius: 6,
-    borderCurve: 'continuous',
-    paddingHorizontal: 5,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: t.colors.surfaceRaised,
-  },
-  inlineUnitText: {
-    color: t.colors.primary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  dot: {
-    color: t.colors.textMuted,
-    fontSize: 10,
-  },
-  stagedKcalText: {
-    color: t.colors.danger,
-    fontSize: 11,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  stagedMacroText: {
-    color: t.colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '400',
-    fontVariant: ['tabular-nums'],
-  },
-  removeStagedBtn: {
-    padding: 3,
-  },
-  removeStagedIcon: {
-    color: t.colors.danger,
-    fontSize: 13,
-    fontWeight: '700',
   },
 }));

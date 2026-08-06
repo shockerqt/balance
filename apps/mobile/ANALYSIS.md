@@ -1,3 +1,8 @@
+> **Estado: ejecutado.** Las cuatro fases se aplicaron en los commits
+> `ba19810` y siguientes. Este documento se conserva como registro del
+> punto de partida y del razonamiento; las cifras de "antes" son las
+> del commit `17a2d3a`. Ver §9 para el resultado.
+
 # Análisis del app mobile — estado actual y propuesta de reestructuración
 
 Objetivo del análisis: dejar el código en condiciones de **cambiar el estilo con
@@ -355,3 +360,36 @@ Fase 2  primitivas               ← donde el restyle se vuelve barato
 Fase 3  descomponer monolitos
 Fase 4  datos y sesión
 ```
+
+
+---
+
+## 9. Resultado
+
+| Métrica | Antes (`17a2d3a`) | Ahora |
+|---|---|---|
+| Líneas en `src/` | 7.489 | 5.006 |
+| Código muerto | 2.388 | 0 |
+| Literales de color | 299 | **0** (solo en `palettes.ts`) |
+| Errores de tipos | 1 | 0 |
+| Archivo más grande | 698 | 434 |
+
+### Descomposición
+
+| Archivo | Antes | Ahora | Extraído |
+|---|---|---|---|
+| `(tabs)/index.tsx` | 348 | 122 | `MacroGrid`, `WeeklyChart` |
+| `(tabs)/logs.tsx` | 411 | 204 | `useFoodSelection`, `BatchActionBar`, `FloatingAddButton`, `lib/dates` |
+| `food-search.tsx` | 698 | 434 | `LibraryFoodRow`, `CollapsibleSection`, `StagedFoodRow` |
+| `food-portion.tsx` | 313 | 153 | `lib/portion`, `MacroSummary` |
+
+`create-food.tsx` (305) y `date-picker.tsx` (253) siguen sin descomponer.
+Están tematizados y sin literales, así que un restyle los alcanza; lo que
+les falta es estructura interna.
+
+### Verificación
+
+`tsc --noEmit` tras cada fase, siempre en verde. **No hay pruebas
+automatizadas ni verificación visual**: el typecheck no detecta un
+`gap` mal mapeado ni un handler que quedó en el padre. La app se revisó
+a mano tras el primer lote de cambios.
