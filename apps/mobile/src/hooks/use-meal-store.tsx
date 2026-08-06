@@ -85,13 +85,11 @@ interface MealStoreContextType {
   setSelectedDateId: (dateId: string) => void;
   dayLogs: Record<string, DayLog>;
   currentDayLog: DayLog;
-  isHydrated: boolean;
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
   deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
-  moveFoodTime: (dateId: string, foodId: string, newTime: string) => void;
   moveMultipleFoodsTime: (dateId: string, foodIds: string[], newTime: string) => void;
 }
 
@@ -100,7 +98,6 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [selectedDateId, setSelectedDateId] = useState<string>(todayId);
   const [dayLogs, setDayLogs] = useState<Record<string, DayLog>>({});
-  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,9 +110,6 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         } catch (e) {
           console.error('No se pudo leer el registro guardado', e);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setIsHydrated(true);
       });
     return () => {
       cancelled = true;
@@ -177,11 +171,6 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [mutate]
   );
 
-  const moveFoodTime = useCallback(
-    (dateId: string, foodId: string, newTime: string) =>
-      updateFood(dateId, foodId, { time: newTime }),
-    [updateFood]
-  );
 
   const moveMultipleFoodsTime = useCallback(
     (dateId: string, foodIds: string[], newTime: string) => {
@@ -205,26 +194,22 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSelectedDateId,
       dayLogs,
       currentDayLog,
-      isHydrated,
       addFood,
       addMultipleFoods,
       updateFood,
       deleteFood,
       deleteMultipleFoods,
-      moveFoodTime,
       moveMultipleFoodsTime,
     }),
     [
       selectedDateId,
       dayLogs,
       currentDayLog,
-      isHydrated,
       addFood,
       addMultipleFoods,
       updateFood,
       deleteFood,
       deleteMultipleFoods,
-      moveFoodTime,
       moveMultipleFoodsTime,
     ]
   );
