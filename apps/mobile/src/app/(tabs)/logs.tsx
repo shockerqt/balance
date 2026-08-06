@@ -9,7 +9,7 @@ import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { FluidTimelineFeed } from '@/components/meal/fluid-timeline-feed';
 import { TimeFoodModal } from '@/components/meal/time-food-modal';
 import { BatchMoveModal } from '@/components/meal/batch-move-modal';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme, makeStyles } from '@/theme';
 
 const parseDateId = (dateId: string): Date => {
   const parts = dateId.split('-');
@@ -23,6 +23,7 @@ const parseDateId = (dateId: string): Date => {
 };
 
 export default function LogsScreen() {
+  const styles = useStyles();
   const theme = useTheme();
   const router = useRouter();
   const {
@@ -213,7 +214,7 @@ export default function LogsScreen() {
   const selectedCount = selectedFoodIds.size;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]} edges={['top']}>
       {/* 1. Date Strip Navigation Header */}
       <DateStripHeader
         selectedDateId={selectedDateId}
@@ -273,35 +274,35 @@ export default function LogsScreen() {
       {/* Floating Add Action Button */}
       {!isSelectionMode && (
         <TouchableOpacity
-          style={[styles.floatingAddBtn, { backgroundColor: theme.primary }]}
+          style={[styles.floatingAddBtn, { backgroundColor: theme.colors.primary }]}
           delayPressIn={0}
           activeOpacity={0.8}
           onPress={() => handleOpenAddModal()}>
-          <Text style={[styles.floatingAddIcon, { color: theme.primaryText }]}>+</Text>
+          <Text style={[styles.floatingAddIcon, { color: theme.colors.onPrimary }]}>+</Text>
         </TouchableOpacity>
       )}
 
       {/* Single Consolidated Bottom Floating Batch Action Bar */}
       {isSelectionMode && (
-        <View style={[styles.bottomBatchBar, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
-          <TouchableOpacity style={[styles.batchBarBtnCancel, { backgroundColor: theme.accentMuted }]} delayPressIn={0} onPress={handleCancelSelection}>
-            <Text style={[styles.batchBarBtnCancelText, { color: theme.textSecondary }]}>Cancelar</Text>
+        <View style={[styles.bottomBatchBar, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          <TouchableOpacity style={[styles.batchBarBtnCancel, { backgroundColor: theme.colors.border }]} delayPressIn={0} onPress={handleCancelSelection}>
+            <Text style={[styles.batchBarBtnCancelText, { color: theme.colors.textSecondary }]}>Cancelar</Text>
           </TouchableOpacity>
 
-          <Text style={[styles.batchBarCountText, { color: theme.textPrimary }]}>
+          <Text style={[styles.batchBarCountText, { color: theme.colors.text }]}>
             {selectedCount} {selectedCount === 1 ? 'seleccionado' : 'seleccionados'}
           </Text>
 
           <View style={styles.batchBarActionsGroup}>
             <TouchableOpacity
-              style={[styles.batchBarBtnMove, { backgroundColor: theme.accentMuted, borderColor: theme.primary }]}
+              style={[styles.batchBarBtnMove, { backgroundColor: theme.colors.border, borderColor: theme.colors.primary }]}
               delayPressIn={0}
               onPress={() => setBatchMoveModalVisible(true)}>
-              <Text style={[styles.batchBarBtnMoveText, { color: theme.primary }]}>Mover</Text>
+              <Text style={[styles.batchBarBtnMoveText, { color: theme.colors.primary }]}>Mover</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.batchBarBtnDelete, { backgroundColor: theme.kcalCoral }]} delayPressIn={0} onPress={handleBatchDelete}>
-              <Text style={[styles.batchBarBtnDeleteText, { color: '#FFFFFF' }]}>Eliminar</Text>
+            <TouchableOpacity style={[styles.batchBarBtnDelete, { backgroundColor: theme.colors.danger }]} delayPressIn={0} onPress={handleBatchDelete}>
+              <Text style={[styles.batchBarBtnDeleteText, { color: theme.colors.onPrimary }]}>Eliminar</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -328,7 +329,7 @@ export default function LogsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     flex: 1,
   },
@@ -348,7 +349,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 5,
-    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.4)',
+    shadowColor: t.colors.primary,
   },
   floatingAddIcon: {
     fontSize: 28,
@@ -368,7 +369,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+    shadowColor: t.colors.shadow,
   },
   batchBarBtnCancel: {
     paddingHorizontal: 10,
@@ -408,4 +409,4 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-});
+}));

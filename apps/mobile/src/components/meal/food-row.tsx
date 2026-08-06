@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme } from '@/theme';
 
 interface FoodRowProps {
   food: LoggedFoodItem;
@@ -40,8 +40,8 @@ export const FoodRow: React.FC<FoodRowProps> = ({
     <TouchableOpacity
       style={[
         styles.container,
-        { backgroundColor: theme.cardBackground },
-        isSelected && { backgroundColor: theme.accentMuted, borderWidth: 1, borderColor: theme.primary },
+        { backgroundColor: theme.colors.surfaceRaised },
+        isSelected && { backgroundColor: theme.colors.border, borderWidth: 1, borderColor: theme.colors.primary },
       ]}
       delayPressIn={0}
       activeOpacity={0.7}
@@ -52,31 +52,31 @@ export const FoodRow: React.FC<FoodRowProps> = ({
           <View
             style={[
               styles.checkboxCircle,
-              { borderColor: theme.textMuted },
-              isSelected && { backgroundColor: theme.primary, borderColor: theme.primary },
+              { borderColor: theme.colors.textMuted },
+              isSelected && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
             ]}>
-            {isSelected && <Text style={[styles.checkmarkIcon, { color: theme.primaryText }]}>✓</Text>}
+            {isSelected && <Text style={[styles.checkmarkIcon, { color: theme.colors.onPrimary }]}>✓</Text>}
           </View>
         </View>
       )}
 
       <View style={styles.mainContent}>
         {/* Line 1: Name */}
-        <Text style={[styles.nameText, { color: theme.textPrimary }]} numberOfLines={1}>
+        <Text style={[styles.nameText, { color: theme.colors.text }]} numberOfLines={1}>
           {food.name}
         </Text>
 
         {/* Line 2: Kcal · P C G · Portion */}
         <View style={styles.detailRow}>
-          <Text style={[styles.kcalText, { color: theme.kcalCoral }]}>{food.calories} kcal</Text>
-          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
+          <Text style={[styles.kcalText, { color: theme.colors.danger }]}>{food.calories} kcal</Text>
+          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
             P {food.protein}g  C {food.carbs}g  G {food.fat}g
           </Text>
           {food.portion ? (
             <>
-              <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
-              <Text style={[styles.portionText, { color: theme.textMuted }]}>{food.portion}</Text>
+              <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
+              <Text style={[styles.portionText, { color: theme.colors.textMuted }]}>{food.portion}</Text>
             </>
           ) : null}
         </View>

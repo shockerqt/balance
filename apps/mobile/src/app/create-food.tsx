@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
+import { makeStyles, useTheme } from '@/theme';
 
 const CHILEAN_SEALS_OPTIONS = [
   'ALTO EN CALORÍAS',
@@ -11,6 +12,8 @@ const CHILEAN_SEALS_OPTIONS = [
 ];
 
 export default function CreateFoodScreen() {
+  const theme = useTheme();
+  const styles = useStyles();
   const router = useRouter();
   const { addCustomFood } = useFoodLibraryStore();
 
@@ -78,7 +81,7 @@ export default function CreateFoodScreen() {
             value={name}
             onChangeText={setName}
             placeholder="Ej. Pan de Masa Madre"
-            placeholderTextColor="#64748B"
+            placeholderTextColor={theme.colors.textMuted}
           />
         </View>
 
@@ -89,7 +92,7 @@ export default function CreateFoodScreen() {
             value={portion}
             onChangeText={setPortion}
             placeholder="100g"
-            placeholderTextColor="#64748B"
+            placeholderTextColor={theme.colors.textMuted}
           />
         </View>
 
@@ -103,7 +106,7 @@ export default function CreateFoodScreen() {
               onChangeText={setCalories}
               keyboardType="numeric"
               placeholder="250"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={theme.colors.textMuted}
             />
           </View>
 
@@ -115,7 +118,7 @@ export default function CreateFoodScreen() {
               onChangeText={setProtein}
               keyboardType="numeric"
               placeholder="12"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={theme.colors.textMuted}
             />
           </View>
         </View>
@@ -129,7 +132,7 @@ export default function CreateFoodScreen() {
               onChangeText={setCarbs}
               keyboardType="numeric"
               placeholder="30"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={theme.colors.textMuted}
             />
           </View>
 
@@ -141,7 +144,7 @@ export default function CreateFoodScreen() {
               onChangeText={setFat}
               keyboardType="numeric"
               placeholder="5"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={theme.colors.textMuted}
             />
           </View>
         </View>
@@ -180,10 +183,10 @@ export default function CreateFoodScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     flex: 1,
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
   },
   scrollContent: {
     padding: 20,
@@ -198,12 +201,12 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   cancelBtnText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
   headerTitle: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginLeft: 'auto',
@@ -211,7 +214,7 @@ const styles = StyleSheet.create({
     paddingRight: 60,
   },
   subtitle: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 13,
     lineHeight: 18,
     marginBottom: 16,
@@ -227,28 +230,28 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   label: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 6,
   },
   textInput: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1C2638',
-    color: '#F8FAFC',
+    borderColor: t.colors.surfaceRaised,
+    color: t.colors.text,
     fontSize: 15,
     fontWeight: '600',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   textInputNumber: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1C2638',
-    color: '#F8FAFC',
+    borderColor: t.colors.surfaceRaised,
+    color: t.colors.text,
     fontSize: 15,
     fontWeight: '700',
     paddingHorizontal: 14,
@@ -268,24 +271,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
   },
   sealChipSelected: {
-    borderColor: '#EF4444',
-    backgroundColor: '#2A1A20',
+    borderColor: t.colors.danger,
+    backgroundColor: t.colors.surfaceRaised,
   },
   sealChipText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 11,
     fontWeight: '600',
   },
   sealChipTextSelected: {
-    color: '#EF4444',
+    color: t.colors.danger,
   },
   confirmBtn: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
@@ -295,8 +298,8 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   confirmBtnText: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
-});
+}));

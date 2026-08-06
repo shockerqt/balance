@@ -1,14 +1,15 @@
+import React from 'react';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useColorScheme } from 'react-native';
+import { useTheme } from '@/theme';
 
 export default function TabLayout() {
-  const scheme = useColorScheme();
+  const theme = useTheme();
 
   return (
     <NativeTabs
-      backgroundColor="#090C15"
-      indicatorColor="#1F293B"
-      labelStyle={{ selected: { color: '#FFFFFF' } }}>
+      backgroundColor={theme.colors.surface}
+      indicatorColor={theme.colors.border}
+      labelStyle={{ selected: { color: theme.colors.text } }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Resumen</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon

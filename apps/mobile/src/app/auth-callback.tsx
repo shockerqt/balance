@@ -1,46 +1,39 @@
 import React, { useEffect } from 'react';
-import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/use-auth';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme } from '@/theme';
+import { Text } from '@/components/ui';
 
 export default function AuthCallbackScreen() {
-  const { token } = useLocalSearchParams<{ token?: string }>();
+  const { token } = useLocalSearchParams<{ token?: string | string[] }>();
   const { checkSession, setAuthToken } = useAuth();
   const router = useRouter();
   const theme = useTheme();
 
   useEffect(() => {
-    async function handleCallback() {
-      if (token) {
-        const tokenStr = Array.isArray(token) ? token[0] : token;
-        if (tokenStr) {
-          setAuthToken(tokenStr);
-          await checkSession(tokenStr);
-        }
+    (async () => {
+      const value = Array.isArray(token) ? token[0] : token;
+      if (value) {
+        setAuthToken(value);
+        await checkSession(value);
       }
       router.replace('/(tabs)/logs');
-    }
-    handleCallback();
+    })();
+    // Solo depende del token que trae la URL de retorno.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <ActivityIndicator size="large" color={theme.primary} />
-      <Text style={[styles.text, { color: theme.textSecondary }]}>Autenticando...</Text>
+    <View style={[styles.container, { backgroundColor: theme.colors.background, gap: theme.space.lg }]}>
+      <ActivityIndicator size="large" color={theme.colors.primary} />
+      <Text variant="heading" tone="secondary">
+        Autenticando…
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  text: {
-    marginTop: 16,
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });

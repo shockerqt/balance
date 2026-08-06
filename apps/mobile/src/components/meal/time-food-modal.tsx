@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import { makeStyles, useTheme } from '@/theme';
 
 interface TimeFoodModalProps {
   visible: boolean;
@@ -29,6 +30,8 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
   initialTime = '08:00',
   foodToEdit = null,
 }) => {
+  const theme = useTheme();
+  const styles = useStyles();
   const [name, setName] = useState('');
   const [portion, setPortion] = useState('100g');
   const [calories, setCalories] = useState('');
@@ -111,7 +114,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                 value={time}
                 onChangeText={setTime}
                 placeholder="08:30"
-                placeholderTextColor="#64748B"
+                placeholderTextColor={theme.colors.textMuted}
               />
             </View>
 
@@ -123,7 +126,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                 value={name}
                 onChangeText={setName}
                 placeholder="ej. Pan Marraqueta, Pechuga de Pollo"
-                placeholderTextColor="#64748B"
+                placeholderTextColor={theme.colors.textMuted}
               />
             </View>
 
@@ -136,7 +139,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                   value={portion}
                   onChangeText={setPortion}
                   placeholder="ej. 100g, 2 un"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                 />
               </View>
               <View style={[styles.fieldGroup, { flex: 1 }]}>
@@ -147,7 +150,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                   onChangeText={setCalories}
                   keyboardType="numeric"
                   placeholder="250"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                 />
               </View>
             </View>
@@ -163,7 +166,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                   onChangeText={setProtein}
                   keyboardType="numeric"
                   placeholder="0"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                 />
               </View>
               <View style={[styles.fieldGroup, { flex: 1 }]}>
@@ -174,7 +177,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                   onChangeText={setCarbs}
                   keyboardType="numeric"
                   placeholder="0"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                 />
               </View>
               <View style={[styles.fieldGroup, { flex: 1 }]}>
@@ -185,7 +188,7 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
                   onChangeText={setFat}
                   keyboardType="numeric"
                   placeholder="0"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                 />
               </View>
             </View>
@@ -215,29 +218,29 @@ export const TimeFoodModal: React.FC<TimeFoodModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
   },
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: t.colors.scrim,
   },
   sheetContainer: {
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
     paddingBottom: 30,
     maxHeight: '85%',
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
   },
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: '#334155',
+    backgroundColor: t.colors.border,
     borderRadius: 2,
     alignSelf: 'center',
     marginTop: 10,
@@ -250,12 +253,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   title: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
   closeText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 18,
     fontWeight: '600',
   },
@@ -266,35 +269,35 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   label: {
-    color: '#94A3B8',
+    color: t.colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 6,
   },
   subLabel: {
-    color: '#64748B',
+    color: t.colors.textMuted,
     fontSize: 11,
     fontWeight: '500',
     marginBottom: 4,
   },
   input: {
-    backgroundColor: '#161E2E',
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 14,
   },
   timeInput: {
-    backgroundColor: '#161E2E',
+    backgroundColor: t.colors.surface,
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: t.colors.primary,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 15,
     fontWeight: '700',
     textAlign: 'center',
@@ -305,14 +308,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   saveBtn: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 16,
   },
   saveBtnText: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -323,8 +326,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   deleteBtnText: {
-    color: '#EF4444',
+    color: t.colors.danger,
     fontSize: 14,
     fontWeight: '600',
   },
-});
+}));

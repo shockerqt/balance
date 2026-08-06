@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMealStore } from '@/hooks/use-meal-store';
+import { makeStyles } from '@/theme';
 
 export default function DatePickerScreen() {
+  const styles = useStyles();
   const router = useRouter();
   const { selectedDateId, setSelectedDateId } = useMealStore();
 
@@ -150,10 +152,10 @@ export default function DatePickerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     flex: 1,
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
     padding: 20,
   },
   headerBar: {
@@ -165,12 +167,12 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   closeBtnText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
   headerTitle: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginLeft: 'auto',
@@ -187,11 +189,11 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   arrowText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 14,
   },
   monthYearTitle: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -201,7 +203,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   weekDayLabel: {
-    color: '#64748B',
+    color: t.colors.textMuted,
     fontSize: 12,
     fontWeight: '600',
     width: 36,
@@ -225,27 +227,27 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   dayCellSelected: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
   },
   dayCellText: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 14,
     fontWeight: '600',
   },
   dayCellTextSelected: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontWeight: '700',
   },
   todayBtn: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 'auto',
   },
   todayBtnText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 14,
     fontWeight: '600',
   },
-});
+}));

@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { FoodRow } from '@/components/meal/food-row';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme } from '@/theme';
 
 interface FluidTimelineFeedProps {
   foods: LoggedFoodItem[];
@@ -32,10 +32,10 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
 
   if (!foods || foods.length === 0) {
     return (
-      <View style={[styles.emptyFlexContainer, { backgroundColor: theme.background }]}>
-        <View style={[styles.emptyCard, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder }]}>
-          <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>Sin registros para este día</Text>
-          <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
+      <View style={[styles.emptyFlexContainer, { backgroundColor: theme.colors.background }]}>
+        <View style={[styles.emptyCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>Sin registros para este día</Text>
+          <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
             Toca el botón [+] para agregar tu primera comida o alimento del día.
           </Text>
         </View>
@@ -56,7 +56,7 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
 
   return (
     <ScrollView
-      style={[styles.container, { backgroundColor: theme.background }]}
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
       contentContainerStyle={styles.scrollContent}
       showsVerticalScrollIndicator={false}>
       {sortedTimes.map((timeKey) => {
@@ -96,20 +96,20 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
                     <View
                       style={[
                         styles.groupCheckboxCircle,
-                        { borderColor: theme.textMuted },
-                        isGroupFullySelected && { backgroundColor: theme.primary, borderColor: theme.primary },
+                        { borderColor: theme.colors.textMuted },
+                        isGroupFullySelected && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
                       ]}>
-                      {isGroupFullySelected && <Text style={[styles.checkmarkIcon, { color: theme.primaryText }]}>✓</Text>}
+                      {isGroupFullySelected && <Text style={[styles.checkmarkIcon, { color: theme.colors.onPrimary }]}>✓</Text>}
                     </View>
                   </View>
                 )}
 
-                <View style={[styles.timeBadgePill, { backgroundColor: theme.surface, borderColor: theme.primary }]}>
-                  <Text style={[styles.timeBadgeText, { color: theme.textPrimary }]}>{timeKey}</Text>
+                <View style={[styles.timeBadgePill, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]}>
+                  <Text style={[styles.timeBadgeText, { color: theme.colors.text }]}>{timeKey}</Text>
                 </View>
 
                 <View style={styles.summaryStatsRow}>
-                  <Text style={[styles.groupStatsText, { color: theme.textSecondary }]}>
+                  <Text style={[styles.groupStatsText, { color: theme.colors.textSecondary }]}>
                     {groupCalories} kcal  ·  P {groupProtein}g  C {groupCarbs}g  G {groupFat}g
                   </Text>
                 </View>
@@ -117,18 +117,18 @@ export const FluidTimelineFeed: React.FC<FluidTimelineFeedProps> = ({
 
               {!isSelectionMode && (
                 <TouchableOpacity
-                  style={[styles.addCircleBtn, { backgroundColor: theme.surface, borderColor: theme.primary }]}
+                  style={[styles.addCircleBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]}
                   delayPressIn={0}
                   activeOpacity={0.7}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   onPress={() => onAddAtTime(timeKey)}>
-                  <Text style={[styles.addCircleIcon, { color: theme.primary }]}>+</Text>
+                  <Text style={[styles.addCircleIcon, { color: theme.colors.primary }]}>+</Text>
                 </TouchableOpacity>
               )}
             </View>
 
             {/* Food List */}
-            <View style={[styles.foodListWrapper, { backgroundColor: theme.background }]}>
+            <View style={[styles.foodListWrapper, { backgroundColor: theme.colors.background }]}>
               {groupFoods.map((food) => (
                 <FoodRow
                   key={food.id}

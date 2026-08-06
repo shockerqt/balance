@@ -2,7 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 import { useRouter } from 'expo-router';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme } from '@/theme';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
@@ -163,16 +163,16 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   const line2Text = isSelectedToday ? `${dayNum} de ${monthNameFull}` : `${monthNameFull}, ${yearNum}`;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background, borderBottomColor: theme.surfaceBorder }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
       {/* 1. Header Row */}
       <View style={styles.topHeaderRow}>
         <View style={styles.fixedDateNavBox}>
           <TouchableOpacity
-            style={[styles.navArrowBtn, { backgroundColor: theme.surface }]}
+            style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
             delayPressIn={0}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handlePrevDay}>
-            <Text style={[styles.navArrowText, { color: theme.primary }]}>‹</Text>
+            <Text style={[styles.navArrowText, { color: theme.colors.primary }]}>‹</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -180,25 +180,25 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
             delayPressIn={0}
             activeOpacity={0.7}
             onPress={() => router.push('/date-picker')}>
-            <Text style={[styles.headlineTitle, { color: theme.textPrimary }]}>{line1Text}</Text>
-            <Text style={[styles.subtitleContext, { color: theme.textSecondary }]}>{line2Text}</Text>
+            <Text style={[styles.headlineTitle, { color: theme.colors.text }]}>{line1Text}</Text>
+            <Text style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>{line2Text}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.navArrowBtn, { backgroundColor: theme.surface }]}
+            style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
             delayPressIn={0}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handleNextDay}>
-            <Text style={[styles.navArrowText, { color: theme.primary }]}>›</Text>
+            <Text style={[styles.navArrowText, { color: theme.colors.primary }]}>›</Text>
           </TouchableOpacity>
         </View>
 
         {!isSelectedToday && (
           <TouchableOpacity
-            style={[styles.todayPillBtn, { backgroundColor: theme.surface, borderColor: theme.primary }]}
+            style={[styles.todayPillBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]}
             delayPressIn={0}
             onPress={() => onSelectDate(todayDateId)}>
-            <Text style={[styles.todayPillText, { color: theme.primary }]}>Hoy</Text>
+            <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>Hoy</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -220,9 +220,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     key={item.dateId}
                     style={[
                       styles.dayPill,
-                      { backgroundColor: theme.surface, borderColor: theme.surfaceBorder },
-                      isSelected && { backgroundColor: theme.primary, borderColor: theme.primary },
-                      item.isToday && !isSelected && { borderColor: theme.primary },
+                      { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
+                      isSelected && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+                      item.isToday && !isSelected && { borderColor: theme.colors.primary },
                     ]}
                     delayPressIn={0}
                     activeOpacity={0.7}
@@ -230,9 +230,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     <Text
                       style={[
                         styles.dayNameText,
-                        { color: theme.textMuted },
-                        isSelected && { color: theme.primaryText, fontWeight: '700' },
-                        item.isToday && !isSelected && { color: theme.primary },
+                        { color: theme.colors.textMuted },
+                        isSelected && { color: theme.colors.onPrimary, fontWeight: '700' },
+                        item.isToday && !isSelected && { color: theme.colors.primary },
                       ]}>
                       {item.dayName}
                     </Text>
@@ -240,9 +240,9 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
                     <Text
                       style={[
                         styles.dayNumberText,
-                        { color: theme.textPrimary },
-                        isSelected && { color: theme.primaryText },
-                        item.isToday && !isSelected && { color: theme.primary },
+                        { color: theme.colors.text },
+                        isSelected && { color: theme.colors.onPrimary },
+                        item.isToday && !isSelected && { color: theme.colors.primary },
                       ]}>
                       {item.dayNumber}
                     </Text>

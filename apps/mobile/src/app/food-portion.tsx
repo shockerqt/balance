@@ -3,8 +3,11 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView } from 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { useMealStore } from '@/hooks/use-meal-store';
+import { makeStyles, useTheme } from '@/theme';
 
 export default function FoodPortionScreen() {
+  const theme = useTheme();
+  const styles = useStyles();
   const router = useRouter();
   const params = useLocalSearchParams<{ foodId?: string; dateId?: string; time?: string; mode?: string }>();
 
@@ -100,7 +103,7 @@ export default function FoodPortionScreen() {
               autoFocus={true}
               selectTextOnFocus={true}
               placeholder="100"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={theme.colors.textMuted}
             />
             <Text style={styles.unitText}>{unitLabel}</Text>
           </View>
@@ -153,10 +156,10 @@ export default function FoodPortionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     flex: 1,
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
   },
   scrollContent: {
     padding: 20,
@@ -171,12 +174,12 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   cancelBtnText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
   headerTitle: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginLeft: 'auto',
@@ -187,7 +190,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   foodNameTitle: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 20,
     fontWeight: '700',
     marginBottom: 6,
@@ -198,15 +201,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   sealBadge: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#EF4444',
+    borderColor: t.colors.danger,
   },
   sealBadgeText: {
-    color: '#EF4444',
+    color: t.colors.danger,
     fontSize: 10,
     fontWeight: '700',
   },
@@ -214,7 +217,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionLabel: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 6,
@@ -222,36 +225,36 @@ const styles = StyleSheet.create({
   quantityInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: t.colors.primary,
     paddingHorizontal: 14,
   },
   qtyInput: {
     flex: 1,
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 20,
     fontWeight: '700',
     paddingVertical: 10,
     fontVariant: ['tabular-nums'],
   },
   unitText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 16,
     fontWeight: '700',
     marginLeft: 8,
   },
   macrosSummaryBox: {
-    backgroundColor: '#161F2E',
+    backgroundColor: t.colors.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
     padding: 14,
     marginBottom: 16,
   },
   macrosBoxLabel: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 10,
@@ -265,19 +268,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   kcalStatValue: {
-    color: '#F87171',
+    color: t.colors.danger,
     fontSize: 18,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
   macroStatValue: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
   statLabel: {
-    color: '#64748B',
+    color: t.colors.textMuted,
     fontSize: 11,
     fontWeight: '500',
     marginTop: 2,
@@ -286,11 +289,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   timeInput: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1C2638',
-    color: '#F8FAFC',
+    borderColor: t.colors.surfaceRaised,
+    color: t.colors.text,
     fontSize: 16,
     fontWeight: '700',
     paddingHorizontal: 14,
@@ -299,15 +302,15 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   confirmBtn: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   confirmBtnText: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
-});
+}));

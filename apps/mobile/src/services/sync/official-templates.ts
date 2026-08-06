@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://144.22.47.0:8080';
+import { API_BASE_URL } from '@/services/config';
 
 export interface OfficialTemplate {
   id: string;

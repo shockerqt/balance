@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, Modal, TouchableOpacity, TextInput, TouchableWithoutFeedback } from 'react-native';
+import { makeStyles, useTheme } from '@/theme';
 
 interface BatchMoveModalProps {
   visible: boolean;
@@ -14,6 +15,8 @@ export const BatchMoveModal: React.FC<BatchMoveModalProps> = ({
   onClose,
   onConfirmMove,
 }) => {
+  const theme = useTheme();
+  const styles = useStyles();
   const now = new Date();
   const defaultHours = String(now.getHours()).padStart(2, '0');
   const defaultMinutes = String(now.getMinutes()).padStart(2, '0');
@@ -52,7 +55,7 @@ export const BatchMoveModal: React.FC<BatchMoveModalProps> = ({
                   value={timeInput}
                   onChangeText={setTimeInput}
                   placeholder="08:30"
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor={theme.colors.textMuted}
                   keyboardType="numbers-and-punctuation"
                   maxLength={5}
                 />
@@ -91,10 +94,10 @@ export const BatchMoveModal: React.FC<BatchMoveModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(4, 6, 10, 0.75)',
+    backgroundColor: t.colors.scrim,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -102,22 +105,22 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
     borderRadius: 20,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
     padding: 20,
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+    shadowColor: t.colors.shadow,
   },
   title: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 6,
   },
   subtitle: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 13,
     lineHeight: 18,
     marginBottom: 16,
@@ -126,17 +129,17 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   inputLabel: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 6,
   },
   textInput: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#3B82F6',
-    color: '#F8FAFC',
+    borderColor: t.colors.primary,
+    color: t.colors.text,
     fontSize: 18,
     fontWeight: '700',
     paddingHorizontal: 14,
@@ -153,21 +156,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
   },
   chipActive: {
-    borderColor: '#3B82F6',
-    backgroundColor: '#1E293B',
+    borderColor: t.colors.primary,
+    backgroundColor: t.colors.border,
   },
   chipText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
   },
   chipTextActive: {
-    color: '#3B82F6',
+    color: t.colors.primary,
   },
   actionsRow: {
     flexDirection: 'row',
@@ -179,11 +182,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 10,
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     alignItems: 'center',
   },
   cancelBtnText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -191,12 +194,12 @@ const styles = StyleSheet.create({
     flex: 1.5,
     paddingVertical: 12,
     borderRadius: 10,
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
     alignItems: 'center',
   },
   confirmBtnText: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontSize: 13,
     fontWeight: '700',
   },
-});
+}));

@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
-import { useTheme } from '@/hooks/use-theme';
+import { useTheme } from '@/theme';
 
 interface StickyMacroHeaderProps {
   foods: LoggedFoodItem[];
@@ -31,44 +31,44 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
   const isOverCal = totalCal > targetCalories;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.surface, borderBottomColor: theme.surfaceBorder }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
       {/* Primary Metrics Row */}
       <View style={styles.topRow}>
         <View style={styles.calBox}>
-          <Text style={[styles.calMain, { color: theme.textPrimary }, isOverCal && { color: theme.kcalCoral }]}>
-            {totalCal} <Text style={[styles.calTarget, { color: theme.textSecondary }]}>/ {targetCalories} kcal</Text>
+          <Text style={[styles.calMain, { color: theme.colors.text }, isOverCal && { color: theme.colors.danger }]}>
+            {totalCal} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {targetCalories} kcal</Text>
           </Text>
-          <View style={[styles.badgeBox, { backgroundColor: theme.cardBackground }]}>
-            <Text style={[styles.badgeText, { color: theme.textSecondary }]}>{calPercent}%</Text>
+          <View style={[styles.badgeBox, { backgroundColor: theme.colors.surfaceRaised }]}>
+            <Text style={[styles.badgeText, { color: theme.colors.textSecondary }]}>{calPercent}%</Text>
           </View>
         </View>
 
         <View style={styles.macrosRow}>
-          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
-            P <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalP}g</Text>
+          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
+            P <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalP}g</Text>
           </Text>
-          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
-            C <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalC}g</Text>
+          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
+            C <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalC}g</Text>
           </Text>
-          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
-            G <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalF}g</Text>
+          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
+            G <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalF}g</Text>
           </Text>
-          <Text style={[styles.dot, { color: theme.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.textSecondary }]}>
-            F <Text style={[styles.macroVal, { color: theme.textPrimary }]}>{totalFib}g</Text>
+          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
+          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
+            F <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalFib}g</Text>
           </Text>
         </View>
       </View>
 
       {/* Thin progress bar */}
-      <View style={[styles.barBg, { backgroundColor: theme.surfaceBorder }]}>
+      <View style={[styles.barBg, { backgroundColor: theme.colors.border }]}>
         <View
           style={[
             styles.barFill,
-            { width: `${calPercent}%`, backgroundColor: theme.primary },
-            isOverCal && { backgroundColor: theme.kcalCoral },
+            { width: `${calPercent}%`, backgroundColor: theme.colors.primary },
+            isOverCal && { backgroundColor: theme.colors.danger },
           ]}
         />
       </View>

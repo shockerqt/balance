@@ -4,7 +4,7 @@ Guía para que Claude Code trabaje en este repositorio. Mantenla actualizada cua
 
 ## Resumen del proyecto
 
-`balance` es un monorepo que combina una API en Rust y un dashboard web en React.
+`balance` es un monorepo que combina una API en Rust, un dashboard web en React y una app mobile en Expo/React Native.
 El dominio gira en torno a usuarios, alimentos (`foods`) y comidas (`meals`), con autenticación vía Google OAuth y un conector a Gemini.
 
 ## Layout del repositorio
@@ -13,6 +13,7 @@ El dominio gira en torno a usuarios, alimentos (`foods`) y comidas (`meals`), co
 .
 ├── apps/
 │   ├── dashboard/   # SPA React 19 + Vite + TanStack Router/Query + Tailwind v4
+│   ├── mobile/      # App Expo 57 / React Native 0.86 con expo-router
 │   └── server/      # API Axum (Rust 2024) con sqlx/Postgres, OAuth Google, JWT, Gemini
 ├── packages/
 │   ├── eslint-config/      # Config ESLint compartida (@workspace/eslint-config)
@@ -113,6 +114,56 @@ Luego apunta `DATABASE_URL` a `postgres://...@localhost:5433/...`.
 - Estilos: Tailwind v4 vía plugin Vite; estilos globales importados con `import "@workspace/ui/globals.css"`.
 - Estructura por feature: `src/features/<feature>/{components,queries.ts,mutations.ts,types.ts,...}`. Mantén la UI específica de feature dentro de su carpeta y promueve a `packages/ui` solo lo genuinamente reutilizable.
 - Testing: Vitest + Testing Library + jsdom (config inline comentada en `vite.config.ts`; activar al añadir tests).
+
+## Mobile (`apps/mobile`)
+
+App Expo 57 / React Native 0.86 / React 19, con **expo-router** (rutas en `src/app/`).
+Usa `npm` (tiene su propio `package-lock.json`), no pnpm como el resto del workspace.
+
+```bash
+cd apps/mobile
+npm install
+npx tsc --noEmit     # typecheck; es lento, volcar a archivo antes de filtrar
+npm run android      # o ios / web
+```
+
+### Sistema de tema
+
+**Ninguna pantalla debe declarar un color, un tamaño de fuente ni un espaciado
+literal.** Todo sale de `src/theme/`:
+
+- `tokens.ts` — el contrato: `PaletteColors`, escala tipográfica (`type`),
+  `space`, `radius`, `border`.
+- `palettes.ts` — las paletas. Agregar una es llenar el contrato; nada más cambia.
+- `ThemeProvider.tsx` — contexto reactivo con persistencia de la preferencia.
+  `useTheme()` devuelve el tema activo; `useThemeControls()` permite cambiarlo.
+- `makeStyles.ts` — hojas de estilo dependientes del tema, para reemplazar a
+  `StyleSheet.create` cuando hay colores de por medio:
+
+```tsx
+const useStyles = makeStyles((t) => ({
+  card: { backgroundColor: t.colors.surface, padding: t.space.lg },
+}));
+
+function Screen() {
+  const styles = useStyles();
+  // ...
+}
+```
+
+### Primitivas
+
+`src/components/ui/` — `Screen`, `Card`, `Text`, `Button`, `ProgressBar`, `Sheet`.
+`Text` toma `variant` (escala tipográfica) y `tone` (color), nunca `fontSize`.
+Preferir estas primitivas antes de escribir una `View` con estilos propios.
+
+### Convenciones
+
+- El `StyleSheet` de una pantalla debe contener **solo layout** (flex, gap, medidas).
+- Archivos en kebab-case; componentes en PascalCase.
+- Los totales del día se calculan con `sumDay()` de `use-meal-store`, no a mano.
+- Fechas: usar `todayId()` / `toDateId()` de `use-meal-store` (hora local;
+  `toISOString()` adelanta el día en Chile).
 
 ## Paquete UI compartido (`packages/ui`)
 

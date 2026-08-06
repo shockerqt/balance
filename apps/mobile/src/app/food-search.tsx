@@ -4,6 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
+import { makeStyles, useTheme } from '@/theme';
+import { LibraryFoodRow } from '@/components/food-search/library-food-row';
+import { CollapsibleSection } from '@/components/food-search/collapsible-section';
 
 // Safe require for RNDateTimePicker to prevent module evaluation failure on un-updated Dev Clients
 let RNDateTimePicker: any = null;
@@ -42,6 +45,8 @@ const timeStrToDate = (timeStr: string): Date => {
 };
 
 export function FoodSearchScreen() {
+  const theme = useTheme();
+  const styles = useStyles();
   const router = useRouter();
   const params = useLocalSearchParams<{ dateId?: string; time?: string }>();
 
@@ -222,7 +227,7 @@ export function FoodSearchScreen() {
             value={searchQuery}
             onChangeText={handleSearchChange}
             placeholder="Buscar por nombre..."
-            placeholderTextColor="#64748B"
+            placeholderTextColor={theme.colors.textMuted}
             autoCapitalize="none"
           />
           {searchQuery.length > 0 && (
@@ -311,89 +316,26 @@ export function FoodSearchScreen() {
           </View>
         )}
 
-        {/* Section 2: ⚡ SUGERIDOS PARA LA HORA (Top 15 Collapsible) */}
-        <TouchableOpacity
-          style={styles.accordionHeader}
-          delayPressIn={0}
-          onPress={() => setIsSuggestedExpanded(!isSuggestedExpanded)}>
-          <Text style={styles.accordionHeaderTitle}>
-            {isSuggestedExpanded ? '▼' : '▶'} ⚡ SUGERIDOS PARA LAS {selectedTime} ({suggestedTop15.length})
-          </Text>
-        </TouchableOpacity>
+        <CollapsibleSection
+          title="⚡ SUGERIDOS PARA LA HORA"
+          count={suggestedTop15.length}
+          expanded={isSuggestedExpanded}
+          onToggle={() => setIsSuggestedExpanded(!isSuggestedExpanded)}>
+          {suggestedTop15.map((food) => (
+            <LibraryFoodRow key={food.id} food={food} onPick={handleStageFood} />
+          ))}
+        </CollapsibleSection>
 
-        {isSuggestedExpanded && (
-          <View style={styles.accordionContent}>
-            {suggestedTop15.map((food) => (
-              <TouchableOpacity
-                key={food.id}
-                style={styles.foodLibraryCardCompact}
-                delayPressIn={0}
-                activeOpacity={0.7}
-                onPress={() => handleStageFood(food)}>
-                <View style={styles.foodCardLeft}>
-                  <Text style={styles.foodNameCompact} numberOfLines={1} selectable>
-                    {food.name}
-                  </Text>
-                  <View style={styles.foodMetaRowCompact}>
-                    <Text style={styles.foodKcalCompact}>{food.calories} kcal</Text>
-                    <Text style={styles.dotCompact}>·</Text>
-                    <Text style={styles.foodMacrosCompact}>
-                      P {food.protein}g C {food.carbs}g G {food.fat}g
-                    </Text>
-                    <Text style={styles.dotCompact}>·</Text>
-                    <Text style={styles.basePortionTextCompact}>{food.portion}</Text>
-                  </View>
-                </View>
+        <CollapsibleSection
+          title="📚 TODOS LOS ALIMENTOS"
+          count={libraryFoods.length}
+          expanded={isAllFoodsExpanded}
+          onToggle={() => setIsAllFoodsExpanded(!isAllFoodsExpanded)}>
+          {libraryFoods.map((food) => (
+            <LibraryFoodRow key={food.id} food={food} onPick={handleStageFood} />
+          ))}
+        </CollapsibleSection>
 
-                <View style={styles.addCircleBtnCompact}>
-                  <Text style={styles.addCircleTextCompact}>+</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* Section 3: 📚 TODOS LOS ALIMENTOS (Collapsible) */}
-        <TouchableOpacity
-          style={styles.accordionHeader}
-          delayPressIn={0}
-          onPress={() => setIsAllFoodsExpanded(!isAllFoodsExpanded)}>
-          <Text style={styles.accordionHeaderTitle}>
-            {isAllFoodsExpanded ? '▼' : '▶'} 📚 TODOS LOS ALIMENTOS ({libraryFoods.length})
-          </Text>
-        </TouchableOpacity>
-
-        {isAllFoodsExpanded && (
-          <View style={styles.accordionContent}>
-            {libraryFoods.map((food) => (
-              <TouchableOpacity
-                key={food.id}
-                style={styles.foodLibraryCardCompact}
-                delayPressIn={0}
-                activeOpacity={0.7}
-                onPress={() => handleStageFood(food)}>
-                <View style={styles.foodCardLeft}>
-                  <Text style={styles.foodNameCompact} numberOfLines={1} selectable>
-                    {food.name}
-                  </Text>
-                  <View style={styles.foodMetaRowCompact}>
-                    <Text style={styles.foodKcalCompact}>{food.calories} kcal</Text>
-                    <Text style={styles.dotCompact}>·</Text>
-                    <Text style={styles.foodMacrosCompact}>
-                      P {food.protein}g C {food.carbs}g G {food.fat}g
-                    </Text>
-                    <Text style={styles.dotCompact}>·</Text>
-                    <Text style={styles.basePortionTextCompact}>{food.portion}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.addCircleBtnCompact}>
-                  <Text style={styles.addCircleTextCompact}>+</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -401,10 +343,10 @@ export function FoodSearchScreen() {
 
 export default FoodSearchScreen;
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((t) => ({
   container: {
     flex: 1,
-    backgroundColor: '#080B11',
+    backgroundColor: t.colors.background,
   },
   headerBar: {
     flexDirection: 'row',
@@ -413,14 +355,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#1C2638',
+    borderBottomColor: t.colors.surfaceRaised,
   },
   cancelBtn: {
     paddingVertical: 4,
     paddingRight: 8,
   },
   cancelBtnText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -429,37 +371,37 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   timePickerBtn: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 8,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: t.colors.primary,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   timePickerBtnText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 15,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
   commitBtn: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: t.colors.primary,
     borderRadius: 6,
     borderCurve: 'continuous',
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
   commitBtnDisabled: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
   },
   commitBtnText: {
-    color: '#FFFFFF',
+    color: t.colors.onPrimary,
     fontSize: 12,
     fontWeight: '700',
   },
   commitBtnTextDisabled: {
-    color: '#64748B',
+    color: t.colors.textMuted,
   },
   searchSection: {
     paddingHorizontal: 14,
@@ -469,11 +411,11 @@ const styles = StyleSheet.create({
   searchBarBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
     borderRadius: 8,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
     paddingHorizontal: 10,
     height: 36,
     marginBottom: 6,
@@ -484,27 +426,27 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 13,
     fontWeight: '500',
   },
   clearSearchIcon: {
-    color: '#64748B',
+    color: t.colors.textMuted,
     fontSize: 13,
     padding: 2,
   },
   createCustomBtn: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 6,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: t.colors.primary,
     paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
   createCustomBtnText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 11,
     fontWeight: '600',
   },
@@ -517,16 +459,16 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
   },
   stagedSectionContainer: {
-    backgroundColor: '#0E1420',
+    backgroundColor: t.colors.surface,
     borderRadius: 10,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: t.colors.primary,
     padding: 10,
     marginBottom: 12,
   },
   stagedSectionHeader: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 11,
     fontWeight: '700',
     marginBottom: 8,
@@ -536,21 +478,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#161F2E',
+    backgroundColor: t.colors.surface,
     borderRadius: 8,
     borderCurve: 'continuous',
     paddingHorizontal: 10,
     paddingVertical: 6,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
   },
   stagedCardMain: {
     flex: 1,
     paddingRight: 6,
   },
   stagedFoodName: {
-    color: '#F8FAFC',
+    color: t.colors.text,
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 3,
@@ -562,12 +504,12 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   inlineQtyInput: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 6,
     borderCurve: 'continuous',
     borderWidth: 1,
-    borderColor: '#3B82F6',
-    color: '#F8FAFC',
+    borderColor: t.colors.primary,
+    color: t.colors.text,
     fontSize: 13,
     fontWeight: '700',
     paddingHorizontal: 6,
@@ -578,31 +520,31 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   inlineUnitPill: {
-    backgroundColor: '#1E293B',
+    backgroundColor: t.colors.border,
     borderRadius: 6,
     borderCurve: 'continuous',
     paddingHorizontal: 5,
     paddingVertical: 3,
     borderWidth: 1,
-    borderColor: '#1C2638',
+    borderColor: t.colors.surfaceRaised,
   },
   inlineUnitText: {
-    color: '#3B82F6',
+    color: t.colors.primary,
     fontSize: 11,
     fontWeight: '600',
   },
   dot: {
-    color: '#475569',
+    color: t.colors.textMuted,
     fontSize: 10,
   },
   stagedKcalText: {
-    color: '#F87171',
+    color: t.colors.danger,
     fontSize: 11,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   stagedMacroText: {
-    color: '#8E9BAE',
+    color: t.colors.textSecondary,
     fontSize: 11,
     fontWeight: '400',
     fontVariant: ['tabular-nums'],
@@ -611,88 +553,8 @@ const styles = StyleSheet.create({
     padding: 3,
   },
   removeStagedIcon: {
-    color: '#EF4444',
+    color: t.colors.danger,
     fontSize: 13,
     fontWeight: '700',
   },
-  accordionHeader: {
-    paddingVertical: 6,
-    marginBottom: 4,
-  },
-  accordionHeaderTitle: {
-    color: '#8E9BAE',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-  },
-  accordionContent: {
-    marginBottom: 8,
-  },
-  foodLibraryCardCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#0E1420',
-    borderRadius: 8,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: '#1C2638',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 5,
-    height: 42,
-  },
-  foodCardLeft: {
-    flex: 1,
-    paddingRight: 8,
-  },
-  foodNameCompact: {
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 1,
-  },
-  foodMetaRowCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 4,
-  },
-  foodKcalCompact: {
-    color: '#F87171',
-    fontSize: 11,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  dotCompact: {
-    color: '#475569',
-    fontSize: 10,
-  },
-  foodMacrosCompact: {
-    color: '#8E9BAE',
-    fontSize: 11,
-    fontWeight: '400',
-    fontVariant: ['tabular-nums'],
-  },
-  basePortionTextCompact: {
-    color: '#64748B',
-    fontSize: 11,
-    fontWeight: '400',
-  },
-  addCircleBtnCompact: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addCircleTextCompact: {
-    color: '#3B82F6',
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: -1,
-  },
-});
+}));

@@ -1,6 +1,7 @@
-// RxDB Custom Replication Protocol Client (WebSocket) for Balance Backend
+import { WS_SYNC_URL } from '@/services/config';
+// Cliente de sincronizacion por WebSocket contra el backend de Balance.
+// (No usa RxDB pese al nombre que tenia la carpeta: es un protocolo propio.)
 
-const WS_URL = process.env.EXPO_PUBLIC_WS_URL || 'ws://144.22.47.0:8080/ws/sync';
 
 export interface SyncCheckpoint {
   updatedAt: number;
@@ -26,7 +27,7 @@ export class RxDBSyncClient {
     }
 
     try {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(WS_SYNC_URL);
 
       this.ws.onopen = () => {
         this.isConnected = true;

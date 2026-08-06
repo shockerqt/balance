@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { storage } from '@/services/storage';
 
 export interface LibraryFoodItem {
   id: string;
@@ -23,40 +24,6 @@ interface FoodLibraryContextType {
 }
 
 const STORAGE_KEY = '@balance_food_library_v1';
-const memoryCache: Record<string, string> = {};
-
-// Safe Storage Adapter with robust fallback
-const safeStorage = {
-  getItem: async (key: string): Promise<string | null> => {
-    try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      if (AsyncStorage && typeof AsyncStorage.getItem === 'function') {
-        const val = await AsyncStorage.getItem(key);
-        if (val !== null) return val;
-      }
-    } catch (e) {
-      // Fallback
-    }
-    if (typeof window !== 'undefined' && window.localStorage) {
-      return window.localStorage.getItem(key);
-    }
-    return memoryCache[key] || null;
-  },
-  setItem: async (key: string, value: string): Promise<void> => {
-    memoryCache[key] = value;
-    try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      if (AsyncStorage && typeof AsyncStorage.setItem === 'function') {
-        await AsyncStorage.setItem(key, value);
-      }
-    } catch (e) {
-      // Fallback
-    }
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(key, value);
-    }
-  },
-};
 
 const INITIAL_LIBRARY_FOODS: LibraryFoodItem[] = [
   {
@@ -210,7 +177,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [libraryFoods, setLibraryFoods] = useState<LibraryFoodItem[]>(INITIAL_LIBRARY_FOODS);
 
   useEffect(() => {
-    safeStorage.getItem(STORAGE_KEY).then((data: string | null) => {
+    storage.getItem(STORAGE_KEY).then((data: string | null) => {
       if (data) {
         try {
           const parsed = JSON.parse(data);
@@ -226,7 +193,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const saveLibrary = (newLibrary: LibraryFoodItem[]) => {
     setLibraryFoods(newLibrary);
-    safeStorage.setItem(STORAGE_KEY, JSON.stringify(newLibrary)).catch((e: unknown) => {
+    storage.setItem(STORAGE_KEY, JSON.stringify(newLibrary)).catch((e: unknown) => {
       console.error('Failed to save food library to storage', e);
     });
   };
