@@ -16,6 +16,19 @@ export function snapToHour(time: string): string {
   return `${String(hour).padStart(2, '0')}:00`;
 }
 
+export interface HourRange {
+  /** Hora de inicio, 0–23 */
+  from: number;
+  /** Hora de fin, inclusive, 0–23 */
+  to: number;
+}
+
+/**
+ * Tramo que se muestra por defecto. Cubre un dia normal de comidas
+ * sin llenar la pantalla con la madrugada.
+ */
+export const DEFAULT_HOUR_RANGE: HourRange = { from: 5, to: 22 };
+
 export interface HourSlot {
   /** "HH:00" */
   hour: string;
@@ -23,22 +36,26 @@ export interface HourSlot {
 }
 
 /**
- * Devuelve un tramo continuo de horas entre el primer y el ultimo
- * registro. Las horas sin comida vienen con la lista vacia: se
- * muestran apagadas y son el punto para registrar ahi.
+ * Riel continuo de horas. Siempre cubre el rango configurado, tenga o
+ * no registros: un dia vacio muestra el riel completo, que es la forma
+ * de anotar la primera comida sin buscar un boton.
+ *
+ * Si hay comida fuera del rango —una colacion a las 02:00— el tramo se
+ * estira para incluirla en vez de esconderla.
  */
-export function buildHourRail(foods: LoggedFoodItem[]): HourSlot[] {
-  if (!foods.length) return [];
-
+export function buildHourRail(
+  foods: LoggedFoodItem[],
+  range: HourRange = DEFAULT_HOUR_RANGE
+): HourSlot[] {
   const byHour = new Map<string, LoggedFoodItem[]>();
   for (const food of foods) {
     const key = snapToHour(food.time || '12:00');
     byHour.set(key, [...(byHour.get(key) ?? []), food]);
   }
 
-  const hours = [...byHour.keys()].sort();
-  const first = Number(hours[0].slice(0, 2));
-  const last = Number(hours[hours.length - 1].slice(0, 2));
+  const logged = [...byHour.keys()].map((h) => Number(h.slice(0, 2)));
+  const first = Math.min(range.from, ...logged);
+  const last = Math.max(range.to, ...logged);
 
   return Array.from({ length: last - first + 1 }, (_, i) => {
     const hour = `${String(first + i).padStart(2, '0')}:00`;

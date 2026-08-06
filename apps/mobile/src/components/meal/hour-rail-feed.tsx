@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { ScrollView, TouchableOpacity, View } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
-import { buildHourRail, sumFoods } from '@/lib/hours';
+import { DEFAULT_HOUR_RANGE, HourRange, buildHourRail, sumFoods } from '@/lib/hours';
 import { makeStyles } from '@/theme';
 import { Text } from '@/components/ui';
 import { LedgerFoodRow } from './ledger-food-row';
@@ -9,18 +9,24 @@ import { LedgerFoodRow } from './ledger-food-row';
 /* ============================================================
    Riel de horas.
 
-   Una sola regla, sin casos especiales: cada hora entre el primer y
-   el ultimo registro es un nodo. Lleno si tiene comida, apagado si
-   no, y todos son tocables. Tocar un nodo registra a esa hora, tenga
-   o no algo ya.
+   Una sola regla, sin casos especiales: cada hora del tramo es un
+   nodo. Lleno si tiene comida, apagado si no, y todos son tocables.
+   Tocar un nodo registra a esa hora, tenga o no algo ya.
 
-   Asi "agregar a una hora que ya existe" deja de ser un boton aparte
-   perdido entre las filas y pasa a ser el mismo gesto que agregar en
-   una hora vacia.
+   El riel cubre siempre el rango configurado, asi que un dia vacio
+   muestra el dia entero listo para anotar, y las horas posteriores a
+   la ultima comida siguen a un toque.
    ============================================================ */
 
-const RAIL_W = 54;
+const RAIL_W = 56;
 const DOT = 20;
+const PAD_RIGHT = 8;
+
+/**
+ * El eje del riel. La linea y el punto se derivan de aqui, no se
+ * calculan por separado: es lo que los mantiene centrados entre si.
+ */
+const AXIS = RAIL_W - PAD_RIGHT - DOT / 2;
 
 const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }> = ({
   hour,
@@ -36,7 +42,7 @@ const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }>
       accessibilityLabel={label}
       style={styles.node}
       delayPressIn={0}
-      hitSlop={10}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       onPress={onPress}>
       <Text variant="caption" tone={filled ? 'primary' : 'muted'} style={styles.hour}>
         {hour.slice(0, 2)}
@@ -54,6 +60,8 @@ export const HourRailFeed: React.FC<{
   foods: LoggedFoodItem[];
   onSelectFood: (food: LoggedFoodItem) => void;
   onAddAtHour: (hour: string) => void;
+  /** Tramo visible del día. Por defecto de 05:00 a 22:00. */
+  hourRange?: HourRange;
   isSelectionMode?: boolean;
   selectedFoodIds?: ReadonlySet<string>;
   onLongPressFood?: (food: LoggedFoodItem) => void;
@@ -64,6 +72,7 @@ export const HourRailFeed: React.FC<{
   foods,
   onSelectFood,
   onAddAtHour,
+  hourRange = DEFAULT_HOUR_RANGE,
   isSelectionMode = false,
   selectedFoodIds,
   onLongPressFood,
@@ -72,21 +81,17 @@ export const HourRailFeed: React.FC<{
   onToggleSelectGroup,
 }) => {
   const styles = useStyles();
-  const rail = useMemo(() => buildHourRail(foods), [foods]);
-
-  if (!rail.length) {
-    return (
-      <View style={styles.empty}>
-        <Text variant="heading">Sin registros para este día</Text>
-        <Text variant="body" tone="secondary" style={styles.emptyText}>
-          Toca el botón de registrar para anotar lo primero que comiste.
-        </Text>
-      </View>
-    );
-  }
+  const rail = useMemo(() => buildHourRail(foods, hourRange), [foods, hourRange]);
+  const isEmpty = foods.length === 0;
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {isEmpty ? (
+        <Text variant="caption" tone="muted" style={styles.hint}>
+          Toca una hora para anotar lo que comiste
+        </Text>
+      ) : null}
+
       {rail.map(({ hour, foods: hourFoods }) => {
         const filled = hourFoods.length > 0;
         const ids = hourFoods.map((f) => f.id);
@@ -96,7 +101,9 @@ export const HourRailFeed: React.FC<{
           <View key={hour} style={[styles.slot, !filled && styles.slotEmpty]}>
             <View style={styles.rail}>
               <View style={styles.line} />
-              <HourNode hour={hour} filled={filled} onPress={() => onAddAtHour(hour)} />
+              <View style={styles.nodeBox}>
+                <HourNode hour={hour} filled={filled} onPress={() => onAddAtHour(hour)} />
+              </View>
             </View>
 
             <View style={styles.body}>
@@ -111,7 +118,7 @@ export const HourRailFeed: React.FC<{
                       disabled={!isSelectionMode && !onLongPressGroup}
                       onPress={() => isSelectionMode && onToggleSelectGroup?.(ids)}
                       onLongPress={() => onLongPressGroup?.(ids)}>
-                      <Text variant="caption" tone="secondary" style={styles.summaryMacros}>
+                      <Text variant="caption" tone="secondary" style={styles.tabular}>
                         {totals.protein} P · {totals.carbs} C · {totals.fat} G
                       </Text>
                       <Text variant="number">{totals.calories}</Text>
@@ -141,20 +148,24 @@ export const HourRailFeed: React.FC<{
 
 const useStyles = makeStyles((t) => ({
   content: { paddingBottom: 120 },
+  hint: { paddingHorizontal: t.space.lg, paddingTop: t.space.md, paddingBottom: t.space.sm },
 
   slot: { flexDirection: 'row' },
   slotEmpty: { minHeight: 34 },
 
-  rail: { width: RAIL_W, alignItems: 'flex-end', paddingRight: 6 },
+  rail: { width: RAIL_W },
+  /* Ambos cuelgan del mismo eje: por eso quedan centrados entre si. */
   line: {
     position: 'absolute',
-    right: RAIL_W / 2 - 4,
+    left: AXIS - 0.5,
     top: 0,
     bottom: 0,
     width: t.border.hairline,
     backgroundColor: t.colors.border,
   },
-  node: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: t.space.sm },
+  nodeBox: { position: 'absolute', right: PAD_RIGHT, top: 6 },
+
+  node: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   hour: { fontVariant: ['tabular-nums'] },
   dot: {
     width: DOT,
@@ -170,18 +181,14 @@ const useStyles = makeStyles((t) => ({
     borderColor: t.colors.border,
   },
 
-  body: { flex: 1, minWidth: 0 },
+  body: { flex: 1, minWidth: 0, paddingTop: 4 },
   summary: {
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: t.space.md,
     paddingHorizontal: t.space.lg,
-    paddingTop: t.space.sm,
     paddingBottom: 2,
   },
-  summaryMacros: { fontVariant: ['tabular-nums'] },
-
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 8 },
-  emptyText: { textAlign: 'center', maxWidth: 260 },
+  tabular: { fontVariant: ['tabular-nums'] },
 }));
