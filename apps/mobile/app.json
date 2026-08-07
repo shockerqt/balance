@@ -40,6 +40,12 @@
         "projectId": "8d4fb81c-b61b-4764-ab7f-eb13c28b00c1"
       }
     },
-    "owner": "shocker"
+    "owner": "shocker",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8d4fb81c-b61b-4764-ab7f-eb13c28b00c1"
+    }
   }
 }
