@@ -21,7 +21,7 @@ pub enum ServingUnitType {
     Volume,
 }
 
-#[derive(FromRow, Debug, Clone)]
+#[derive(FromRow, Debug, Clone, Serialize)]
 pub struct Food {
     pub id: i32,
     pub name: String,
