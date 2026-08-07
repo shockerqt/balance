@@ -7,8 +7,9 @@ use std::str::FromStr;
 #[tokio::test]
 async fn test_balance_database_connection() {
     dotenv::dotenv().ok();
-    let db_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://meal_admin:password@localhost:5432/meal_logger".to_string());
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://meal_admin:password@localhost:5432/meal_logger".to_string()
+    });
 
     let pool = PgPool::connect(&db_url)
         .await
@@ -25,12 +26,18 @@ async fn test_balance_database_connection() {
 #[tokio::test]
 async fn test_food_creation_and_search() {
     dotenv::dotenv().ok();
-    let db_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://meal_admin:password@localhost:5432/meal_logger".to_string());
-    let pool = PgPool::connect(&db_url).await.expect("DB connection failed");
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://meal_admin:password@localhost:5432/meal_logger".to_string()
+    });
+    let pool = PgPool::connect(&db_url)
+        .await
+        .expect("DB connection failed");
 
     let test_user_id = 1;
-    let food_name = format!("Integration Test Avocado {}", chrono::Utc::now().timestamp_millis());
+    let food_name = format!(
+        "Integration Test Avocado {}",
+        chrono::Utc::now().timestamp_millis()
+    );
 
     // 1. Insert food_versions
     let fv = sqlx::query!(
@@ -91,15 +98,21 @@ async fn test_food_creation_and_search() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].calories, 160);
-    assert_eq!(results[0].fiber, Some(BigDecimal::from_str("6.700").unwrap()));
+    assert_eq!(
+        results[0].fiber,
+        Some(BigDecimal::from_str("6.700").unwrap())
+    );
 }
 
 #[tokio::test]
 async fn test_meal_creation_and_portion_scaling() {
     dotenv::dotenv().ok();
-    let db_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://meal_admin:password@localhost:5432/meal_logger".to_string());
-    let pool = PgPool::connect(&db_url).await.expect("DB connection failed");
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://meal_admin:password@localhost:5432/meal_logger".to_string()
+    });
+    let pool = PgPool::connect(&db_url)
+        .await
+        .expect("DB connection failed");
 
     let test_user_id = 1;
     let now = NaiveDateTime::parse_from_str("2026-07-29 08:30:00", "%Y-%m-%d %H:%M:%S").unwrap();

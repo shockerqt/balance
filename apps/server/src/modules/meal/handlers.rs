@@ -159,7 +159,10 @@ pub async fn update_meal_food(
     Path((meal_id, item_id)): Path<(i32, i32)>,
     Json(dto): Json<UpdateMealFoodDto>,
 ) -> ApiResult<bool> {
-    let res = db.meal.update_item(current_user.id, meal_id, item_id, dto).await?;
+    let res = db
+        .meal
+        .update_item(current_user.id, meal_id, item_id, dto)
+        .await?;
     Ok(Json(ApiResponse::success(res)))
 }
 
@@ -181,7 +184,10 @@ pub async fn delete_meal_food(
     Extension(db): Extension<Arc<Database>>,
     Path((meal_id, item_id)): Path<(i32, i32)>,
 ) -> ApiResult<bool> {
-    let res = db.meal.delete_item(current_user.id, meal_id, item_id).await?;
+    let res = db
+        .meal
+        .delete_item(current_user.id, meal_id, item_id)
+        .await?;
     Ok(Json(ApiResponse::success(res)))
 }
 
@@ -200,7 +206,10 @@ pub async fn get_daily_summary(
     Extension(db): Extension<Arc<Database>>,
     Query(query): Query<DailySummaryQuery>,
 ) -> ApiResult<DailySummaryDto> {
-    let summary = db.meal.get_daily_summary(current_user.id, &query.date).await?;
+    let summary = db
+        .meal
+        .get_daily_summary(current_user.id, &query.date)
+        .await?;
     Ok(Json(ApiResponse::success(summary)))
 }
 
@@ -222,6 +231,9 @@ pub async fn compare_summary(
     Extension(db): Extension<Arc<Database>>,
     Query(query): Query<CompareSummaryQuery>,
 ) -> ApiResult<Vec<DaySummaryItemDto>> {
-    let summary = db.meal.compare_summary(current_user.id, &query.start_date, &query.end_date).await?;
+    let summary = db
+        .meal
+        .compare_summary(current_user.id, &query.start_date, &query.end_date)
+        .await?;
     Ok(Json(ApiResponse::success(summary)))
 }

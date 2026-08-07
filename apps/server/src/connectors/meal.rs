@@ -5,8 +5,8 @@ use sqlx::FromRow;
 use sqlx::PgPool;
 
 use crate::modules::meal::dto::{
-    bd_to_f64, CreateMealDto, CreateMealFoodDto, DailySummaryDto, DaySummaryItemDto, MealDetailDto,
-    MealFoodDto, UpdateMealDto, UpdateMealFoodDto,
+    CreateMealDto, CreateMealFoodDto, DailySummaryDto, DaySummaryItemDto, MealDetailDto,
+    MealFoodDto, UpdateMealDto, UpdateMealFoodDto, bd_to_f64,
 };
 use crate::shared::error::AppError;
 use crate::shared::validate::Validate;
@@ -98,7 +98,8 @@ impl MealDatasource {
             };
 
             let ratio = &r.serving_quantity / &base_qty;
-            let item_cal = ((r.calories as f64) * ratio.to_string().parse::<f64>().unwrap_or(1.0)) as i32;
+            let item_cal =
+                ((r.calories as f64) * ratio.to_string().parse::<f64>().unwrap_or(1.0)) as i32;
             let item_protein = &r.proteins * &ratio;
             let item_carbs = &r.carbs * &ratio;
             let item_fat = &r.fat * &ratio;
@@ -123,7 +124,10 @@ impl MealDatasource {
                 protein: bd_to_f64(&item_protein, "item_protein")?,
                 carbs: bd_to_f64(&item_carbs, "item_carbs")?,
                 fat: bd_to_f64(&item_fat, "item_fat")?,
-                fiber: item_fiber.as_ref().map(|f| bd_to_f64(f, "item_fiber")).transpose()?,
+                fiber: item_fiber
+                    .as_ref()
+                    .map(|f| bd_to_f64(f, "item_fiber"))
+                    .transpose()?,
                 sodium: r.sodium,
                 cholesterol: r.cholesterol,
             });
@@ -200,9 +204,13 @@ impl MealDatasource {
     }
 
     pub async fn delete(&self, user_id: i32, id: i32) -> Result<bool, AppError> {
-        let res = sqlx::query!("DELETE FROM meals WHERE id = $1 AND user_id = $2", id, user_id)
-            .execute(&self.pool)
-            .await?;
+        let res = sqlx::query!(
+            "DELETE FROM meals WHERE id = $1 AND user_id = $2",
+            id,
+            user_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         if res.rows_affected() == 0 {
             Err(AppError::NotFound("Meal not found".into()))
@@ -211,7 +219,12 @@ impl MealDatasource {
         }
     }
 
-    pub async fn add_item(&self, user_id: i32, meal_id: i32, dto: CreateMealFoodDto) -> Result<bool, AppError> {
+    pub async fn add_item(
+        &self,
+        user_id: i32,
+        meal_id: i32,
+        dto: CreateMealFoodDto,
+    ) -> Result<bool, AppError> {
         let meal_exists = sqlx::query_scalar!(
             "SELECT id FROM meals WHERE id = $1 AND user_id = $2",
             meal_id,
@@ -275,7 +288,12 @@ impl MealDatasource {
         }
     }
 
-    pub async fn delete_item(&self, user_id: i32, meal_id: i32, item_id: i32) -> Result<bool, AppError> {
+    pub async fn delete_item(
+        &self,
+        user_id: i32,
+        meal_id: i32,
+        item_id: i32,
+    ) -> Result<bool, AppError> {
         let res = sqlx::query!(
             r#"
             DELETE FROM meal_foods
@@ -296,7 +314,11 @@ impl MealDatasource {
         }
     }
 
-    pub async fn get_daily_summary(&self, user_id: i32, date: &str) -> Result<DailySummaryDto, AppError> {
+    pub async fn get_daily_summary(
+        &self,
+        user_id: i32,
+        date: &str,
+    ) -> Result<DailySummaryDto, AppError> {
         let meal_ids = sqlx::query!(
             r#"
             SELECT id

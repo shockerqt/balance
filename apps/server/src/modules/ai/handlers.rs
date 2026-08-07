@@ -46,8 +46,12 @@ pub async fn parse_food_text(
         .await
         .map_err(|e| AppError::Internal(format!("AI service error: {}", e)))?;
 
-    let parsed: NutritionalAnalysisResponse = serde_json::from_str(&raw_json)
-        .map_err(|e| AppError::Internal(format!("Failed to parse AI response: {}. Raw: {}", e, raw_json)))?;
+    let parsed: NutritionalAnalysisResponse = serde_json::from_str(&raw_json).map_err(|e| {
+        AppError::Internal(format!(
+            "Failed to parse AI response: {}. Raw: {}",
+            e, raw_json
+        ))
+    })?;
 
     Ok(Json(parsed))
 }
@@ -68,7 +72,9 @@ pub async fn scan_nutrition_label(
     Extension(gemini): Extension<Arc<GeminiClient>>,
     Json(payload): Json<ScanLabelRequest>,
 ) -> Result<Json<NutritionalAnalysisResponse>, AppError> {
-    let mime_type = payload.mime_type.unwrap_or_else(|| "image/jpeg".to_string());
+    let mime_type = payload
+        .mime_type
+        .unwrap_or_else(|| "image/jpeg".to_string());
     let prompt = "You are a specialized OCR nutritionist assistant. Analyze the provided image of a nutrition facts label (such as Chilean packaged foods or standard labels). \
         Extract the product name, serving size (serving_quantity and serving_unit like 'g', 'ml', 'unit'), calories, proteins (g), carbohydrates (g), total fats (g), dietary fiber (g), and sodium (mg) per serving. \
         Respond strictly with a JSON object with keys: \
@@ -93,8 +99,12 @@ pub async fn scan_nutrition_label(
         .await
         .map_err(|e| AppError::Internal(format!("AI vision service error: {}", e)))?;
 
-    let parsed: NutritionalAnalysisResponse = serde_json::from_str(&raw_json)
-        .map_err(|e| AppError::Internal(format!("Failed to parse AI vision response: {}. Raw: {}", e, raw_json)))?;
+    let parsed: NutritionalAnalysisResponse = serde_json::from_str(&raw_json).map_err(|e| {
+        AppError::Internal(format!(
+            "Failed to parse AI vision response: {}. Raw: {}",
+            e, raw_json
+        ))
+    })?;
 
     Ok(Json(parsed))
 }

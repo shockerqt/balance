@@ -30,10 +30,7 @@ impl GeminiClient {
         }
     }
 
-    pub async fn generate_structured_content(
-        &self,
-        parts: Vec<GeminiPart>,
-    ) -> Result<String> {
+    pub async fn generate_structured_content(&self, parts: Vec<GeminiPart>) -> Result<String> {
         let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
         let body = serde_json::json!({

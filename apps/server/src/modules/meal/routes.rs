@@ -16,5 +16,8 @@ pub fn meal_routes() -> Router {
         .route("/update", patch(update_meal))
         .route("/{id}", get(get_meal_by_id).delete(delete_meal))
         .route("/{meal_id}/items", post(add_meal_food))
-        .route("/{meal_id}/items/{item_id}", put(update_meal_food).delete(delete_meal_food))
+        .route(
+            "/{meal_id}/items/{item_id}",
+            put(update_meal_food).delete(delete_meal_food),
+        )
 }
