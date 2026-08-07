@@ -90,5 +90,6 @@ de interfaz rara vez se comparten tal cual, así que no se dio por supuesto.
 | `README.md` | Qué es y cómo levantarlo |
 | `CLAUDE.md` | Convenciones y reglas para trabajar en el código |
 | `DEVELOPMENT_GUIDE.md` | Operación: VPS, puertos, red y CI/CD |
+| `docs/eas-daily-use.md` | Instalación Daily, OTA y política de releases Android con EAS |
 | `apps/mobile/ANALYSIS.md` | Análisis del estado del móvil y su reestructuración |
 | `docs/authentication-mcp.md` | OIDC, Keycloak y uso del MCP HTTP remoto |

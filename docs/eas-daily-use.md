@@ -12,6 +12,16 @@ Esta guía describe cómo usar Balance diariamente sin Metro ni el servidor de d
 
 La APK `preview` queda vinculada al canal `daily`. Metro sólo se usa durante el desarrollo local.
 
+Las tres variantes se instalan en paralelo y tienen callbacks OAuth distintos:
+
+| Variante | Paquete Android | Callback OAuth |
+|---|---|---|
+| Development | `com.balance.app.dev` | `balance-dev://auth-callback` |
+| Daily (`preview`) | `com.balance.app.daily` | `balance-daily://auth-callback` |
+| Production | `com.balance.app` | `balance://auth-callback` |
+
+Keycloak debe permitir los tres callbacks anteriores.
+
 ## Primera instalación
 
 Desde una rama integrada y validada:
@@ -23,9 +33,9 @@ npx eas-cli@latest build --platform android --profile preview
 
 EAS entrega un enlace para descargar e instalar la APK en Android. La build usa la API pública `https://balance.shocker.cl/api` y el WebSocket `wss://balance.shocker.cl/api/ws/sync`.
 
-Con Wi-Fi apagado, comprobar:
+Con una red externa y sin Metro, comprobar:
 
-1. Inicio de sesión OAuth y retorno por `balance://`.
+1. Inicio de sesión OAuth y retorno por `balance-daily://auth-callback`.
 2. Lectura y escritura contra la API HTTPS.
 3. Sincronización WSS y cierre de sesión.
 
@@ -35,12 +45,28 @@ Una vez instalada la APK, los cambios compatibles de JavaScript, estilos y lógi
 
 ```bash
 cd apps/mobile
-npx eas-cli@latest update --channel daily --message "describe el cambio"
+APP_VARIANT=daily npx eas-cli@latest update \
+  --channel daily \
+  --environment preview \
+  --platform android \
+  --message "describe el cambio"
 ```
 
-Al abrir o reiniciar la app, esta descarga la actualización y la aplica según la política de Expo Updates. No hace falta reinstalar la APK.
+`APP_VARIANT=daily` conserva la configuración y el callback de la APK Daily. `--environment preview` es obligatorio para actualizaciones no interactivas en Expo SDK 57. La publicación no crea una APK.
+
+Para verificar una OTA en el teléfono:
+
+1. Abrir Balance Daily con conexión a internet y esperar a que descargue la actualización.
+2. Cerrar por completo la app desde recientes.
+3. Abrirla nuevamente y probar el cambio publicado. Si aún no aparece, repetir una vez el cierre y apertura.
+
+No hace falta reinstalar la APK para un cambio OTA compatible.
 
 Los cambios nativos requieren una nueva APK: dependencias nativas, permisos, iconos, configuración Expo o `runtimeVersion`.
+
+### Publicación desde CI
+
+La exportación OTA normal debe ejecutarse en un runner con un compilador Hermes compatible; se recomienda x86_64. El host ARM actual no puede ejecutar el binario Hermes x86_64 incluido por la dependencia. La exportación sin bytecode (`expo export --no-bytecode`) se usó solamente para una OTA de prueba y Expo la considera una alternativa de depuración: no debe convertirse en el procedimiento habitual.
 
 ## Flujo de ramas
 
