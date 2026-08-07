@@ -4,7 +4,7 @@
     "slug": "balance",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/balance-icon.png",
     "scheme": "balance",
     "userInterfaceStyle": "dark",
     "ios": {
@@ -14,10 +14,9 @@
       "package": "com.balance.app",
       "newArchEnabled": true,
       "adaptiveIcon": {
-        "backgroundColor": "#090C15",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#010517",
+        "foregroundImage": "./assets/images/balance-icon-foreground.png",
+        "monochromeImage": "./assets/images/balance-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
     },
