@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'r
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme';
+import { Icon } from '@/components/ui';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
@@ -170,9 +171,10 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
           <TouchableOpacity
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
             delayPressIn={0}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Ir al día anterior"
             onPress={handlePrevDay}>
-            <Text style={[styles.navArrowText, { color: theme.colors.primary }]}>‹</Text>
+            <Icon name="chevron-left" size={20} tone="accent" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -187,9 +189,10 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
           <TouchableOpacity
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
             delayPressIn={0}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Ir al día siguiente"
             onPress={handleNextDay}>
-            <Text style={[styles.navArrowText, { color: theme.colors.primary }]}>›</Text>
+            <Icon name="chevron-right" size={20} tone="accent" />
           </TouchableOpacity>
         </View>
 
@@ -272,22 +275,17 @@ const styles = StyleSheet.create({
     height: 48,
   },
   fixedDateNavBox: {
-    width: 240,
+    width: 256,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   navArrowBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  navArrowText: {
-    fontSize: 24,
-    fontWeight: '300',
-    marginTop: -2,
   },
   dateTitleBox: {
     alignItems: 'center',
