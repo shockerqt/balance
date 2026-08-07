@@ -68,6 +68,10 @@ Los cambios nativos requieren una nueva APK: dependencias nativas, permisos, ico
 
 La exportación OTA normal debe ejecutarse en un runner con un compilador Hermes compatible; se recomienda x86_64. El host ARM actual no puede ejecutar el binario Hermes x86_64 incluido por la dependencia. La exportación sin bytecode (`expo export --no-bytecode`) se usó solamente para una OTA de prueba y Expo la considera una alternativa de depuración: no debe convertirse en el procedimiento habitual.
 
+GitHub Actions valida los Pull Requests hacia `main` que cambian la app móvil mediante instalación reproducible, TypeScript y resolución de la configuración Daily. La OTA no se publica al hacer push: se inicia manualmente desde **Actions → Publish Balance Daily OTA → Run workflow**, seleccionando `main` e indicando la nota de versión. El workflow rechaza cualquier otra rama, vuelve a ejecutar las validaciones y publica sólo Android en el canal `daily`, entorno EAS `preview`.
+
+Antes del primer uso, crear el entorno protegido `preview` en GitHub y añadir allí el secreto `EXPO_TOKEN`, con un token de Expo que pueda publicar actualizaciones para `@shocker/balance`. No guardar ese token en el repositorio ni en variables `EXPO_PUBLIC_*`.
+
 ## Flujo de ramas
 
 - `main` se mantiene estable y no recibe commits directos.

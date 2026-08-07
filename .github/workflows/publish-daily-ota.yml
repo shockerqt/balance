@@ -1,0 +1,67 @@
+name: Publish Balance Daily OTA
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: Release note shown to Daily testers
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: balance-daily-ota
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Android update to Daily
+    runs-on: ubuntu-latest
+    environment: preview
+
+    steps:
+      - name: Require the stable main branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          test "$REF" = "refs/heads/main" || {
+            echo "Daily OTA releases must be dispatched from main; received $REF."
+            exit 1
+          }
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --prefix apps/mobile
+
+      - name: Typecheck mobile app
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+
+      - name: Resolve Daily Expo configuration
+        working-directory: apps/mobile
+        run: APP_VARIANT=daily npx expo config --type public
+
+      - name: Publish update to EAS Daily channel
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: daily
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          UPDATE_MESSAGE: ${{ inputs.message }}
+        run: >-
+          npx eas-cli@latest update
+          --channel daily
+          --environment preview
+          --platform android
+          --non-interactive
+          --message "$UPDATE_MESSAGE"
