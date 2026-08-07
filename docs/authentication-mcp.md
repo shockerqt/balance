@@ -44,6 +44,9 @@ https://balance.shocker.cl/api/.well-known/oauth-protected-resource/mcp
 Las herramientas actuales se ejecutan en el contexto del usuario del token:
 `get_foods`, `search_foods`, `parse_food_text` y `get_official_templates`.
 
+`get_foods`, `search_foods` y `get_official_templates` se anuncian como operaciones de solo lectura e idempotentes mediante anotaciones MCP. `parse_food_text` no recibe esa marca porque delega el análisis a Gemini. Gemini/Spark conserva la decisión final sobre confirmaciones; no se suprimen confirmaciones para operaciones mutables.
+
+
 ## Clientes ChatGPT y Gemini
 
 El authorization server publica OIDC discovery y el endpoint de Dynamic Client
@@ -61,8 +64,9 @@ Variables de la API:
 ```env
 OIDC_ISSUER=https://auth.shocker.cl/realms/balance
 OIDC_JWKS_URL=https://auth.shocker.cl/realms/balance/protocol/openid-connect/certs
+OIDC_AUDIENCE=balance-api
 ```
 
-`OIDC_JWKS_URL` es opcional. El servidor deriva esa URL desde el issuer. Nunca
+`OIDC_JWKS_URL` es opcional. El servidor deriva esa URL desde el issuer y conserva el JWKS en memoria durante cinco minutos; si llega un `kid` nuevo, lo refresca inmediatamente. `OIDC_AUDIENCE` permanece vacío durante la transición. Antes de definirlo como `balance-api`, agregar esa audiencia a los access tokens de **todos** los clientes de Keycloak que consumen la API (móvil y MCP); desde ese momento la API la exigirá. Nunca
 guardar contraseñas de Keycloak, secretos Google, tokens Cloudflare ni JWT en el
 repositorio.

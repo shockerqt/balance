@@ -17,17 +17,27 @@ export interface UserProfile {
   picture?: string;
 }
 
-const TOKEN_KEY = '@balance_auth_token_v1';
+// SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
+// Keep the former AsyncStorage key only to migrate sessions saved on web.
+const TOKEN_KEY = 'balance.auth.token.v1';
+const LEGACY_WEB_TOKEN_KEY = '@balance_auth_token_v1';
 const GUEST_KEY = '@balance_guest_v1';
 
 const readToken = async () => Platform.OS === 'web'
-  ? storage.getItem(TOKEN_KEY)
+  ? (await storage.getItem(TOKEN_KEY)) ?? storage.getItem(LEGACY_WEB_TOKEN_KEY)
   : SecureStore.getItemAsync(TOKEN_KEY);
 
 const writeToken = async (token: string | null) => {
   if (Platform.OS === 'web') {
-    if (token) await storage.setItem(TOKEN_KEY, token);
-    else await storage.removeItem(TOKEN_KEY);
+    if (token) {
+      await storage.setItem(TOKEN_KEY, token);
+      await storage.removeItem(LEGACY_WEB_TOKEN_KEY);
+    } else {
+      await Promise.all([
+        storage.removeItem(TOKEN_KEY),
+        storage.removeItem(LEGACY_WEB_TOKEN_KEY),
+      ]);
+    }
     return;
   }
   if (token) await SecureStore.setItemAsync(TOKEN_KEY, token);

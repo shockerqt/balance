@@ -72,10 +72,10 @@ async fn mcp_post_handler(
         "tools/list" => Json(json!({
             "jsonrpc": "2.0", "id": id,
             "result": { "tools": [
-                { "name": "get_foods", "description": "Lista los alimentos del usuario autenticado.", "inputSchema": {"type":"object","properties":{}} },
-                { "name": "search_foods", "description": "Busca alimentos en la biblioteca del usuario.", "inputSchema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]} },
+                { "name": "get_foods", "description": "Lista los alimentos del usuario autenticado.", "inputSchema": {"type":"object","properties":{}}, "annotations": {"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false} },
+                { "name": "search_foods", "description": "Busca alimentos en la biblioteca del usuario.", "inputSchema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}, "annotations": {"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false} },
                 { "name": "parse_food_text", "description": "Extrae información nutricional desde una descripción de comida.", "inputSchema": {"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]} },
-                { "name": "get_official_templates", "description": "Obtiene las plantillas oficiales de alimentos.", "inputSchema": {"type":"object","properties":{}} }
+                { "name": "get_official_templates", "description": "Obtiene las plantillas oficiales de alimentos.", "inputSchema": {"type":"object","properties":{}}, "annotations": {"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false} }
             ]}
         })).into_response(),
         "tools/call" => {
