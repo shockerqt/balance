@@ -18,9 +18,13 @@ EXPO_PUBLIC_OIDC_ISSUER=https://auth.shocker.cl/realms/balance
 EXPO_PUBLIC_OIDC_MOBILE_CLIENT_ID=balance-mobile
 ```
 
-El redirect URI registrado en Keycloak es `balance://auth-callback`. Toda nueva
-build nativa debe incluir `expo-auth-session`, `expo-crypto` y
-`expo-secure-store` (ya declarados en `apps/mobile/package.json`).
+Los redirect URIs registrados en Keycloak para el cliente público
+`balance-mobile` son `balance://auth-callback`, `balance-dev://auth-callback` y
+`balance-daily://auth-callback`. Cada variante nativa usa su propio scheme; los
+tres deben mantenerse registrados para que Development, Daily y Production
+puedan completar el retorno OAuth. Toda nueva build nativa debe incluir
+`expo-auth-session`, `expo-crypto` y `expo-secure-store` (ya declarados en
+`apps/mobile/package.json`).
 
 La sincronización WebSocket envía el access token en el subprotocolo
 `balance.bearer.<JWT>` y negocia `balance`; no se agrega el token a la URL.

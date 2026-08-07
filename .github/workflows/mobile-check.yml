@@ -1,0 +1,40 @@
+name: Verify Balance Mobile
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-mobile:
+    name: Typecheck and resolve Daily configuration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --prefix apps/mobile
+
+      - name: Typecheck mobile app
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+
+      - name: Resolve Daily Expo configuration
+        working-directory: apps/mobile
+        run: APP_VARIANT=daily npx expo config --type public

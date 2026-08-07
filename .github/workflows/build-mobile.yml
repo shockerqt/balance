@@ -1,11 +1,12 @@
 name: Build Mobile Development APK (SDK 57)
 
 on:
-  push:
-    paths:
-      - 'apps/mobile/**'
-      - '.github/workflows/build-mobile.yml'
+  # Solo bajo demanda: el chequeo de cada push lo hace mobile-check.yml, que no
+  # paga prebuild ni gradle.
   workflow_dispatch:
+
+env:
+  APP_VARIANT: development
 
 jobs:
   build-android-apk:
@@ -50,6 +51,6 @@ jobs:
       - name: "7. Upload APK Artifact"
         uses: actions/upload-artifact@v4
         with:
-          name: balance-mobile-sdk57-dev
+          name: balance-mobile-sdk57-development
           path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30

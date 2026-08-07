@@ -3,6 +3,7 @@ import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
 import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID } from '@/services/config';
@@ -15,6 +16,10 @@ export interface UserProfile {
   email: string;
   name?: string;
   picture?: string;
+}
+
+interface ApiResponse<T> {
+  data?: T | null;
 }
 
 // SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
@@ -93,7 +98,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        setUser(await response.json());
+        const payload = (await response.json()) as ApiResponse<UserProfile>;
+        if (!payload.data) {
+          console.warn('La respuesta de perfil no contiene datos de usuario');
+          setUser(null);
+          return;
+        }
+
+        setUser(payload.data);
         setIsGuest(false);
         storage.removeItem(GUEST_KEY);
         // Tras autenticar, sube los registros locales del modo invitado
@@ -148,7 +160,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
-      const redirectUrl = AuthSession.makeRedirectUri({ scheme: 'balance', path: 'auth-callback' });
+      // Cada variante instalable tiene su propio scheme, asi que el callback
+      // sale de la config resuelta y no de una constante.
+      const configuredScheme = Constants.expoConfig?.scheme;
+      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
+      const redirectUrl = AuthSession.makeRedirectUri({
+        scheme: typeof scheme === 'string' ? scheme : 'balance',
+        path: 'auth-callback',
+      });
       const request = new AuthSession.AuthRequest({
         clientId: OIDC_MOBILE_CLIENT_ID,
         responseType: AuthSession.ResponseType.Code,

@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 15.0.0"
+    "version": ">= 15.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -8,11 +9,24 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "channel": "development",
+      "env": {
+        "APP_VARIANT": "development"
       }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "daily",
+      "env": {
+        "APP_VARIANT": "daily"
+      }
     },
-    "production": {}
+    "production": {
+      "channel": "production",
+      "env": {
+        "APP_VARIANT": "production"
+      }
+    }
   }
 }
