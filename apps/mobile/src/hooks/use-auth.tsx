@@ -18,6 +18,10 @@ export interface UserProfile {
   picture?: string;
 }
 
+interface ApiResponse<T> {
+  data?: T | null;
+}
+
 // SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
 // Keep the former AsyncStorage key only to migrate sessions saved on web.
 const TOKEN_KEY = 'balance.auth.token.v1';
@@ -94,7 +98,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        setUser(await response.json());
+        const payload = (await response.json()) as ApiResponse<UserProfile>;
+        if (!payload.data) {
+          console.warn('La respuesta de perfil no contiene datos de usuario');
+          setUser(null);
+          return;
+        }
+
+        setUser(payload.data);
         setIsGuest(false);
         storage.removeItem(GUEST_KEY);
         // Tras autenticar, sube los registros locales del modo invitado
