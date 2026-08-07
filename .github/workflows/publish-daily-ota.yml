@@ -15,6 +15,11 @@ concurrency:
   group: balance-daily-ota
   cancel-in-progress: false
 
+env:
+  # Fijada a propósito: `@latest` cambia el default de appVersionSource entre
+  # majors y una OTA con runtimeVersion distinto al del APK no llega al teléfono.
+  EAS_CLI_VERSION: "21.7.0"
+
 jobs:
   publish:
     name: Publish Android update to Daily
@@ -59,9 +64,18 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           UPDATE_MESSAGE: ${{ inputs.message }}
         run: >-
-          npx eas-cli@latest update
+          npx eas-cli@${{ env.EAS_CLI_VERSION }} update
           --channel daily
           --environment preview
           --platform android
           --non-interactive
           --message "$UPDATE_MESSAGE"
+
+      - name: Confirm the runtime version the channel now points to
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: daily
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: >-
+          npx eas-cli@${{ env.EAS_CLI_VERSION }} channel:view daily
+          --non-interactive
