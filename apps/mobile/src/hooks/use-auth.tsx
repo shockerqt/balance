@@ -160,9 +160,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+      // Cada variante instalable tiene su propio scheme, asi que el callback
+      // sale de la config resuelta y no de una constante.
       const configuredScheme = Constants.expoConfig?.scheme;
+      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
       const redirectUrl = AuthSession.makeRedirectUri({
-        scheme: typeof configuredScheme === 'string' ? configuredScheme : 'balance',
+        scheme: typeof scheme === 'string' ? scheme : 'balance',
         path: 'auth-callback',
       });
       const request = new AuthSession.AuthRequest({
