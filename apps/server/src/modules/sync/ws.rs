@@ -280,15 +280,14 @@ async fn handle_push(
                     .sync
                     .push_user_preference(user.id, preferences, updated_at, deleted_at)
                     .await
+                    && let Some(conflict) = conflict_opt
                 {
-                    if let Some(conflict) = conflict_opt {
-                        conflicts.push(json!({
-                            "id": conflict.id,
-                            "preferences": conflict.preferences,
-                            "updatedAt": conflict.updated_at,
-                            "_deleted": conflict.deleted_at.is_some(),
-                        }));
-                    }
+                    conflicts.push(json!({
+                        "id": conflict.id,
+                        "preferences": conflict.preferences,
+                        "updatedAt": conflict.updated_at,
+                        "_deleted": conflict.deleted_at.is_some(),
+                    }));
                 }
             }
 
@@ -323,17 +322,16 @@ async fn handle_push(
                     .sync
                     .push_meal_template(user.id, id, name, details, updated_at, deleted_at)
                     .await
+                    && let Some(conflict) = conflict_opt
                 {
-                    if let Some(conflict) = conflict_opt {
-                        conflicts.push(json!({
-                            "id": conflict.id.to_string(),
-                            "name": conflict.name,
-                            "details": conflict.details,
-                            "isOfficial": conflict.is_official,
-                            "updatedAt": conflict.updated_at,
-                            "_deleted": conflict.deleted_at.is_some(),
-                        }));
-                    }
+                    conflicts.push(json!({
+                        "id": conflict.id.to_string(),
+                        "name": conflict.name,
+                        "details": conflict.details,
+                        "isOfficial": conflict.is_official,
+                        "updatedAt": conflict.updated_at,
+                        "_deleted": conflict.deleted_at.is_some(),
+                    }));
                 }
             }
 
@@ -384,19 +382,18 @@ async fn handle_push(
                         deleted_at,
                     )
                     .await
+                    && let Some(conflict) = conflict_opt
                 {
-                    if let Some(conflict) = conflict_opt {
-                        conflicts.push(json!({
-                            "id": conflict.id.to_string(),
-                            "templateId": conflict.template_id.map(|t| t.to_string()),
-                            "nameSnapshot": conflict.name_snapshot,
-                            "nutritionSnapshot": conflict.nutrition_snapshot,
-                            "quantity": conflict.quantity,
-                            "consumedAt": conflict.consumed_at,
-                            "updatedAt": conflict.updated_at,
-                            "_deleted": conflict.deleted_at.is_some(),
-                        }));
-                    }
+                    conflicts.push(json!({
+                        "id": conflict.id.to_string(),
+                        "templateId": conflict.template_id.map(|t| t.to_string()),
+                        "nameSnapshot": conflict.name_snapshot,
+                        "nutritionSnapshot": conflict.nutrition_snapshot,
+                        "quantity": conflict.quantity,
+                        "consumedAt": conflict.consumed_at,
+                        "updatedAt": conflict.updated_at,
+                        "_deleted": conflict.deleted_at.is_some(),
+                    }));
                 }
             }
 

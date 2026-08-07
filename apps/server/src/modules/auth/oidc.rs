@@ -82,17 +82,15 @@ impl OidcConfig {
     }
 
     async fn jwks(&self, force_refresh: bool) -> Result<Arc<JwkSet>> {
-        if !force_refresh {
-            if let Some(cached) = self
+        if !force_refresh
+            && let Some(cached) = self
                 .jwks_cache
                 .read()
                 .expect("OIDC JWKS cache lock poisoned")
                 .as_ref()
-            {
-                if cached.fetched_at.elapsed() < Duration::from_secs(300) {
-                    return Ok(cached.value.clone());
-                }
-            }
+            && cached.fetched_at.elapsed() < Duration::from_secs(300)
+        {
+            return Ok(cached.value.clone());
         }
         self.fetch_jwks().await
     }

@@ -84,10 +84,10 @@ impl SyncDatasource {
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(ref current) = existing {
-            if current.updated_at >= updated_at {
-                return Ok(Some(current.clone()));
-            }
+        if let Some(ref current) = existing
+            && current.updated_at >= updated_at
+        {
+            return Ok(Some(current.clone()));
         }
 
         let _ = sqlx::query(
@@ -252,10 +252,10 @@ impl SyncDatasource {
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(ref current) = existing {
-            if current.updated_at >= updated_at {
-                return Ok(Some(current.clone()));
-            }
+        if let Some(ref current) = existing
+            && current.updated_at >= updated_at
+        {
+            return Ok(Some(current.clone()));
         }
 
         let _res = sqlx::query(
