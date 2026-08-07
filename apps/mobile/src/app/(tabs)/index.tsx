@@ -23,7 +23,7 @@ export default function SummaryScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { currentDayLog, dayLogs } = useMealStore();
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, logout } = useAuth();
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -41,29 +41,43 @@ export default function SummaryScreen() {
     router.push({ pathname: '/food-search', params: { dateId: currentDayLog.dateId, time } });
   };
 
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/login");
+  };
+
   return (
     <Screen>
       <ScrollView
         contentContainerStyle={{ padding: theme.space.xl, gap: theme.space.xl }}
         showsVerticalScrollIndicator={false}>
-        <View style={[styles.row, { gap: theme.space.md }]}>
-          <View
-            style={[
-              styles.avatar,
-              {
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                borderWidth: theme.border.hairline,
-              },
-            ]}>
-            <Text variant="heading">{initialsOf(user?.name)}</Text>
+        <View style={styles.header}>
+          <View style={[styles.row, { gap: theme.space.md }]}>
+            <View
+              style={[
+                styles.avatar,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                  borderWidth: theme.border.hairline,
+                },
+              ]}>
+              <Text variant="heading">{initialsOf(user?.name)}</Text>
+            </View>
+            <View>
+              <Text variant="caption" tone="secondary">
+                {greeting}
+              </Text>
+              <Text variant="title">Resumen diario</Text>
+            </View>
           </View>
-          <View>
-            <Text variant="caption" tone="secondary">
-              {greeting}
-            </Text>
-            <Text variant="title">Resumen diario</Text>
-          </View>
+          <Button
+            title="Cerrar sesión"
+            variant="ghost"
+            size="md"
+            onPress={handleLogout}
+            accessibilityLabel="Cerrar sesión y volver al inicio"
+          />
         </View>
 
         <Card>
@@ -110,6 +124,7 @@ export default function SummaryScreen() {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   baseline: { alignItems: 'baseline' },
   avatar: {
     width: 44,
