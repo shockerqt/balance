@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Balance",
-    "slug": "balance-mobile",
+    "slug": "balance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -33,6 +33,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8d4fb81c-b61b-4764-ab7f-eb13c28b00c1"
+      }
+    },
+    "owner": "shocker"
   }
 }
