@@ -9,7 +9,7 @@ sí, cada una se instala y se ejecuta por su cuenta.
 apps/
   mobile/      App Expo 57 / React Native 0.86 con expo-router
   dashboard/   SPA React 19 + Vite 8 + TanStack Router/Query + Tailwind v4
-  server/      API Axum (Rust 2024) con SQLx/Postgres, OAuth Google, JWT y Gemini
+  server/      API Axum (Rust 2024) con SQLx/Postgres, OIDC/Keycloak y Gemini
 ```
 
 ## Requisitos
@@ -33,8 +33,9 @@ El server necesita `apps/server/.env` con:
 
 ```env
 DATABASE_URL=postgres://meal_admin:...@localhost:5432/meal_logger
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
+OIDC_ISSUER=https://auth.shocker.cl/realms/balance
+# Opcional: se deriva de OIDC_ISSUER si no se define.
+OIDC_JWKS_URL=https://auth.shocker.cl/realms/balance/protocol/openid-connect/certs
 ```
 
 > El server lee el `.env` desde `apps/server/.env`, no desde la raíz: la ruta está
@@ -63,6 +64,7 @@ npm --prefix apps/mobile run start
 | Dashboard | http://localhost:3000 |
 | API | http://localhost:8080 |
 | Swagger | http://localhost:8080/docs |
+| MCP HTTP | http://localhost:8080/mcp |
 
 El dashboard asume el server en `:8080` y el server permite CORS desde `:3000`.
 Si cambias un puerto, cambia el otro.
@@ -89,3 +91,4 @@ de interfaz rara vez se comparten tal cual, así que no se dio por supuesto.
 | `CLAUDE.md` | Convenciones y reglas para trabajar en el código |
 | `DEVELOPMENT_GUIDE.md` | Operación: VPS, puertos, red y CI/CD |
 | `apps/mobile/ANALYSIS.md` | Análisis del estado del móvil y su reestructuración |
+| `docs/authentication-mcp.md` | OIDC, Keycloak y uso del MCP HTTP remoto |

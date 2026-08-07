@@ -1,8 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID } from '@/services/config';
 import { storage } from '@/services/storage';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -16,6 +19,20 @@ export interface UserProfile {
 
 const TOKEN_KEY = '@balance_auth_token_v1';
 const GUEST_KEY = '@balance_guest_v1';
+
+const readToken = async () => Platform.OS === 'web'
+  ? storage.getItem(TOKEN_KEY)
+  : SecureStore.getItemAsync(TOKEN_KEY);
+
+const writeToken = async (token: string | null) => {
+  if (Platform.OS === 'web') {
+    if (token) await storage.setItem(TOKEN_KEY, token);
+    else await storage.removeItem(TOKEN_KEY);
+    return;
+  }
+  if (token) await SecureStore.setItemAsync(TOKEN_KEY, token);
+  else await SecureStore.deleteItemAsync(TOKEN_KEY);
+};
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -40,8 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   /** El token vivia solo en memoria: al reiniciar la app la sesion se perdia. */
   const setAuthToken = useCallback((token: string | null) => {
     setToken(token);
-    if (token) storage.setItem(TOKEN_KEY, token);
-    else storage.removeItem(TOKEN_KEY);
+    void writeToken(token);
   }, []);
 
   const checkSession = useCallback(
@@ -71,7 +87,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsGuest(false);
         storage.removeItem(GUEST_KEY);
         // Tras autenticar, sube los registros locales del modo invitado
-        syncClient.connect();
+        syncClient.connect(activeToken);
       } catch (e) {
         console.warn('No se pudo verificar la sesion (sin conexion)', e);
         setUser(null);
@@ -87,7 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (async () => {
       try {
         const [savedToken, savedGuest] = await Promise.all([
-          storage.getItem(TOKEN_KEY),
+          readToken(),
           storage.getItem(GUEST_KEY),
         ]);
         if (cancelled) return;
@@ -121,21 +137,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = useCallback(async () => {
     setIsLoading(true);
     try {
-      const redirectUrl = 'balance://auth-callback';
-      const authUrl = `${API_BASE_URL}/auth/google?redirect_uri=${encodeURIComponent(redirectUrl)}`;
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
-
-      if (result.type !== 'success' || !result.url) return;
-
-      let token: string | undefined;
-      try {
-        token = new URL(result.url).searchParams.get('token') ?? undefined;
-      } catch {
-        token = result.url.match(/[?&]token=([^&]+)/)?.[1];
-      }
-
-      if (token) setAuthToken(token);
-      await checkSession(token);
+      const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+      const redirectUrl = AuthSession.makeRedirectUri({ scheme: 'balance', path: 'auth-callback' });
+      const request = new AuthSession.AuthRequest({
+        clientId: OIDC_MOBILE_CLIENT_ID,
+        responseType: AuthSession.ResponseType.Code,
+        redirectUri: redirectUrl,
+        scopes: ['openid', 'profile', 'email'],
+        usePKCE: true,
+      });
+      const result = await request.promptAsync(discovery);
+      if (result.type !== 'success' || !result.params.code || !request.codeVerifier) return;
+      const tokenResponse = await AuthSession.exchangeCodeAsync({
+        clientId: OIDC_MOBILE_CLIENT_ID,
+        code: result.params.code,
+        redirectUri: redirectUrl,
+        extraParams: { code_verifier: request.codeVerifier },
+      }, discovery);
+      if (!tokenResponse.accessToken) return;
+      setAuthToken(tokenResponse.accessToken);
+      await checkSession(tokenResponse.accessToken);
     } catch (e) {
       console.error('Fallo el login con Google', e);
     } finally {
@@ -145,13 +166,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(async () => {
     try {
-      await fetch(`${API_BASE_URL}/auth/logout`, { method: 'GET' });
+      await fetch(`${API_BASE_URL}/auth/logout`, { method: 'POST' });
     } catch {
       // Cerrar sesion localmente aunque el server no responda
     }
     setUser(null);
     setIsGuest(false);
     setAuthToken(null);
+    syncClient.disconnect();
     await storage.removeItem(GUEST_KEY);
   }, [setAuthToken]);
 

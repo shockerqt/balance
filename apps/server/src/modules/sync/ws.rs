@@ -51,7 +51,10 @@ pub fn sync_routes() -> Router {
 }
 
 pub fn public_template_routes() -> Router {
-    Router::new().route("/api/templates/official", get(get_official_templates_handler))
+    Router::new().route(
+        "/api/templates/official",
+        get(get_official_templates_handler),
+    )
 }
 
 // GET /api/templates/official (Public Unauthenticated Endpoint)
@@ -77,7 +80,11 @@ async fn get_official_templates_handler(
         }
         Err(e) => {
             tracing::error!("Failed to fetch official templates: {:?}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch official templates").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to fetch official templates",
+            )
+                .into_response()
         }
     }
 }
@@ -87,7 +94,8 @@ async fn ws_handler(
     Extension(current_user): Extension<CurrentUser>,
     Extension(db): Extension<Arc<Database>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, current_user, db))
+    ws.protocols(["balance"])
+        .on_upgrade(move |socket| handle_socket(socket, current_user, db))
 }
 
 async fn handle_socket(mut socket: WebSocket, user: CurrentUser, db: Arc<Database>) {
@@ -262,7 +270,10 @@ async fn handle_push(
                 let doc = row.new_document_state;
                 let preferences = doc.get("preferences").cloned().unwrap_or(json!({}));
                 let updated_at = doc.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
-                let is_deleted = doc.get("_deleted").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_deleted = doc
+                    .get("_deleted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let deleted_at = if is_deleted { Some(updated_at) } else { None };
 
                 if let Ok(conflict_opt) = db
@@ -295,10 +306,17 @@ async fn handle_push(
                 let doc = row.new_document_state;
                 let id_str = doc.get("id").and_then(|v| v.as_str()).unwrap_or_default();
                 let id = Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4());
-                let name = doc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = doc
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let details = doc.get("details").cloned().unwrap_or(json!({}));
                 let updated_at = doc.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
-                let is_deleted = doc.get("_deleted").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_deleted = doc
+                    .get("_deleted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let deleted_at = if is_deleted { Some(updated_at) } else { None };
 
                 if let Ok(conflict_opt) = db
@@ -346,7 +364,10 @@ async fn handle_push(
                 let quantity = doc.get("quantity").and_then(|v| v.as_f64()).unwrap_or(1.0);
                 let consumed_at = doc.get("consumedAt").and_then(|v| v.as_i64()).unwrap_or(0);
                 let updated_at = doc.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
-                let is_deleted = doc.get("_deleted").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_deleted = doc
+                    .get("_deleted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let deleted_at = if is_deleted { Some(updated_at) } else { None };
 
                 if let Ok(conflict_opt) = db

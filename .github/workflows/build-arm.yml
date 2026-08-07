@@ -1,4 +1,4 @@
-name: Build & Deploy Rust Server for ARM (OCI)
+name: Build & Deploy Balance API for ARM (OCI)
 
 on:
   push:
@@ -6,11 +6,12 @@ on:
       - main
     paths:
       - 'apps/server/**'
+      - 'Cargo.toml'
   workflow_dispatch:
 
 jobs:
   build-arm:
-    name: Compile Rust Server (ARM64)
+    name: Compile Balance API (ARM64)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -19,24 +20,24 @@ jobs:
       - name: Install cross prebuilt
         uses: taiki-e/install-action@cross
 
-      - name: Build with cross for ARM64
+      - name: Build server with cross for ARM64
         run: cross build --target=aarch64-unknown-linux-gnu --release --manifest-path apps/server/Cargo.toml
 
-      - name: Upload binary as artifact
+      - name: Upload server binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-arm
+          name: binary-server-arm
           path: apps/server/target/aarch64-unknown-linux-gnu/release/server
 
   deploy:
-    name: Deploy Binary to OCI VPS
+    name: Deploy Binaries to OCI VPS
     needs: build-arm
     runs-on: ubuntu-latest
     steps:
-      - name: Download compiled binary
+      - name: Download compiled server binary
         uses: actions/download-artifact@v4
         with:
-          name: binary-arm
+          name: binary-server-arm
           path: ./deploy
 
       - name: Setup SSH Key
@@ -46,9 +47,10 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
-      - name: Upload binary to server
-        run: scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server
+      - name: Upload binaries to server
+        run: |
+          scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server
 
-      - name: Update binary in /opt & restart systemd service
+      - name: Update binaries in /opt & restart systemd service
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "sudo systemctl stop balance-server || true && sudo mv /home/${{ secrets.SERVER_USER }}/balance-server /opt/balance-server && sudo chmod +x /opt/balance-server && sudo systemctl start balance-server"

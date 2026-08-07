@@ -1,3 +1,5 @@
 [workspace]
-members = ["apps/server"]
+members = [
+    "apps/server",
+]
 resolver = "3"

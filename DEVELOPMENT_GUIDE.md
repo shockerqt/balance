@@ -12,6 +12,7 @@ El proyecto está estructurado como un monorepo modular:
 - **`apps/dashboard`**: Panel Web administrativo en **React 19 + Vite 8 + Tailwind CSS v4 + Base UI** preset Shadcn `b6YqzcHxSM`. Compilado y sirviéndose en vivo en:
   `http://144.22.47.0:8080/mockups/`
 - **`apps/server`**: API REST backend en **Rust (Axum) + PostgreSQL (SQLx)**. Ejecutándose como servicio del sistema en `/opt/balance-server` (`balance-server.service`).
+- **Identidad**: Keycloak en `https://auth.shocker.cl/realms/balance`; Google se usa como proveedor federado. La API valida los JWT mediante JWKS, no emite JWT propios.
 
 ---
 
@@ -62,6 +63,7 @@ Esto ejecuta automáticamente el comando configurado:
 ### B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
 - **Evento**: Se activa al modificar `apps/server/**` o mediante `workflow_dispatch`.
 - **Despliegue**: Compila el binario ARM64 con `cross` y lo sube mediante SSH a `/opt/balance-server`, ejecutando `sudo systemctl restart balance-server`.
+- **MCP**: no existe binario ni servicio MCP independiente. El mismo API expone el transporte Streamable HTTP en `https://balance.shocker.cl/api/mcp`.
 
 ---
 

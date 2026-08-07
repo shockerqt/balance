@@ -17,17 +17,20 @@ export interface SyncDocument {
 
 export class RxDBSyncClient {
   private ws: WebSocket | null = null;
+  private accessToken: string | null = null;
   private isConnected = false;
   private pendingPulls: Map<string, (data: any) => void> = new Map();
   private pendingPushes: Map<string, (conflicts: any[]) => void> = new Map();
 
-  connect() {
+  connect(accessToken?: string) {
+    if (accessToken) this.accessToken = accessToken;
+    if (!this.accessToken) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
     try {
-      this.ws = new WebSocket(WS_SYNC_URL);
+      this.ws = new WebSocket(WS_SYNC_URL, ['balance', `balance.bearer.${this.accessToken}`]);
 
       this.ws.onopen = () => {
         this.isConnected = true;
@@ -61,6 +64,13 @@ export class RxDBSyncClient {
     } catch (e) {
       console.warn('[RxDB Sync] Connection failed', e);
     }
+  }
+
+  disconnect() {
+    this.accessToken = null;
+    this.ws?.close();
+    this.ws = null;
+    this.isConnected = false;
   }
 
   async pull(collection: string, checkpoint?: SyncCheckpoint, limit: number = 50): Promise<{
