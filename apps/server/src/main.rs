@@ -10,6 +10,7 @@ use modules::{
     sync::routes::{public_template_routes, sync_routes},
     user::routes::user_routes,
 };
+use server::server_bind::server_bind_addr_from_env;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, services::ServeDir};
@@ -22,7 +23,7 @@ mod modules;
 mod shared;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenv::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env")).ok();
 
     tracing_subscriber::fmt()
@@ -68,11 +69,20 @@ async fn main() {
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let bind_addr = server_bind_addr_from_env()?;
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("failed to bind Balance server to {bind_addr}: {error}")
+        })?;
 
-    tracing::info!("server running on http://localhost:8080");
-    tracing::info!("docs available at http://localhost:8080/docs");
-    tracing::info!("mockups available at http://localhost:8080/mockups/");
+    tracing::info!("server running on http://{bind_addr}");
+    tracing::info!("docs available at http://{bind_addr}/docs");
+    tracing::info!("mockups available at http://{bind_addr}/mockups/");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .await
+        .map_err(|error| anyhow::anyhow!("Balance server stopped unexpectedly: {error}"))?;
+
+    Ok(())
 }

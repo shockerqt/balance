@@ -138,7 +138,8 @@ de Expo.
 
 ## Server (`apps/server`)
 
-- Entrada en `src/main.rs`. Monta un `axum::Router` en `0.0.0.0:8080`.
+- Entrada en `src/main.rs`. Monta un `axum::Router` en `127.0.0.1:8080` por
+  defecto; `SERVER_BIND_ADDR` permite un override explícito y validado.
 - OpenAPI con `utoipa` y Swagger UI en `/docs`.
 - Rutas: `/me` y `/foods` (requieren middleware `auth`), `/auth` (OAuth Google),
   `/meals`.

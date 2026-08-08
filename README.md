@@ -67,6 +67,11 @@ npm --prefix apps/mobile run start
 | MCP HTTP | http://localhost:8080/mcp |
 
 El dashboard asume el server en `:8080` y el server permite CORS desde `:3000`.
+
+El servidor usa `127.0.0.1:8080` de forma predeterminada. Para desarrollo en
+LAN se debe solicitar explícitamente `SERVER_BIND_ADDR=0.0.0.0:8080`; ver
+[`apps/server/README.md`](apps/server/README.md). No se usa ese override en
+producción sin la revisión de exposición de red.
 Si cambias un puerto, cambia el otro.
 
 ## Gestor de paquetes
