@@ -93,7 +93,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: binary-server-arm
-          path: apps/server/target/aarch64-unknown-linux-gnu/release/server
+          path: target/aarch64-unknown-linux-gnu/release/server
+          if-no-files-found: error
 
   deploy:
     name: Deploy verified binary to OCI VPS
