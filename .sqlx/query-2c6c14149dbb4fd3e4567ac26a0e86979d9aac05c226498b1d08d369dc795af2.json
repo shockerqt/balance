@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT fv.name, fv.calories, fv.fiber\n        FROM foods f\n        JOIN food_versions fv ON f.current_version_id = fv.id\n        WHERE fv.name = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "calories",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "fiber",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "2c6c14149dbb4fd3e4567ac26a0e86979d9aac05c226498b1d08d369dc795af2"
+}

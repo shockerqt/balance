@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT DISTINCT DATE(eaten_at)::text as \"date!\"\n            FROM meals\n            WHERE user_id = $1 AND DATE(eaten_at) BETWEEN $2::text::date AND $3::text::date\n            ORDER BY \"date!\" ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "53bc7776ebc450935c6631439747fa77764a61b7997bcda2f7842d4e0800e4e3"
+}

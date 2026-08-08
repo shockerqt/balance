@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT mf.serving_quantity, fv.calories, fv.proteins, fv.serving_quantity as base_qty\n        FROM meal_foods mf\n        JOIN food_versions fv ON mf.food_version_id = fv.id\n        WHERE mf.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "serving_quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 1,
+        "name": "calories",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "proteins",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 3,
+        "name": "base_qty",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4224cc2a0db214fd08551fdbbed7b22bd855d2c7c01332c7596e02323b4c9c7e"
+}

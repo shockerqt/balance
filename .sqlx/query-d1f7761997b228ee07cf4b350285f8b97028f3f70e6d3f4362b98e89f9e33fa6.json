@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE foods SET current_version_id = $1, updated_at = now() WHERE id = $2 AND created_by = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d1f7761997b228ee07cf4b350285f8b97028f3f70e6d3f4362b98e89f9e33fa6"
+}
