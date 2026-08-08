@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO food_versions (\n            calories, fat, proteins, carbs,\n            saturated_fat, monounsaturated_fat, polyunsaturated_fat, trans_fat,\n            fiber, sugars, sodium, cholesterol,\n            version, created_by, serving_name, serving_quantity, serving_unit_type,\n            is_verified\n        )\n        VALUES (\n            $1, $2, $3, $4,\n            $5, $6, $7, $8,\n            $9, $10, $11, $12,\n            1, $13, $14, $15, $16,\n            false\n        )\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Numeric",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Varchar",
+        "Numeric",
+        {
+          "Custom": {
+            "name": "serving_unit_type",
+            "kind": {
+              "Enum": [
+                "weight",
+                "volume"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3d94f3cc8486db1007b4bacfd7adb00cf37bcf0a34001587ecb0e665c494aa39"
+}

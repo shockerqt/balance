@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT id, user_id, meal_type, eaten_at\n                FROM meals\n                WHERE user_id = $1\n                ORDER BY eaten_at DESC, id\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "meal_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "eaten_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7e8b6c78583827d94ea9bbde793fdad623521351e62e3fcab8fdc8b9bab01b21"
+}

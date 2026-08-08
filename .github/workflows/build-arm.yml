@@ -6,13 +6,79 @@ on:
       - main
     paths:
       - 'apps/server/**'
+      - 'scripts/sqlx-test-schema.sql'
+      - '.sqlx/**'
       - 'Cargo.toml'
+      - '.github/workflows/build-arm.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/server/**'
+      - 'scripts/sqlx-test-schema.sql'
+      - '.sqlx/**'
+      - 'Cargo.toml'
+      - '.github/workflows/build-arm.yml'
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy the already-verified ARM artifact after production approval'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
+  sqlx-metadata:
+    name: Verify SQLx metadata
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: balance_sqlx
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d balance_sqlx"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/balance_sqlx
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install SQLx CLI
+        run: >-
+          cargo install sqlx-cli --version 0.8.6 --locked
+          --no-default-features --features postgres,rustls
+
+      - name: Load the reproducible SQLx CI schema
+        run: psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file scripts/sqlx-test-schema.sql
+
+      - name: Regenerate SQLx metadata from the ephemeral database
+        run: cargo sqlx prepare --workspace -- --all-targets
+
+      - name: Fail when SQLx metadata is stale
+        run: |
+          git diff --exit-code -- .sqlx
+          test -z "$(git ls-files --others --exclude-standard .sqlx)"
+
   build-arm:
     name: Compile Balance API (ARM64)
+    needs: sqlx-metadata
     runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,9 +96,11 @@ jobs:
           path: apps/server/target/aarch64-unknown-linux-gnu/release/server
 
   deploy:
-    name: Deploy Binaries to OCI VPS
+    name: Deploy verified binary to OCI VPS
     needs: build-arm
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Download compiled server binary
         uses: actions/download-artifact@v4
@@ -47,10 +115,28 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
-      - name: Upload binaries to server
+      - name: Stage and roll out the verified binary
         run: |
-          scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server
+          scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server.candidate
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            set -eu
+            sudo install -m 755 /home/${{ secrets.SERVER_USER }}/balance-server.candidate /opt/balance-server.candidate
+            sudo cp --archive /opt/balance-server /opt/balance-server.previous
+            sudo mv /opt/balance-server.candidate /opt/balance-server
+            if ! sudo systemctl restart balance-server; then
+              sudo mv /opt/balance-server.previous /opt/balance-server
+              sudo systemctl restart balance-server || true
+              exit 1
+            fi
+          '
 
-      - name: Update binaries in /opt & restart systemd service
+      - name: Healthcheck and rollback on failure
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "sudo systemctl stop balance-server || true && sudo mv /home/${{ secrets.SERVER_USER }}/balance-server /opt/balance-server && sudo chmod +x /opt/balance-server && sudo systemctl start balance-server"
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            if ! curl --fail --retry 5 --retry-delay 2 http://127.0.0.1:8080/docs >/dev/null; then
+              sudo mv /opt/balance-server.previous /opt/balance-server
+              sudo systemctl restart balance-server
+              exit 1
+            fi
+            sudo rm -f /opt/balance-server.previous
+          '

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id\n            FROM meals\n            WHERE user_id = $1 AND DATE(eaten_at) = $2::text::date\n            ORDER BY eaten_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "297f9959ab526f817e38ae380c44e59ec05a2b648f86f49914c9dbbdbc73fcbc"
+}

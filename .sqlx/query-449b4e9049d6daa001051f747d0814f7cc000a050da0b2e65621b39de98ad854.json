@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM meal_foods\n            USING meals m\n            WHERE meal_foods.id = $1 AND meal_foods.meal_id = $2 AND m.id = meal_foods.meal_id AND m.user_id = $3\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "449b4e9049d6daa001051f747d0814f7cc000a050da0b2e65621b39de98ad854"
+}

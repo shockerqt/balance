@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                mf.id,\n                mf.meal_id,\n                mf.food_version_id,\n                fv.name as food_name,\n                mf.serving_name,\n                mf.serving_quantity,\n                fv.calories,\n                fv.proteins,\n                fv.carbs,\n                fv.fat,\n                fv.fiber,\n                fv.sodium,\n                fv.cholesterol,\n                fv.serving_quantity as base_quantity\n            FROM meal_foods mf\n            JOIN food_versions fv ON mf.food_version_id = fv.id\n            WHERE mf.meal_id = $1\n            ORDER BY mf.id ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "meal_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "food_version_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "food_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "serving_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "serving_quantity",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 6,
+        "name": "calories",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "proteins",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 8,
+        "name": "carbs",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 9,
+        "name": "fat",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 10,
+        "name": "fiber",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 11,
+        "name": "sodium",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "cholesterol",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "base_quantity",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "8e3d8913d4b01aca28e6703e024185e6800631699bc9f87c0c42ba79272a02e2"
+}
