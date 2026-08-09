@@ -4,17 +4,12 @@ import { useRouter } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Field, Input, Sheet, Text } from '@/components/ui';
+import { CHILEAN_FOOD_SEALS, foodSealLabel } from '@/lib/chilean-food-seals';
+import { parseFoodPortion } from '@/lib/food-portions';
 
 /* Crear un alimento propio para la biblioteca. Usa las mismas
    primitivas que el resto de las hojas: antes traia sus propios
    inputs, etiquetas y boton, que no coincidian con ninguno. */
-
-const SELLOS = [
-  'Alto en calorías',
-  'Alto en sodio',
-  'Alto en azúcares',
-  'Alto en grasas saturadas',
-];
 
 export default function CreateFoodScreen() {
   const styles = useStyles();
@@ -30,6 +25,7 @@ export default function CreateFoodScreen() {
   const [fat, setFat] = useState('');
   const [fiber, setFiber] = useState('');
   const [seals, setSeals] = useState<Set<string>>(new Set());
+  const [error, setError] = useState('');
 
   const toggleSeal = (seal: string) =>
     setSeals((prev) => {
@@ -41,17 +37,22 @@ export default function CreateFoodScreen() {
 
   const save = () => {
     if (!name.trim()) return;
+    const parsedPortion = parseFoodPortion(portion);
+    if (!parsedPortion) {
+      setError('Usa una porción mayor que cero, por ejemplo 100g, 250ml o 1 unidad.');
+      return;
+    }
 
     const created = addCustomFood({
       name: name.trim(),
-      portion: portion.trim() || '100g',
+      portion: parsedPortion.normalized,
       calories: parseFloat(calories) || 0,
       protein: parseFloat(protein) || 0,
       carbs: parseFloat(carbs) || 0,
       fat: parseFloat(fat) || 0,
       fiber: parseFloat(fiber) || 0,
       typicalTime: '12:00',
-      chileanSeals: Array.from(seals).map((s) => s.toUpperCase()),
+      chileanSeals: Array.from(seals),
       category: 'Personalizados',
     });
 
@@ -104,7 +105,7 @@ export default function CreateFoodScreen() {
 
         <Field label="Sellos" hint="Los que trae el envase, si corresponde">
           <View style={[styles.seals, { gap: theme.space.sm }]}>
-            {SELLOS.map((seal) => {
+            {CHILEAN_FOOD_SEALS.map((seal) => {
               const on = seals.has(seal);
               return (
                 <TouchableOpacity
@@ -115,13 +116,19 @@ export default function CreateFoodScreen() {
                   delayPressIn={0}
                   onPress={() => toggleSeal(seal)}>
                   <Text variant="caption" tone={on ? 'onPrimary' : 'secondary'}>
-                    {seal}
+                    {foodSealLabel(seal)}
                   </Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         </Field>
+
+        {error ? (
+          <Text accessibilityRole="alert" variant="body" tone="danger" selectable>
+            {error}
+          </Text>
+        ) : null}
 
         <Button title="Guardar y ajustar porción" onPress={save} disabled={!name.trim()} />
       </ScrollView>
