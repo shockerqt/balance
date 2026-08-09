@@ -87,10 +87,7 @@ pub fn sync_routes() -> Router {
 }
 
 pub fn public_template_routes() -> Router {
-    Router::new().route(
-        "/api/templates/official",
-        get(get_official_templates_handler),
-    )
+    Router::new().route("/templates/official", get(get_official_templates_handler))
 }
 
 // GET /api/templates/official (Public Unauthenticated Endpoint)
@@ -687,6 +684,8 @@ fn client_error_message(error: AppError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
 
     fn valid_template() -> Value {
         json!({
@@ -760,5 +759,30 @@ mod tests {
         let mut log = valid_log();
         log["updatedAt"] = json!(0);
         assert!(parse_meal_log_document(log).is_err());
+    }
+
+    #[tokio::test]
+    async fn official_templates_route_relies_on_the_reverse_proxy_api_prefix() {
+        let canonical = public_template_routes()
+            .oneshot(
+                Request::builder()
+                    .uri("/templates/official")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(canonical.status(), StatusCode::NOT_FOUND);
+
+        let duplicated = public_template_routes()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/templates/official")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicated.status(), StatusCode::NOT_FOUND);
     }
 }
