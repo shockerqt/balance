@@ -7,6 +7,7 @@ on:
     paths:
       - 'apps/server/**'
       - 'scripts/sqlx-test-schema.sql'
+      - 'scripts/ensure-weight-tracking-schema.sql'
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'apps/server/**'
       - 'scripts/sqlx-test-schema.sql'
+      - 'scripts/ensure-weight-tracking-schema.sql'
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'

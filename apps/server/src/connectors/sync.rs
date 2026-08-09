@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -174,6 +175,22 @@ pub struct MealLogMutation {
     pub deleted_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, PartialEq, Eq)]
+pub struct WeightLogRow {
+    pub user_id: i32,
+    pub measured_on: NaiveDate,
+    pub weight_grams: i32,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightUpsertStatus {
+    Created,
+    Updated,
+    Unchanged,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FoodTemplate {
@@ -285,6 +302,20 @@ impl SyncDatasource {
         .await?;
 
         Ok(None)
+    }
+
+    pub async fn weight_tracking_enabled(&self, user_id: i32) -> Result<bool, sqlx::Error> {
+        let preferences = sqlx::query_scalar::<_, Value>(
+            "SELECT preferences FROM user_preferences WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(preferences
+            .as_ref()
+            .and_then(|value| value.get("weightTrackingEnabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true))
     }
 
     // --- MEAL TEMPLATES ---
@@ -511,6 +542,224 @@ impl SyncDatasource {
 
         tx.commit().await?;
         Ok(None)
+    }
+
+    // --- WEIGHT LOGS ---
+
+    pub async fn pull_weight_logs(
+        &self,
+        user_id: i32,
+        checkpoint_updated_at: i64,
+        checkpoint_date: Option<NaiveDate>,
+        limit: i64,
+    ) -> Result<Vec<WeightLogRow>, sqlx::Error> {
+        sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            SELECT user_id, measured_on, weight_grams, updated_at, deleted_at
+            FROM weight_logs
+            WHERE user_id = $1
+              AND (
+                    updated_at > $2
+                 OR (updated_at = $2 AND measured_on > COALESCE($3, DATE '0001-01-01'))
+              )
+            ORDER BY updated_at ASC, measured_on ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(user_id)
+        .bind(checkpoint_updated_at)
+        .bind(checkpoint_date)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn push_weight_log(
+        &self,
+        user_id: i32,
+        measured_on: NaiveDate,
+        weight_grams: i32,
+        updated_at: i64,
+        deleted_at: Option<i64>,
+    ) -> Result<Option<WeightLogRow>, AppError> {
+        validate_weight_grams(weight_grams)?;
+        let mut tx = self.pool.begin().await?;
+        let existing = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            SELECT user_id, measured_on, weight_grams, updated_at, deleted_at
+            FROM weight_logs
+            WHERE user_id = $1 AND measured_on = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(ref current) = existing
+            && current.updated_at >= updated_at
+        {
+            tx.commit().await?;
+            return Ok(Some(current.clone()));
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO weight_logs
+                (user_id, measured_on, weight_grams, updated_at, deleted_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id, measured_on) DO UPDATE SET
+                weight_grams = EXCLUDED.weight_grams,
+                updated_at = EXCLUDED.updated_at,
+                deleted_at = EXCLUDED.deleted_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .bind(weight_grams)
+        .bind(updated_at)
+        .bind(deleted_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(None)
+    }
+
+    pub async fn get_weight_history(
+        &self,
+        user_id: i32,
+        start: Option<NaiveDate>,
+        end: NaiveDate,
+        limit: i64,
+    ) -> Result<Vec<WeightLogRow>, AppError> {
+        let mut rows = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            SELECT user_id, measured_on, weight_grams, updated_at, deleted_at
+            FROM weight_logs
+            WHERE user_id = $1
+              AND deleted_at IS NULL
+              AND measured_on <= $2
+              AND ($3::date IS NULL OR measured_on >= $3)
+            ORDER BY measured_on DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(user_id)
+        .bind(end)
+        .bind(start)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.reverse();
+        Ok(rows)
+    }
+
+    pub async fn set_weight(
+        &self,
+        user_id: i32,
+        measured_on: NaiveDate,
+        weight_grams: i32,
+    ) -> Result<(WeightLogRow, WeightUpsertStatus), AppError> {
+        validate_weight_grams(weight_grams)?;
+        let mut tx = self.pool.begin().await?;
+        let existing = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            SELECT user_id, measured_on, weight_grams, updated_at, deleted_at
+            FROM weight_logs
+            WHERE user_id = $1 AND measured_on = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(current) = existing.as_ref()
+            && current.deleted_at.is_none()
+            && current.weight_grams == weight_grams
+        {
+            let current = current.clone();
+            tx.commit().await?;
+            return Ok((current, WeightUpsertStatus::Unchanged));
+        }
+
+        let status = if existing.is_some() {
+            WeightUpsertStatus::Updated
+        } else {
+            WeightUpsertStatus::Created
+        };
+        let row = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            INSERT INTO weight_logs
+                (user_id, measured_on, weight_grams, updated_at, deleted_at)
+            VALUES (
+                $1, $2, $3,
+                floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                NULL
+            )
+            ON CONFLICT (user_id, measured_on) DO UPDATE SET
+                weight_grams = EXCLUDED.weight_grams,
+                updated_at = EXCLUDED.updated_at,
+                deleted_at = NULL
+            RETURNING user_id, measured_on, weight_grams, updated_at, deleted_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .bind(weight_grams)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((row, status))
+    }
+
+    pub async fn soft_delete_weight(
+        &self,
+        user_id: i32,
+        measured_on: NaiveDate,
+    ) -> Result<(WeightLogRow, bool), AppError> {
+        let mut tx = self.pool.begin().await?;
+        let current = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            SELECT user_id, measured_on, weight_grams, updated_at, deleted_at
+            FROM weight_logs
+            WHERE user_id = $1 AND measured_on = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Weight measurement not found".into()))?;
+        if current.deleted_at.is_some() {
+            tx.commit().await?;
+            return Ok((current, true));
+        }
+        let row = sqlx::query_as::<_, WeightLogRow>(
+            r#"
+            UPDATE weight_logs
+            SET deleted_at = COALESCE(
+                    deleted_at,
+                    floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+                ),
+                updated_at = CASE
+                    WHEN deleted_at IS NULL
+                    THEN floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+                    ELSE updated_at
+                END
+            WHERE user_id = $1 AND measured_on = $2
+            RETURNING user_id, measured_on, weight_grams, updated_at, deleted_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(measured_on)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((row, false))
     }
 
     pub async fn search_food_templates(
@@ -936,6 +1185,15 @@ fn validate_quantity(quantity: f64) -> Result<(), AppError> {
     Ok(())
 }
 
+pub fn validate_weight_grams(weight_grams: i32) -> Result<(), AppError> {
+    if !(1_000..=500_000).contains(&weight_grams) || weight_grams % 100 != 0 {
+        return Err(AppError::BadRequest(
+            "weight must be between 1.0 and 500.0 kg in 0.1 kg increments".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,6 +1227,16 @@ mod tests {
         assert!(serde_json::from_str::<FoodUnit>("\"kg\"").is_err());
         assert!(serde_json::from_str::<FoodUnit>("\"\"").is_err());
         assert!(serde_json::from_str::<FoodUnit>("123").is_err());
+    }
+
+    #[test]
+    fn weight_grams_are_exact_and_bounded() {
+        assert!(validate_weight_grams(1_000).is_ok());
+        assert!(validate_weight_grams(72_400).is_ok());
+        assert!(validate_weight_grams(500_000).is_ok());
+        assert!(validate_weight_grams(900).is_err());
+        assert!(validate_weight_grams(72_450).is_err());
+        assert!(validate_weight_grams(500_100).is_err());
     }
 
     #[test]
@@ -1265,5 +1533,67 @@ mod tests {
             .unwrap();
         assert_eq!(mobile_log.snapshot, details.snapshot());
         assert_eq!(mobile_log.scaled_nutrition().calories, 104.0);
+
+        let first_date = NaiveDate::from_ymd_opt(2026, 8, 8).unwrap();
+        let second_date = NaiveDate::from_ymd_opt(2026, 8, 9).unwrap();
+        let (first_weight, first_status) =
+            datasource.set_weight(1, first_date, 72_600).await.unwrap();
+        assert_eq!(first_status, WeightUpsertStatus::Created);
+        assert_eq!(first_weight.weight_grams, 72_600);
+        let (_, unchanged) = datasource.set_weight(1, first_date, 72_600).await.unwrap();
+        assert_eq!(unchanged, WeightUpsertStatus::Unchanged);
+        let (_, updated) = datasource.set_weight(1, first_date, 72_400).await.unwrap();
+        assert_eq!(updated, WeightUpsertStatus::Updated);
+        datasource.set_weight(1, second_date, 72_100).await.unwrap();
+        datasource.set_weight(2, second_date, 99_900).await.unwrap();
+        let history = datasource
+            .get_weight_history(1, Some(first_date), second_date, 30)
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].measured_on, first_date);
+        assert_eq!(history[1].measured_on, second_date);
+        assert_eq!(
+            datasource
+                .get_weight_history(2, Some(first_date), second_date, 30)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let (_, already_deleted) = datasource.soft_delete_weight(1, second_date).await.unwrap();
+        assert!(!already_deleted);
+        let (_, already_deleted) = datasource.soft_delete_weight(1, second_date).await.unwrap();
+        assert!(already_deleted);
+        assert_eq!(
+            datasource
+                .get_weight_history(1, Some(first_date), second_date, 30)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        datasource.set_weight(1, second_date, 72_000).await.unwrap();
+        assert_eq!(
+            datasource
+                .get_weight_history(1, Some(first_date), second_date, 30)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        assert!(datasource.weight_tracking_enabled(1).await.unwrap());
+        datasource
+            .push_user_preference(
+                1,
+                json!({ "weightTrackingEnabled": false }),
+                i64::MAX - 2,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(!datasource.weight_tracking_enabled(1).await.unwrap());
     }
 }

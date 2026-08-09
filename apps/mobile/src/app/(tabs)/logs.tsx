@@ -12,6 +12,10 @@ import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
 import { Screen } from '@/components/ui';
 import { makeStyles } from '@/theme';
+import { DailyWeightRow } from '@/components/weight/daily-weight-row';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
+import { useWeightStore } from '@/hooks/use-weight-store';
+import { todayId } from '@/hooks/use-meal-store';
 
 /* Registros del dia. La pantalla compone: la ventana de fechas vive
    en lib/dates, la seleccion multiple en use-food-selection, y la
@@ -25,15 +29,12 @@ export default function LogsScreen() {
   const router = useRouter();
   const pagerRef = useRef<PagerView>(null);
 
-  const {
-    selectedDateId,
-    setSelectedDateId,
-    currentDayLog,
-    dayLogs,
-    deleteMultipleFoods,
-  } = useMealStore();
+  const { selectedDateId, setSelectedDateId, currentDayLog, dayLogs, deleteMultipleFoods } =
+    useMealStore();
 
   const selection = useFoodSelection();
+  const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
+  const { weightsByDate } = useWeightStore();
 
   // La ventana se reconstruye solo cuando el dia sale de ella.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
@@ -82,7 +83,10 @@ export default function LogsScreen() {
   const openBatchMove = useCallback(() => {
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
-    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
+    router.push({
+      pathname: '/batch-move',
+      params: { dateId: selectedDateId, ids: ids.join(',') },
+    });
     selection.clear();
   }, [router, selectedDateId, selection]);
 
@@ -102,6 +106,16 @@ export default function LogsScreen() {
         }}
       />
 
+      {preferencesReady && weightTrackingEnabled ? (
+        <DailyWeightRow
+          measurement={weightsByDate[selectedDateId]}
+          disabled={selectedDateId > todayId()}
+          onPress={() =>
+            router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } })
+          }
+        />
+      ) : null}
+
       <StickyMacroHeader
         foods={currentDayLog.foods}
         targetCalories={currentDayLog.targetCalories}
@@ -116,7 +130,8 @@ export default function LogsScreen() {
         style={styles.pager}
         scrollEnabled={!selection.isSelectionMode}
         initialPage={activeIndex !== -1 ? activeIndex : 0}
-        onPageSelected={onPageSelected}>
+        onPageSelected={onPageSelected}
+      >
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
           const log = dayLogs[dateId] ?? emptyDayLog(dateId);
@@ -151,8 +166,6 @@ export default function LogsScreen() {
       ) : (
         <FloatingAddButton onPress={() => openFoodSearch()} />
       )}
-
-
     </Screen>
   );
 }
