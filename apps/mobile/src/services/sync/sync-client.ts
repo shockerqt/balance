@@ -1,5 +1,6 @@
 import { AppState, AppStateStatus } from 'react-native';
 import { WS_SYNC_URL } from '@/services/config';
+import { accessTokenChanged } from '@/services/auth/session-state';
 import { storage } from '@/services/storage';
 import {
   SYNC_COLLECTIONS,
@@ -119,27 +120,38 @@ export class SyncClient {
   }
 
   connect(accessToken?: string, namespace?: string): void {
+    const reconnectForToken = accessTokenChanged(this.accessToken, accessToken);
     if (accessToken) this.accessToken = accessToken;
     if (namespace) this.setNamespace(namespace);
     this.closedByUser = false;
     if (!this.accessToken) return;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      if (reconnectForToken) {
+        this.clearReconnectTimer();
+        this.cancelPending(new Error('SYNC_ACCESS_TOKEN_CHANGED'));
+        this.ws.close();
+      }
+      return;
+    }
 
     this.clearReconnectTimer();
     try {
-      this.ws = new WebSocket(WS_SYNC_URL, ['balance', `balance.bearer.${this.accessToken}`]);
-      this.ws.onopen = () => {
+      const socket = new WebSocket(WS_SYNC_URL, ['balance', `balance.bearer.${this.accessToken}`]);
+      this.ws = socket;
+      socket.onopen = () => {
         this.reconnectAttempt = 0;
         void this.resync();
         void this.flushOutbox();
       };
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
         void this.handleMessage(event.data);
       };
-      this.ws.onerror = () => {
+      socket.onerror = () => {
         // onclose schedules the reconnect; avoid logging tokens or payloads.
       };
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        // A late close from a replaced socket must not erase its successor.
+        if (this.ws !== socket) return;
         this.ws = null;
         if (!this.closedByUser) this.scheduleReconnect();
       };
@@ -187,13 +199,13 @@ export class SyncClient {
           : [];
         const checkpointValue = message.checkpoint;
         const nextCheckpoint = checkpointValue && typeof checkpointValue === 'object'
-          ? {
-              updatedAt: Number((checkpointValue as Record<string, unknown>).updatedAt),
+            ? {
+                updatedAt: Number((checkpointValue as Record<string, unknown>).updatedAt),
               id: typeof (checkpointValue as Record<string, unknown>).id === 'string'
                 ? (checkpointValue as Record<string, unknown>).id as string
                 : undefined,
-            }
-          : null;
+              }
+            : null;
         return {
           documents,
           checkpoint: nextCheckpoint && Number.isFinite(nextCheckpoint.updatedAt) ? nextCheckpoint : null,
@@ -326,8 +338,8 @@ export class SyncClient {
     }
     if (event === 'error' || event === 'sync_error') {
       const nestedError = message.error && typeof message.error === 'object'
-        ? (message.error as Record<string, unknown>).code
-        : undefined;
+          ? (message.error as Record<string, unknown>).code
+          : undefined;
       this.resolvePending(
         typeof message.requestId === 'string'
           ? message.requestId
@@ -338,7 +350,7 @@ export class SyncClient {
       return;
     }
     const pendingId = typeof message.requestId === 'string'
-      ? message.requestId
+        ? message.requestId
       : collection ? this.collectionFallbackRequests.get(collection)?.[0] : undefined;
     if (pendingId) this.resolvePending(pendingId, message);
   }
