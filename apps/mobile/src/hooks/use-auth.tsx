@@ -10,11 +10,18 @@ import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID } from '@/services/con
 import { storage } from '@/services/storage';
 import {
   refreshDelayMs,
+  refreshRetryDelayMs,
   isSessionFresh,
+  LEGACY_TOKEN_KEY,
+  LEGACY_WEB_TOKEN_KEY,
   mergeRefreshedSession,
-  parseStoredSession,
+  nextSessionLineage,
+  resolveStoredSession,
   SerializedSessionWriter,
+  SESSION_KEY,
   sessionForUnauthorizedResponse,
+  sessionForVerifiedProfile,
+  sessionWritePlan,
   StoredAuthSession,
   StoredUserProfile,
 } from '@/services/auth/session-state';
@@ -27,13 +34,8 @@ interface ApiResponse<T> {
   data?: T | null;
 }
 
-// SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
-const SESSION_KEY = 'balance.auth.session.v2';
-const LEGACY_TOKEN_KEY = 'balance.auth.token.v1';
-const LEGACY_WEB_TOKEN_KEY = '@balance_auth_token_v1';
 const GUEST_KEY = '@balance_guest_v1';
 const AUTH_SCOPES = ['openid', 'profile', 'email'];
-const LOGGED_OUT_MARKER = '{"version":2,"loggedOut":true}';
 
 const readValue = (key: string) => (Platform.OS === 'web' ? storage.getItem(key) : SecureStore.getItemAsync(key));
 
@@ -48,30 +50,21 @@ const writeValue = async (key: string, value: string | null) => {
 };
 
 const readSession = async (): Promise<StoredAuthSession | null> => {
-  const rawSession = await readValue(SESSION_KEY);
-  if (rawSession === LOGGED_OUT_MARKER) return null;
-  const saved = parseStoredSession(rawSession);
-  if (saved) return Platform.OS === 'web' ? { ...saved, refreshToken: undefined } : saved;
-
-  // BAL-011 persisted only the access token. Keep it for a one-time migration;
-  // the API will validate it, but it cannot be refreshed after expiration.
-  const legacyToken =
-    (await readValue(LEGACY_TOKEN_KEY)) ?? (Platform.OS === 'web' ? await storage.getItem(LEGACY_WEB_TOKEN_KEY) : null);
-  return legacyToken
-    ? {
-        version: 2,
-        accessToken: legacyToken,
-        issuedAt: Math.floor(Date.now() / 1000),
-      }
-    : null;
+  const isWeb = Platform.OS === 'web';
+  const [record, legacyToken, legacyWebToken] = await Promise.all([
+    readValue(SESSION_KEY),
+    readValue(LEGACY_TOKEN_KEY),
+    isWeb ? storage.getItem(LEGACY_WEB_TOKEN_KEY) : Promise.resolve(null),
+  ]);
+  return resolveStoredSession(record, legacyToken ?? legacyWebToken, isWeb);
 };
 
+// Sequential on purpose: the plan's ordering is what keeps an interrupted
+// write safe, and running the steps in parallel would throw it away.
 const writeSession = async (session: StoredAuthSession | null) => {
-  // The marker prevents a partially failed logout from falling back to a
-  // surviving v1 token. A later login replaces it with a valid v2 session.
-  await writeValue(SESSION_KEY, session ? JSON.stringify(session) : LOGGED_OUT_MARKER);
-  await writeValue(LEGACY_TOKEN_KEY, null);
-  if (Platform.OS === 'web') await storage.removeItem(LEGACY_WEB_TOKEN_KEY);
+  for (const { key, value } of sessionWritePlan(session, Platform.OS === 'web')) {
+    await writeValue(key, value);
+  }
 };
 
 const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: StoredAuthSession): StoredAuthSession =>
@@ -80,6 +73,7 @@ const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: Store
       version: 2,
       accessToken: response.accessToken,
       issuedAt: response.issuedAt,
+      lineage: nextSessionLineage(),
     },
     {
       accessToken: response.accessToken,
@@ -115,6 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [refreshRetryAt, setRefreshRetryAt] = useState<number | null>(null);
   const sessionRef = useRef<StoredAuthSession | null>(null);
   const epochRef = useRef(0);
+  const refreshAttemptRef = useRef(0);
   const sessionWriterRef = useRef<SerializedSessionWriter<StoredAuthSession> | null>(null);
   const refreshRef = useRef<{
     epoch: number;
@@ -138,12 +133,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [],
   );
 
+  // A storage failure must not cancel a session the provider already accepted:
+  // the app keeps it in memory and a later refresh retries the write. Returns
+  // false only when a newer generation (a logout, another login) took over.
+  const persistSession = useCallback(
+    async (session: StoredAuthSession, expectedEpoch: number) => {
+      try {
+        return await commitSession(session, expectedEpoch);
+      } catch (error) {
+        console.warn('La sesion sigue activa pero no pudo persistirse', error);
+        if (expectedEpoch !== epochRef.current) return false;
+        sessionRef.current = session;
+        setSessionRevision((revision) => revision + 1);
+        return true;
+      }
+    },
+    [commitSession],
+  );
+
+  // Every new set of credentials goes through here. Publishing them to
+  // `sessionRef` synchronously, before any storage I/O, keeps the ref in step
+  // with `epochRef`: a timer or an AppState check that fires mid-write must
+  // never see the new epoch paired with the previous account's session and
+  // persist that back over this one.
+  const adoptSession = useCallback(
+    (session: StoredAuthSession, expectedEpoch: number) => {
+      sessionRef.current = session;
+      setSessionRevision((revision) => revision + 1);
+      return persistSession(session, expectedEpoch);
+    },
+    [persistSession],
+  );
+
   const clearAuthenticatedState = useCallback(async () => {
     const epoch = ++epochRef.current;
     setUser(null);
     sessionRef.current = null;
     setSessionRevision((revision) => revision + 1);
     setRefreshRetryAt(null);
+    refreshAttemptRef.current = 0;
     syncClient.disconnect();
     try {
       await commitSession(null, epoch);
@@ -159,16 +187,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       const epoch = ++epochRef.current;
-      void commitSession(
+      // A token arriving from a deep link starts its own credential chain: it
+      // may belong to a different account than the one currently cached.
+      // Adopting it before the I/O also lets the `checkSession` that follows
+      // verify this same chain instead of opening another one.
+      void adoptSession(
         {
           version: 2,
           accessToken: token,
           issuedAt: Math.floor(Date.now() / 1000),
+          lineage: nextSessionLineage(),
         },
         epoch,
-      ).catch((error) => console.warn('No se pudo guardar la sesion', error));
+      );
     },
-    [clearAuthenticatedState, commitSession],
+    [adoptSession, clearAuthenticatedState],
   );
 
   const refreshSession = useCallback(
@@ -189,17 +222,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
           if (epoch !== epochRef.current) return null;
           const refreshed = fromTokenResponse(response, session);
-          // The provider may have invalidated the previous rotating refresh
-          // token already. Adopt the new token in memory before SecureStore I/O
-          // so this process never attempts to reuse the old credential.
-          sessionRef.current = refreshed;
-          setSessionRevision((revision) => revision + 1);
           setRefreshRetryAt(null);
-          try {
-            await commitSession(refreshed, epoch);
-          } catch (storageError) {
-            console.warn('La sesion renovada sigue activa pero no pudo persistirse', storageError);
-          }
+          refreshAttemptRef.current = 0;
+          // The provider may have invalidated the previous rotating refresh
+          // token already, so this process must never fall back to it.
+          await adoptSession(refreshed, epoch);
           return epoch === epochRef.current ? refreshed : null;
         } catch (error) {
           // invalid_grant means the refresh session was expired, revoked, reused,
@@ -212,7 +239,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await clearAuthenticatedState();
           } else {
             console.warn('No se pudo renovar la sesion', error);
-            if (epoch === epochRef.current) setRefreshRetryAt(Date.now() + 5_000);
+            // Backs off so an offline device does not retry discovery and the
+            // token endpoint every five seconds for as long as it stays offline.
+            if (epoch === epochRef.current) {
+              refreshAttemptRef.current += 1;
+              setRefreshRetryAt(Date.now() + refreshRetryDelayMs(refreshAttemptRef.current));
+            }
           }
           return null;
         }
@@ -225,7 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (refreshRef.current?.promise === promise) refreshRef.current = null;
       }
     },
-    [clearAuthenticatedState, commitSession],
+    [adoptSession, clearAuthenticatedState],
   );
 
   const verifySession = useCallback(
@@ -277,20 +309,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const payload = (await response.json()) as ApiResponse<UserProfile>;
+        if (epoch !== epochRef.current) return;
         if (!payload.data) {
+          // The token went unvalidated: drop the cached identity so hydration
+          // cannot present a stale profile as an authenticated session.
           console.warn('La respuesta de perfil no contiene datos de usuario');
+          setUser(null);
+          const cached = sessionRef.current;
+          if (cached?.user) await persistSession({ ...cached, user: undefined }, epoch);
           return;
         }
 
-        if (epoch !== epochRef.current) return;
         // A concurrent refresh may have rotated tokens while this profile
-        // request was in flight. Attach identity to the newest session only.
-        const current = sessionRef.current;
-        const verified = { ...(current ?? active), user: payload.data };
-        if (!(await commitSession(verified, epoch))) return;
+        // request was in flight. Adopt the newer session only when it renews
+        // the very credentials this request used; a login for another account
+        // must not inherit this identity.
+        const verified = { ...sessionForVerifiedProfile(active, sessionRef.current), user: payload.data };
+        if (!(await persistSession(verified, epoch))) return;
         setUser(payload.data);
         setIsGuest(false);
-        await storage.removeItem(GUEST_KEY);
+        try {
+          await storage.removeItem(GUEST_KEY);
+        } catch (storageError) {
+          console.warn('No se pudo limpiar la marca de invitado', storageError);
+        }
         syncClient.setNamespace(`user:${payload.data.id}`);
         syncClient.connect(verified.accessToken, `user:${payload.data.id}`);
       } catch (error) {
@@ -299,17 +341,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('No se pudo verificar la sesion (sin conexion)', error);
       }
     },
-    [clearAuthenticatedState, commitSession, refreshSession],
+    [clearAuthenticatedState, persistSession, refreshSession],
   );
 
   const checkSession = useCallback(
     async (tokenOverride?: string) => {
       const candidate = tokenOverride
-        ? {
-            version: 2 as const,
-            accessToken: tokenOverride,
-            issuedAt: Math.floor(Date.now() / 1000),
-          }
+        ? // Reuse the chain `setAuthToken` just installed for this same token,
+          // so a rotation started meanwhile is still recognised as its own.
+          sessionRef.current?.accessToken === tokenOverride
+          ? sessionRef.current
+          : {
+              version: 2 as const,
+              accessToken: tokenOverride,
+              issuedAt: Math.floor(Date.now() / 1000),
+              lineage: nextSessionLineage(),
+            }
         : sessionRef.current;
       if (!candidate) {
         setUser(null);
@@ -407,27 +454,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!tokenResponse.accessToken) return;
       const session = fromTokenResponse(tokenResponse);
       const epoch = ++epochRef.current;
-      if (!(await commitSession(session, epoch))) return;
+      if (!(await adoptSession(session, epoch))) return;
       await verifySession(session);
     } catch (error) {
       console.error('Fallo el login con Google', error);
     } finally {
       setIsLoading(false);
     }
-  }, [commitSession, verifySession]);
+  }, [adoptSession, verifySession]);
 
   const logout = useCallback(async () => {
-    const session = sessionRef.current;
+    const refreshToken = sessionRef.current?.refreshToken;
     setIsGuest(false);
     await clearAuthenticatedState();
-    await storage.removeItem(GUEST_KEY);
+    try {
+      await storage.removeItem(GUEST_KEY);
+    } catch (storageError) {
+      console.warn('No se pudo limpiar la marca de invitado', storageError);
+    }
+    // Nothing to revoke on web, where refresh tokens are never persisted, nor
+    // for migrated v1 sessions. Skip discovery so logout stays local and
+    // immediate instead of waiting on a network round-trip.
+    if (!refreshToken) return;
     try {
       const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
-      if (session?.refreshToken && discovery.revocationEndpoint) {
+      if (discovery.revocationEndpoint) {
         await AuthSession.revokeAsync(
           {
             clientId: OIDC_MOBILE_CLIENT_ID,
-            token: session.refreshToken,
+            token: refreshToken,
             tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken,
           },
           discovery,

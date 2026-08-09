@@ -3,9 +3,9 @@ import { Alert, ScrollView, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LibraryFoodDraft, LibraryFoodItem, useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
+import { CHILEAN_FOOD_SEALS } from '@/lib/chilean-food-seals';
+import { parseFoodPortion } from '@/lib/food-portions';
 import { makeStyles } from '@/theme';
-
-const SEALS = ['ALTO EN CALORÍAS', 'ALTO EN SODIO', 'ALTO EN AZÚCARES', 'ALTO EN GRASAS SATURADAS'];
 
 const EMPTY_FORM = {
   name: '',
@@ -64,6 +64,15 @@ export default function FoodLibraryFoodScreen() {
   );
   const [error, setError] = useState('');
   const hydratedFoodId = useRef<string | undefined>(food?.id);
+  const sealOptions = useMemo(
+    () => [
+      ...CHILEAN_FOOD_SEALS,
+      ...Array.from(seals).filter(
+        (seal) => !CHILEAN_FOOD_SEALS.includes(seal as (typeof CHILEAN_FOOD_SEALS)[number])
+      ),
+    ],
+    [seals]
+  );
 
   useEffect(() => {
     if (!food || hydratedFoodId.current === food.id) return;
@@ -98,12 +107,18 @@ export default function FoodLibraryFoodScreen() {
       setError('El nombre puede tener hasta 160 caracteres.');
       return null;
     }
-    if (!/^([0-9]+(?:[.,][0-9]+)?)\s*(g|ml|unit|unidad|portion|porción|cup|taza)$/i.test(form.portion.trim())) {
+    const portion = parseFoodPortion(form.portion);
+    if (!portion) {
       setError('Usa una porción compatible, por ejemplo 100g, 250ml, 1 unidad o 1 taza.');
       return null;
     }
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.typicalTime.trim())) {
       setError('La hora habitual debe usar el formato HH:mm, por ejemplo 08:30.');
+      return null;
+    }
+
+    if ([form.calories, form.protein, form.carbs, form.fat].some((value) => !value.trim())) {
+      setError('Completa calorías, proteína, carbohidratos y grasas.');
       return null;
     }
 
@@ -122,7 +137,7 @@ export default function FoodLibraryFoodScreen() {
 
     return {
       name,
-      portion: form.portion.trim(),
+      portion: portion.normalized,
       calories: required[0],
       protein: required[1],
       carbs: required[2],
@@ -215,7 +230,7 @@ export default function FoodLibraryFoodScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         <View style={styles.originNote}>
-          <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={18} tone={isOfficial ? 'muted' : 'primary'} />
+          <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={18} tone={isOfficial ? 'muted' : 'accent'} />
           <View style={styles.originCopy}>
             <Text variant="bodyStrong">{isOfficial ? 'Referencia oficial' : 'Tu alimento'}</Text>
             <Text variant="caption" tone="secondary">
@@ -295,7 +310,7 @@ export default function FoodLibraryFoodScreen() {
 
         <Field label="Sellos chilenos" hint="Marca solo los que aparecen en el envase">
           <View style={styles.seals}>
-            {SEALS.map((seal) => {
+            {sealOptions.map((seal) => {
               const selected = seals.has(seal);
               return (
                 <TouchableOpacity
@@ -372,7 +387,7 @@ const useStyles = makeStyles((t) => ({
   macros: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.lg },
   macroField: { flexGrow: 1, flexBasis: '45%' },
   numberInput: { position: 'relative' },
-  numberControl: { paddingRight: 42 },
+  numberControl: { paddingRight: t.space.xxxl + t.space.sm },
   unit: { position: 'absolute', right: t.space.md, top: t.space.lg },
   seals: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
   seal: {

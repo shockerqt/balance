@@ -7,6 +7,7 @@ import {
   nextTemplateTimestamp,
   updatePersonalTemplate
 } from '../src/lib/food-library-documents.ts';
+import { parseFoodPortion } from '../src/lib/food-portions.ts';
 
 const details = {
   schemaVersion: 1,
@@ -80,4 +81,22 @@ test('rejects blank names and missing foods', () => {
     () => deletePersonalTemplate(undefined, 1000),
     (error) => error instanceof FoodLibraryMutationError && error.code === 'missing-food'
   );
+});
+
+test('normalizes Chilean decimal portions without changing their base', () => {
+  assert.deepEqual(parseFoodPortion('1,5 taza'), {
+    baseAmount: 1.5,
+    unit: 'cup',
+    normalized: '1.5cup'
+  });
+  assert.deepEqual(parseFoodPortion(' 250 ml '), {
+    baseAmount: 250,
+    unit: 'ml',
+    normalized: '250ml'
+  });
+});
+
+test('rejects zero and unsupported portions instead of applying a silent fallback', () => {
+  assert.equal(parseFoodPortion('0g'), null);
+  assert.equal(parseFoodPortion('una cucharada'), null);
 });

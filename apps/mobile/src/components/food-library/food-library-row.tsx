@@ -24,8 +24,8 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
       style={styles.row}
       onPress={() => onPress(food)}>
       <View style={styles.origin}>
-        <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={16} tone={isOfficial ? 'muted' : 'primary'} />
-        <Text variant="label" tone={isOfficial ? 'muted' : 'primary'}>
+        <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={16} tone={isOfficial ? 'muted' : 'accent'} />
+        <Text variant="label" tone={isOfficial ? 'muted' : 'accent'}>
           {isOfficial ? 'BASE' : 'MÍO'}
         </Text>
       </View>
