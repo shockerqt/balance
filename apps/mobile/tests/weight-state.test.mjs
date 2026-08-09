@@ -7,7 +7,7 @@ import {
   previousWeight,
   weightTrendDates,
 } from '../src/services/weight/weight.ts';
-import { isDateId } from '../src/services/sync/types.ts';
+import { isDateId, parseRejectedIndexes } from '../src/services/sync/types.ts';
 
 test('parses Chilean decimal input into exact 100 gram increments', () => {
   assert.equal(parseWeightInput('72,4'), 72_400);
@@ -43,4 +43,11 @@ test('accepts only real ISO calendar dates for daily identity', () => {
   assert.equal(isDateId('2026-02-29'), false);
   assert.equal(isDateId('2026-13-01'), false);
   assert.equal(isDateId('09-08-2026'), false);
+});
+
+test('accepts only bounded row rejections so poison documents can be discarded safely', () => {
+  assert.deepEqual(parseRejectedIndexes([{ index: 1 }, { index: 1 }], 2), [1]);
+  assert.equal(parseRejectedIndexes([{ index: 2 }], 2), null);
+  assert.equal(parseRejectedIndexes([{ index: '0' }], 1), null);
+  assert.equal(parseRejectedIndexes({}, 1), null);
 });

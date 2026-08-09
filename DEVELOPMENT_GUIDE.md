@@ -65,6 +65,23 @@ Esto ejecuta automáticamente el comando configurado:
 - **Despliegue**: Compila el binario ARM64 con `cross` y lo sube mediante SSH a `/opt/balance-server`, ejecutando `sudo systemctl restart balance-server`.
 - **MCP**: no existe binario ni servicio MCP independiente. El mismo API expone el transporte Streamable HTTP en `https://balance.shocker.cl/api/mcp`.
 
+### C. Preparación del esquema PostgreSQL
+
+La carpeta `apps/server/migrations/` es histórica y contiene prefijos de versión
+duplicados, por lo que no es una cadena ejecutable ni la fuente de verdad para
+actualizar producción. No se deben agregar migraciones nuevas a esa secuencia
+hasta que una tarea específica la repare y establezca un baseline verificable.
+
+- Entornos efímeros de CI y desarrollo cargan `scripts/sqlx-test-schema.sql`,
+  que representa el esquema canónico completo y nunca debe apuntar a producción.
+- Producción se prepara mediante scripts aditivos e idempotentes revisados:
+  primero `scripts/ensure-lax-sync-schema.sql` y, para el seguimiento corporal,
+  `scripts/ensure-weight-tracking-schema.sql`.
+- Cada script productivo se ejecuta manualmente con `psql --set ON_ERROR_STOP=1`
+  después de un backup verificado y antes de desplegar el binario que depende de
+  su esquema. La aplicación del script y el despliegue requieren aprobación
+  explícita, healthcheck y rollback registrados en Governance.
+
 ---
 
 ## 5. Interfaces construidas

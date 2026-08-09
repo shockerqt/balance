@@ -402,16 +402,6 @@ async fn handle_pull(
         }
 
         "weightLogs" => {
-            if !weight_tracking_enabled(db, user.id).await {
-                send_sync_error(
-                    socket,
-                    &request_id,
-                    "weight_tracking_disabled",
-                    "Weight tracking is disabled in Settings",
-                )
-                .await;
-                return;
-            }
             let checkpoint_date = match parse_date_checkpoint(checkpoint_id) {
                 Ok(value) => value,
                 Err(message) => {
@@ -499,17 +489,21 @@ async fn handle_push(
         return;
     }
     let mut conflicts: Vec<Value> = Vec::new();
+    let mut rejections: Vec<Value> = Vec::new();
     let mut changed = false;
 
     match req.collection.as_str() {
         "userPreferences" => {
-            for row in req.rows {
+            for (index, row) in req.rows.into_iter().enumerate() {
                 let doc = match parse_user_preferences_document(row.new_document_state) {
                     Ok(doc) => doc,
                     Err(error) => {
-                        let message = client_error_message(error);
-                        send_sync_error(socket, &request_id, "invalid_document", &message).await;
-                        return;
+                        rejections.push(json!({
+                            "index": index,
+                            "code": "invalid_document",
+                            "message": client_error_message(error)
+                        }));
+                        continue;
                     }
                 };
                 let deleted_at = if doc.deleted {
@@ -531,6 +525,9 @@ async fn handle_push(
                     })),
                     Ok(None) => changed = true,
                     Err(error) => {
+                        if changed {
+                            sync_hub.notify(user.id, "userPreferences");
+                        }
                         tracing::error!(?error, "Failed to push user preference");
                         send_sync_error(
                             socket,
@@ -548,7 +545,8 @@ async fn handle_push(
                 "event": "push_response",
                 "requestId": request_id,
                 "collection": "userPreferences",
-                "conflicts": conflicts
+                "conflicts": conflicts,
+                "rejections": rejections
             });
 
             let _ = socket.send(Message::Text(resp.to_string().into())).await;
@@ -687,19 +685,21 @@ async fn handle_push(
         }
 
         "weightLogs" => {
-            if !weight_tracking_enabled(db, user.id).await {
-                send_sync_error(
-                    socket,
-                    &request_id,
-                    "weight_tracking_disabled",
-                    "Weight tracking is disabled in Settings",
-                )
-                .await;
-                return;
-            }
             let today = match db.sync.current_santiago_date().await {
-                Ok(value) => NaiveDate::parse_from_str(&value, "%Y-%m-%d")
-                    .expect("database returns ISO date"),
+                Ok(value) => match NaiveDate::parse_from_str(&value, "%Y-%m-%d") {
+                    Ok(date) => date,
+                    Err(error) => {
+                        tracing::error!(?error, %value, "Database returned an invalid Santiago date");
+                        send_sync_error(
+                            socket,
+                            &request_id,
+                            "database_error",
+                            "Database operation failed",
+                        )
+                        .await;
+                        return;
+                    }
+                },
                 Err(error) => {
                     tracing::error!(?error, "Failed to resolve Santiago date");
                     send_sync_error(
@@ -712,26 +712,25 @@ async fn handle_push(
                     return;
                 }
             };
-            for row in req.rows {
-                let doc = match parse_weight_log_document(row.new_document_state) {
-                    Ok(doc) => doc,
+            for (index, row) in req.rows.into_iter().enumerate() {
+                let (doc, measured_on) = match parse_weight_log_document(row.new_document_state) {
+                    Ok(parsed) => parsed,
                     Err(error) => {
-                        let message = client_error_message(error);
-                        send_sync_error(socket, &request_id, "invalid_document", &message).await;
-                        return;
+                        rejections.push(json!({
+                            "index": index,
+                            "code": "invalid_document",
+                            "message": client_error_message(error)
+                        }));
+                        continue;
                     }
                 };
-                let measured_on =
-                    NaiveDate::parse_from_str(&doc.id, "%Y-%m-%d").expect("validated weight date");
                 if measured_on > today {
-                    send_sync_error(
-                        socket,
-                        &request_id,
-                        "invalid_document",
-                        "weightLogs.id cannot be a future date",
-                    )
-                    .await;
-                    return;
+                    rejections.push(json!({
+                        "index": index,
+                        "code": "invalid_document",
+                        "message": "weightLogs.id cannot be a future date"
+                    }));
+                    continue;
                 }
                 let deleted_at = if doc.deleted {
                     Some(doc.updated_at)
@@ -757,6 +756,9 @@ async fn handle_push(
                     })),
                     Ok(None) => changed = true,
                     Err(error) => {
+                        if changed {
+                            sync_hub.notify(user.id, "weightLogs");
+                        }
                         send_app_error(socket, &request_id, error, "weight log").await;
                         return;
                     }
@@ -766,7 +768,8 @@ async fn handle_push(
                 "event": "push_response",
                 "requestId": request_id,
                 "collection": "weightLogs",
-                "conflicts": conflicts
+                "conflicts": conflicts,
+                "rejections": rejections
             });
             let _ = socket
                 .send(Message::Text(response.to_string().into()))
@@ -893,10 +896,10 @@ fn parse_user_preferences_document(value: Value) -> Result<UserPreferencesDocume
     Ok(document)
 }
 
-fn parse_weight_log_document(value: Value) -> Result<WeightLogDocument, AppError> {
+fn parse_weight_log_document(value: Value) -> Result<(WeightLogDocument, NaiveDate), AppError> {
     let document: WeightLogDocument = serde_json::from_value(value)
         .map_err(|error| AppError::BadRequest(format!("Invalid weight log: {error}")))?;
-    NaiveDate::parse_from_str(&document.id, "%Y-%m-%d")
+    let measured_on = NaiveDate::parse_from_str(&document.id, "%Y-%m-%d")
         .map_err(|_| AppError::BadRequest("weightLogs.id must use YYYY-MM-DD".into()))?;
     validate_weight_grams(document.weight_grams)?;
     if document.updated_at <= 0 {
@@ -904,7 +907,7 @@ fn parse_weight_log_document(value: Value) -> Result<WeightLogDocument, AppError
             "weightLogs.updatedAt must be a positive epoch millisecond value".into(),
         ));
     }
-    Ok(document)
+    Ok((document, measured_on))
 }
 
 fn parse_uuid_checkpoint(value: Option<&str>) -> Result<Option<Uuid>, String> {
@@ -920,16 +923,6 @@ fn parse_date_checkpoint(value: Option<&str>) -> Result<Option<NaiveDate>, Strin
                 .map_err(|_| "checkpoint.id must use YYYY-MM-DD".into())
         })
         .transpose()
-}
-
-async fn weight_tracking_enabled(db: &Arc<Database>, user_id: i32) -> bool {
-    match db.sync.weight_tracking_enabled(user_id).await {
-        Ok(enabled) => enabled,
-        Err(error) => {
-            tracing::error!(?error, "Failed to read weight tracking preference");
-            false
-        }
-    }
 }
 
 fn client_error_message(error: AppError) -> String {

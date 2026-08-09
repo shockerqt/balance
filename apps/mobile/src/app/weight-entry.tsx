@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Button, Field, Input, Sheet, Text } from '@/components/ui';
 import { displayDateFor, todayId } from '@/hooks/use-meal-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { makeStyles } from '@/theme';
 import { formatWeight, parseWeightInput } from '@/services/weight/weight';
 import { isDateId } from '@/services/sync/types';
@@ -14,12 +15,18 @@ export default function WeightEntryScreen() {
   const { dateId: dateParam } = useLocalSearchParams<{ dateId?: string }>();
   const dateId = isDateId(dateParam) ? dateParam : todayId();
   const { weightsByDate, saveWeight, deleteWeight } = useWeightStore();
+  const { weightTrackingEnabled } = usePreferencesStore();
   const current = weightsByDate[dateId];
   const [value, setValue] = useState(current ? formatWeight(current.weightGrams) : '');
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isFuture = dateId > todayId();
   const title = current ? 'Editar peso' : 'Registrar peso';
   const subtitle = useMemo(() => displayDateFor(dateId), [dateId]);
+
+  useEffect(() => {
+    if (!dirty) setValue(current ? formatWeight(current.weightGrams) : '');
+  }, [current, dirty]);
 
   const save = () => {
     const grams = parseWeightInput(value);
@@ -28,7 +35,11 @@ export default function WeightEntryScreen() {
       return;
     }
     if (!saveWeight(dateId, grams)) {
-      setError('No se puede registrar peso para esta fecha.');
+      setError(
+        weightTrackingEnabled
+          ? 'No se puede registrar peso para esta fecha.'
+          : 'El seguimiento de peso está desactivado en Configuración.'
+      );
       return;
     }
     router.back();
@@ -65,6 +76,7 @@ export default function WeightEntryScreen() {
               variant="number"
               onChangeText={(next) => {
                 setValue(next);
+                setDirty(true);
                 setError(null);
               }}
             />

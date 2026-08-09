@@ -41,6 +41,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
   },
   "private": true

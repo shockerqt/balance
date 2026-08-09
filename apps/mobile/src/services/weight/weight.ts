@@ -54,7 +54,7 @@ export function previousWeight(
   return dates.length ? logs[dates[dates.length - 1]] : null;
 }
 
-const DAY_INITIALS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const DAY_INITIALS = ['D', 'L', 'M', 'Mi', 'J', 'V', 'S'];
 
 export function weightTrendDates(dateId: string): { id: string; initial: string }[] {
   const [year, month, day] = dateId.split('-').map(Number);

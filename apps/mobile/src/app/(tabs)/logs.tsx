@@ -29,8 +29,13 @@ export default function LogsScreen() {
   const router = useRouter();
   const pagerRef = useRef<PagerView>(null);
 
-  const { selectedDateId, setSelectedDateId, currentDayLog, dayLogs, deleteMultipleFoods } =
-    useMealStore();
+  const {
+    selectedDateId,
+    setSelectedDateId,
+    currentDayLog,
+    dayLogs,
+    deleteMultipleFoods,
+  } = useMealStore();
 
   const selection = useFoodSelection();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
@@ -83,10 +88,7 @@ export default function LogsScreen() {
   const openBatchMove = useCallback(() => {
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
-    router.push({
-      pathname: '/batch-move',
-      params: { dateId: selectedDateId, ids: ids.join(',') },
-    });
+    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
     selection.clear();
   }, [router, selectedDateId, selection]);
 
@@ -130,8 +132,7 @@ export default function LogsScreen() {
         style={styles.pager}
         scrollEnabled={!selection.isSelectionMode}
         initialPage={activeIndex !== -1 ? activeIndex : 0}
-        onPageSelected={onPageSelected}
-      >
+        onPageSelected={onPageSelected}>
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
           const log = dayLogs[dateId] ?? emptyDayLog(dateId);
@@ -166,6 +167,8 @@ export default function LogsScreen() {
       ) : (
         <FloatingAddButton onPress={() => openFoodSearch()} />
       )}
+
+
     </Screen>
   );
 }

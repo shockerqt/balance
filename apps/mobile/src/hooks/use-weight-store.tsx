@@ -1,4 +1,12 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { todayId } from '@/hooks/use-meal-store';
@@ -20,6 +28,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const namespace = user ? `user:${user.id}` : 'guest';
   const [logs, setLogs] = useState<WeightLogDoc[]>([]);
+  const logsRef = useRef<WeightLogDoc[]>([]);
 
   const persist = useCallback(
     (next: WeightLogDoc[]) => {
@@ -30,28 +39,33 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     if (!preferencesReady || !weightTrackingEnabled) {
+      logsRef.current = [];
       setLogs([]);
       return;
     }
     let cancelled = false;
+    logsRef.current = [];
     setLogs([]);
     const ready = (async () => {
       const raw = await storage.getItem(collectionStorageKey(namespace, 'weightLogs'));
       if (cancelled || !raw) return;
       try {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setLogs(parsed.filter(isWeightLogDoc));
+        if (Array.isArray(parsed)) {
+          const next = parsed.filter(isWeightLogDoc);
+          logsRef.current = next;
+          setLogs(next);
+        }
       } catch {
         // PostgreSQL restores the authoritative cache after reconnect.
       }
     })();
     const receive = (documents: SyncDocument[]) => {
       if (cancelled) return;
-      setLogs((current) => {
-        const next = mergeWeightLogs(current, documents);
-        persist(next);
-        return next;
-      });
+      const next = mergeWeightLogs(logsRef.current, documents);
+      logsRef.current = next;
+      setLogs(next);
+      persist(next);
     };
     const unregister = syncClient.registerCollection(
       'weightLogs',
@@ -83,11 +97,10 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updatedAt: Date.now(),
         _deleted: false,
       };
-      setLogs((current) => {
-        const next = mergeWeightLogs(current, [document]);
-        persist(next);
-        return next;
-      });
+      const next = mergeWeightLogs(logsRef.current, [document]);
+      logsRef.current = next;
+      setLogs(next);
+      persist(next);
       void syncClient.enqueue('weightLogs', document);
       return true;
     },
@@ -97,15 +110,14 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const deleteWeight = useCallback(
     (dateId: string) => {
       if (!weightTrackingEnabled) return;
-      setLogs((current) => {
-        const existing = current.find((doc) => doc.id === dateId && !doc._deleted);
-        if (!existing) return current;
-        const deleted: WeightLogDoc = { ...existing, updatedAt: Date.now(), _deleted: true };
-        const next = mergeWeightLogs(current, [deleted]);
-        persist(next);
-        void syncClient.enqueue('weightLogs', deleted);
-        return next;
-      });
+      const existing = logsRef.current.find((doc) => doc.id === dateId && !doc._deleted);
+      if (!existing) return;
+      const deleted: WeightLogDoc = { ...existing, updatedAt: Date.now(), _deleted: true };
+      const next = mergeWeightLogs(logsRef.current, [deleted]);
+      logsRef.current = next;
+      setLogs(next);
+      persist(next);
+      void syncClient.enqueue('weightLogs', deleted);
     },
     [persist, weightTrackingEnabled]
   );

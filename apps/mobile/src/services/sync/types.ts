@@ -1,9 +1,4 @@
-export const SYNC_COLLECTIONS = [
-  'userPreferences',
-  'mealTemplates',
-  'mealLogs',
-  'weightLogs',
-] as const;
+export const SYNC_COLLECTIONS = ['userPreferences', 'mealTemplates', 'mealLogs', 'weightLogs'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
 export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';
@@ -77,9 +72,7 @@ export interface SyncCheckpoint {
 }
 
 export function isMealUnit(value: unknown): value is MealUnit {
-  return (
-    value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup'
-  );
+  return value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup';
 }
 
 const nonNegative = (value: unknown): value is number =>
@@ -94,12 +87,8 @@ export function isNutrition(value: unknown): value is Nutrition {
     nonNegative(nutrition.carbs) &&
     nonNegative(nutrition.fat) &&
     (nutrition.fiber === undefined || nutrition.fiber === null || nonNegative(nutrition.fiber)) &&
-    (nutrition.sodiumMg === undefined ||
-      nutrition.sodiumMg === null ||
-      nonNegative(nutrition.sodiumMg)) &&
-    (nutrition.cholesterolMg === undefined ||
-      nutrition.cholesterolMg === null ||
-      nonNegative(nutrition.cholesterolMg))
+    (nutrition.sodiumMg === undefined || nutrition.sodiumMg === null || nonNegative(nutrition.sodiumMg)) &&
+    (nutrition.cholesterolMg === undefined || nutrition.cholesterolMg === null || nonNegative(nutrition.cholesterolMg))
   );
 }
 
@@ -113,9 +102,7 @@ export function isMealTemplateDetails(value: unknown): value is MealTemplateDeta
     details.baseAmount > 0 &&
     isMealUnit(details.unit) &&
     isNutrition(details.nutrition) &&
-    (details.typicalTime === undefined ||
-      details.typicalTime === null ||
-      /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
+    (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
   );
 }
 
@@ -197,4 +184,18 @@ export function isSyncDocument(collection: SyncCollection, value: unknown): valu
   if (collection === 'mealTemplates') return isMealTemplateDoc(value);
   if (collection === 'mealLogs') return isMealLogDoc(value);
   return isWeightLogDoc(value);
+}
+
+export function parseRejectedIndexes(value: unknown, rowCount: number): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const indexes = new Set<number>();
+  for (const rejection of value) {
+    const index =
+      rejection && typeof rejection === 'object'
+        ? (rejection as Record<string, unknown>).index
+        : undefined;
+    if (!Number.isInteger(index) || Number(index) < 0 || Number(index) >= rowCount) return null;
+    indexes.add(Number(index));
+  }
+  return Array.from(indexes);
 }
