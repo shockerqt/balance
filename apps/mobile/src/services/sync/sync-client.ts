@@ -78,6 +78,7 @@ export class SyncClient {
   private namespaceGeneration = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private reconnectWithoutDelay = false;
   private closedByUser = false;
   private pending = new Map<string, PendingRequest<unknown>>();
   private collectionFallbackRequests = new Map<SyncCollection, string[]>();
@@ -129,6 +130,10 @@ export class SyncClient {
       if (reconnectForToken) {
         this.clearReconnectTimer();
         this.cancelPending(new Error('SYNC_ACCESS_TOKEN_CHANGED'));
+        // A routine token rotation is not a failure: reconnect at once instead
+        // of inheriting the backoff and leaving sync offline for up to 30 s.
+        this.reconnectWithoutDelay = true;
+        this.reconnectAttempt = 0;
         this.ws.close();
       }
       return;
@@ -153,7 +158,9 @@ export class SyncClient {
         // A late close from a replaced socket must not erase its successor.
         if (this.ws !== socket) return;
         this.ws = null;
-        if (!this.closedByUser) this.scheduleReconnect();
+        const immediate = this.reconnectWithoutDelay;
+        this.reconnectWithoutDelay = false;
+        if (!this.closedByUser) this.scheduleReconnect(immediate ? 0 : undefined);
       };
     } catch {
       this.ws = null;
@@ -163,6 +170,7 @@ export class SyncClient {
 
   disconnect(): void {
     this.closedByUser = true;
+    this.reconnectWithoutDelay = false;
     this.accessToken = null;
     this.clearReconnectTimer();
     for (const pending of this.pending.values()) {
@@ -198,12 +206,14 @@ export class SyncClient {
           ? message.documents.filter((doc) => isSyncDocument(collection, doc))
           : [];
         const checkpointValue = message.checkpoint;
-        const nextCheckpoint = checkpointValue && typeof checkpointValue === 'object'
+        const nextCheckpoint =
+          checkpointValue && typeof checkpointValue === 'object'
             ? {
                 updatedAt: Number((checkpointValue as Record<string, unknown>).updatedAt),
-              id: typeof (checkpointValue as Record<string, unknown>).id === 'string'
-                ? (checkpointValue as Record<string, unknown>).id as string
-                : undefined,
+                id:
+                  typeof (checkpointValue as Record<string, unknown>).id === 'string'
+                    ? ((checkpointValue as Record<string, unknown>).id as string)
+                    : undefined,
               }
             : null;
         return {
@@ -337,21 +347,27 @@ export class SyncClient {
       return;
     }
     if (event === 'error' || event === 'sync_error') {
-      const nestedError = message.error && typeof message.error === 'object'
+      const nestedError =
+        message.error && typeof message.error === 'object'
           ? (message.error as Record<string, unknown>).code
           : undefined;
       this.resolvePending(
         typeof message.requestId === 'string'
           ? message.requestId
-          : collection ? this.collectionFallbackRequests.get(collection)?.[0] ?? '' : '',
+          : collection
+            ? (this.collectionFallbackRequests.get(collection)?.[0] ?? '')
+            : '',
         message,
         new Error(String(message.code || nestedError || 'SYNC_SERVER_ERROR')),
       );
       return;
     }
-    const pendingId = typeof message.requestId === 'string'
+    const pendingId =
+      typeof message.requestId === 'string'
         ? message.requestId
-      : collection ? this.collectionFallbackRequests.get(collection)?.[0] : undefined;
+        : collection
+          ? this.collectionFallbackRequests.get(collection)?.[0]
+          : undefined;
     if (pendingId) this.resolvePending(pendingId, message);
   }
 
