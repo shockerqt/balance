@@ -7,6 +7,9 @@ import { useTheme } from '@/theme';
 import { Button, Card, ProgressBar, Screen, Text } from '@/components/ui';
 import { MacroGrid } from '@/components/summary/macro-grid';
 import { WeeklyChart } from '@/components/summary/weekly-chart';
+import { WeightTrendCard } from '@/components/weight/weight-trend-card';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
+import { useWeightStore } from '@/hooks/use-weight-store';
 
 /* Resumen del dia. No declara colores ni tamaños de fuente: todo
    sale del tema y de las primitivas. Su StyleSheet es solo layout. */
@@ -23,7 +26,9 @@ export default function SummaryScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { currentDayLog, dayLogs } = useMealStore();
-  const { user, isGuest, logout } = useAuth();
+  const { user, isGuest } = useAuth();
+  const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -39,11 +44,6 @@ export default function SummaryScreen() {
       now.getMinutes()
     ).padStart(2, '0')}`;
     router.push({ pathname: '/food-search', params: { dateId: currentDayLog.dateId, time } });
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    router.replace("/login");
   };
 
   return (
@@ -72,11 +72,11 @@ export default function SummaryScreen() {
             </View>
           </View>
           <Button
-            title="Cerrar sesión"
+            title="Configuración"
             variant="ghost"
             size="md"
-            onPress={handleLogout}
-            accessibilityLabel="Cerrar sesión y volver al inicio"
+            onPress={() => router.push('/settings')}
+            accessibilityLabel="Abrir Configuración"
           />
         </View>
 
@@ -115,6 +115,17 @@ export default function SummaryScreen() {
         </Card>
 
         <Button title="Registrar comida" onPress={openAddFood} />
+
+        {preferencesReady && weightTrackingEnabled ? (
+          <WeightTrendCard
+            dateId={currentDayLog.dateId}
+            weightsByDate={weightsByDate}
+            onPress={() =>
+              router.push({ pathname: '/weight-entry', params: { dateId: currentDayLog.dateId } })
+            }
+          />
+        ) : null}
+        {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
         <WeeklyChart dayLogs={dayLogs} referenceDateId={currentDayLog.dateId} />
       </ScrollView>

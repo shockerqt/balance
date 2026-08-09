@@ -7,6 +7,8 @@ import {
   SyncCheckpoint,
   SyncCollection,
   SyncDocument,
+  SyncPushRejection,
+  parsePushRejections,
   isSyncDocument,
 } from './types';
 
@@ -24,11 +26,20 @@ export interface PullResult {
 export interface CollectionHandlers {
   onDocuments: (documents: SyncDocument[], result: PullResult) => void;
   onPushConflicts?: (documents: SyncDocument[]) => void;
+  onPushRejected?: (rejections: RejectedDocument[]) => void;
+}
+
+export interface RejectedDocument {
+  document: SyncDocument;
+  previousDocument?: SyncDocument | null;
+  code: string;
+  message: string;
 }
 
 interface PushResult {
   conflicts: SyncDocument[];
   invalidConflict: boolean;
+  rejections: SyncPushRejection[];
 }
 
 interface PendingRequest<T> {
@@ -43,6 +54,7 @@ interface PendingRequest<T> {
 interface OutboxEntry {
   collection: SyncCollection;
   document: SyncDocument;
+  previousDocument?: SyncDocument | null;
   queuedAt: number;
 }
 
@@ -89,6 +101,7 @@ export class SyncClient {
   private flushAfterCurrent = false;
   private resyncs = new Map<SyncCollection, Promise<void>>();
   private enqueueChains = new Map<string, Promise<void>>();
+  private disabledCollections = new Set<SyncCollection>();
 
   constructor() {
     AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -114,10 +127,21 @@ export class SyncClient {
 
   registerCollection(collection: SyncCollection, nextHandlers: CollectionHandlers, ready?: Promise<void>): () => void {
     this.handlers.set(collection, nextHandlers);
-    void this.resyncCollection(collection, ready);
+    if (!this.disabledCollections.has(collection)) void this.resyncCollection(collection, ready);
     return () => {
       if (this.handlers.get(collection) === nextHandlers) this.handlers.delete(collection);
     };
+  }
+
+  setCollectionEnabled(collection: SyncCollection, enabled: boolean): void {
+    if (collection === 'userPreferences') return;
+    if (!enabled) {
+      this.disabledCollections.add(collection);
+      return;
+    }
+    if (!this.disabledCollections.delete(collection)) return;
+    void this.resyncCollection(collection);
+    void this.flushOutbox();
   }
 
   connect(accessToken?: string, namespace?: string): void {
@@ -185,6 +209,7 @@ export class SyncClient {
   }
 
   async pull(collection: SyncCollection, checkpoint?: SyncCheckpoint, limit = 50, expected?: { namespace: string; generation: number }): Promise<PullResult> {
+    if (this.disabledCollections.has(collection)) throw new Error('SYNC_COLLECTION_DISABLED');
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('SYNC_OFFLINE');
     }
@@ -229,7 +254,8 @@ export class SyncClient {
   }
 
   async push(collection: SyncCollection, rows: { newDocumentState: SyncDocument }[]): Promise<PushResult> {
-    if (!rows.length) return { conflicts: [], invalidConflict: false };
+    if (this.disabledCollections.has(collection)) throw new Error('SYNC_COLLECTION_DISABLED');
+    if (!rows.length) return { conflicts: [], invalidConflict: false, rejections: [] };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('SYNC_OFFLINE');
     const requestId = nextRequestId();
     return this.request<PushResult>(
@@ -237,21 +263,33 @@ export class SyncClient {
       collection,
       { event: 'push', requestId, collection, rows },
       (message) => {
-        if (!Array.isArray(message.conflicts)) return { conflicts: [], invalidConflict: true };
+        if (!Array.isArray(message.conflicts)) {
+          return { conflicts: [], invalidConflict: true, rejections: [] };
+        }
         const conflicts: SyncDocument[] = [];
         let invalidConflict = false;
         for (const doc of message.conflicts) {
           if (isSyncDocument(collection, doc)) conflicts.push(doc);
           else invalidConflict = true;
         }
-        return { conflicts, invalidConflict };
+        let rejections: SyncPushRejection[] = [];
+        if (message.rejections !== undefined) {
+          const parsed = parsePushRejections(message.rejections, rows.length);
+          if (parsed) rejections = parsed;
+          else invalidConflict = true;
+        }
+        return { conflicts, invalidConflict, rejections };
       },
       this.namespace,
       this.namespaceGeneration,
     );
   }
 
-  async enqueue(collection: SyncCollection, document: SyncDocument): Promise<void> {
+  async enqueue(
+    collection: SyncCollection,
+    document: SyncDocument,
+    previousDocument?: SyncDocument | null
+  ): Promise<void> {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
     const previous = this.enqueueChains.get(namespace) ?? Promise.resolve();
@@ -263,7 +301,13 @@ export class SyncClient {
           const saved = JSON.parse(raw) as OutboxEntry[];
           if (Array.isArray(saved)) {
             for (const entry of saved) {
-              if (isCollection(entry.collection) && isSyncDocument(entry.collection, entry.document)) {
+              if (
+                isCollection(entry.collection) &&
+                isSyncDocument(entry.collection, entry.document) &&
+                (entry.previousDocument === undefined ||
+                  entry.previousDocument === null ||
+                  isSyncDocument(entry.collection, entry.previousDocument))
+              ) {
                 entries.set(`${entry.collection}:${entry.document.id}`, entry);
               }
             }
@@ -272,7 +316,14 @@ export class SyncClient {
           // Invalid outbox data is discarded for this namespace only.
         }
       }
-      entries.set(`${collection}:${document.id}`, { collection, document, queuedAt: Date.now() });
+      const key = `${collection}:${document.id}`;
+      const queued = entries.get(key);
+      entries.set(key, {
+        collection,
+        document,
+        previousDocument: queued ? queued.previousDocument : previousDocument,
+        queuedAt: Date.now(),
+      });
       await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(entries.values())));
       if (this.isCurrent(namespace, generation)) {
         this.outbox = entries;
@@ -286,10 +337,15 @@ export class SyncClient {
 
   async resync(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    await Promise.all(Array.from(this.handlers.keys()).map((collection) => this.resyncCollection(collection)));
+    await Promise.all(
+      Array.from(this.handlers.keys())
+        .filter((collection) => !this.disabledCollections.has(collection))
+        .map((collection) => this.resyncCollection(collection))
+    );
   }
 
   async resyncCollection(collection: SyncCollection, ready?: Promise<void>): Promise<void> {
+    if (this.disabledCollections.has(collection)) return;
     const current = this.resyncs.get(collection);
     if (current) return current;
     const namespace = this.namespace;
@@ -299,6 +355,11 @@ export class SyncClient {
     });
     this.resyncs.set(collection, operation);
     return operation;
+  }
+
+  async resetCollection(collection: SyncCollection): Promise<void> {
+    await storage.removeItem(checkpointStorageKey(this.namespace, collection));
+    await this.resyncCollection(collection);
   }
 
   private async performResync(collection: SyncCollection, namespace: string, generation: number, ready?: Promise<void>): Promise<void> {
@@ -341,8 +402,13 @@ export class SyncClient {
     }
     const collection = isCollection(message.collection) ? message.collection : undefined;
     const event = message.event;
-    if (event === 'collection_changed' || event === 'collectionChanged' || event === 'sync_required') {
-      if (collection) void this.resyncCollection(collection);
+    if (
+      event === 'collection_changed' ||
+      event === 'collectionChanged' ||
+      event === 'sync_required'
+    ) {
+      if (collection && !this.disabledCollections.has(collection))
+        void this.resyncCollection(collection);
       else void this.resync();
       return;
     }
@@ -354,9 +420,7 @@ export class SyncClient {
       this.resolvePending(
         typeof message.requestId === 'string'
           ? message.requestId
-          : collection
-            ? (this.collectionFallbackRequests.get(collection)?.[0] ?? '')
-            : '',
+          : collection ? this.collectionFallbackRequests.get(collection)?.[0] ?? '' : '',
         message,
         new Error(String(message.code || nestedError || 'SYNC_SERVER_ERROR')),
       );
@@ -470,6 +534,7 @@ export class SyncClient {
       if (!this.isCurrent(namespace, generation) || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.outbox.size === 0) return;
       for (const collection of SYNC_COLLECTIONS) {
         if (!this.isCurrent(namespace, generation)) return;
+        if (this.disabledCollections.has(collection)) continue;
         const entries = Array.from(this.outbox.values()).filter((entry) => entry.collection === collection);
         if (!entries.length) continue;
         try {
@@ -477,6 +542,14 @@ export class SyncClient {
           if (!this.isCurrent(namespace, generation)) return;
           this.handlers.get(collection)?.onPushConflicts?.(result.conflicts);
           if (result.invalidConflict) return;
+          const rejectedDocuments = result.rejections.map((rejection) => ({
+            document: entries[rejection.index].document,
+            previousDocument: entries[rejection.index].previousDocument,
+            code: rejection.code,
+            message: rejection.message,
+          }));
+          if (rejectedDocuments.length)
+            this.handlers.get(collection)?.onPushRejected?.(rejectedDocuments);
           for (const entry of entries) {
             const current = this.outbox.get(`${collection}:${entry.document.id}`);
             if (current?.document.updatedAt === entry.document.updatedAt) this.outbox.delete(`${collection}:${entry.document.id}`);

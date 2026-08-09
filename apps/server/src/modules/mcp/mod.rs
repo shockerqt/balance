@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use chrono::NaiveDate;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -13,7 +14,10 @@ use uuid::Uuid;
 use crate::{
     connectors::{
         db::Database,
-        sync::{Consumption, FOOD_SCHEMA_VERSION, FoodDetails, FoodUnit, NutritionValues},
+        sync::{
+            Consumption, FOOD_SCHEMA_VERSION, FoodDetails, FoodUnit, NutritionValues, WeightLogRow,
+            WeightUpsertStatus,
+        },
     },
     modules::{auth::middleware::CurrentUser, sync::hub::SyncHub},
     shared::error::AppError,
@@ -22,7 +26,7 @@ use crate::{
 const MCP_URL: &str = "https://balance.shocker.cl/api/mcp";
 const AUTHORIZATION_SERVER: &str = "https://auth.shocker.cl/realms/balance";
 const TIMEZONE: &str = "America/Santiago";
-const SERVER_INSTRUCTIONS: &str = "Usa get_daily_log para consultar consumos, el diario o lo que el usuario comió en una fecha; para varios días llámala una vez por cada fecha exacta. Usa search_foods exclusivamente para buscar alimentos disponibles en el catálogo oficial o personal. Nunca uses search_foods para consultar consumos, historial o fechas. Si una consulta de historial no identifica una fecha, pide aclararla; omite date únicamente cuando el usuario dice hoy.";
+const SERVER_INSTRUCTIONS: &str = "Usa get_daily_log para consultar consumos y search_foods exclusivamente para el catálogo. Nunca uses search_foods para consultar consumos, historial o fechas. Usa get_weight_history, set_weight y delete_weight_log únicamente para peso corporal. Si el seguimiento de peso está desactivado, indica que debe habilitarse en Configuración de la app. Para varios días de comidas llama get_daily_log una vez por fecha exacta; una consulta de peso puede usar un rango. Omite date únicamente cuando el usuario dice hoy; hoy se interpreta en America/Santiago.";
 
 pub fn mcp_routes() -> Router {
     Router::new().route("/mcp", post(mcp_post_handler))
@@ -116,12 +120,38 @@ struct DeleteFoodLogArgs {
     log_id: Uuid,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GetWeightHistoryArgs {
+    start_date: Option<String>,
+    end_date: Option<String>,
+    #[serde(default = "default_weight_limit")]
+    limit: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetWeightArgs {
+    date: Option<String>,
+    weight_kg: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteWeightLogArgs {
+    date: Option<String>,
+}
+
 fn default_source() -> String {
     "all".into()
 }
 
 fn default_limit() -> i64 {
     10
+}
+
+fn default_weight_limit() -> i64 {
+    30
 }
 
 async fn mcp_post_handler(
@@ -183,6 +213,7 @@ fn mutated_collection(tool_name: &str) -> Option<&'static str> {
     match tool_name {
         "create_food" => Some("mealTemplates"),
         "log_food" | "update_food_log" | "delete_food_log" => Some("mealLogs"),
+        "set_weight" | "delete_weight_log" => Some("weightLogs"),
         _ => None,
     }
 }
@@ -265,7 +296,10 @@ async fn call_tool(
                     fiber: args.fiber,
                     sodium_mg: args.sodium_mg,
                     cholesterol_mg: args.cholesterol_mg,
+                    extended_nutrition: Default::default(),
                 },
+                serving_label: None,
+                grams_per_unit: None,
                 chilean_seals: args.chilean_seals,
                 category: args.category,
                 typical_time: args.typical_time,
@@ -339,6 +373,99 @@ async fn call_tool(
                 }),
             ))
         }
+        "get_weight_history" => {
+            require_weight_tracking(db, user_id).await?;
+            let args: GetWeightHistoryArgs = parse_args(args)?;
+            if !(1..=366).contains(&args.limit) {
+                return Err(AppError::BadRequest(
+                    "limit must be between 1 and 366".into(),
+                ));
+            }
+            if args.start_date.is_some() != args.end_date.is_some() {
+                return Err(AppError::BadRequest(
+                    "startDate and endDate must be provided together".into(),
+                ));
+            }
+            let today = current_weight_date(db).await?;
+            let (start, end) = match (args.start_date, args.end_date) {
+                (Some(start), Some(end)) => {
+                    let start = parse_weight_date(&start)?;
+                    let end = parse_weight_date(&end)?;
+                    if start > end {
+                        return Err(AppError::BadRequest(
+                            "startDate must not be after endDate".into(),
+                        ));
+                    }
+                    if end > today {
+                        return Err(AppError::BadRequest(
+                            "endDate cannot be in the future".into(),
+                        ));
+                    }
+                    (Some(start), end)
+                }
+                (None, None) => (None, today),
+                _ => unreachable!("paired range checked above"),
+            };
+            let rows = db
+                .sync
+                .get_weight_history(user_id, start, end, args.limit)
+                .await?;
+            let entries: Vec<Value> = rows.iter().map(weight_output).collect();
+            let latest = entries.last().cloned().unwrap_or(Value::Null);
+            let change_kg = if rows.len() >= 2 {
+                let previous = rows[rows.len() - 2].weight_grams;
+                Some((rows[rows.len() - 1].weight_grams - previous) as f64 / 1000.0)
+            } else {
+                None
+            };
+            Ok((
+                format!("Hay {} registros de peso.", entries.len()),
+                json!({
+                    "timezone": TIMEZONE,
+                    "entries": entries,
+                    "latest": latest,
+                    "changeKg": change_kg
+                }),
+            ))
+        }
+        "set_weight" => {
+            require_weight_tracking(db, user_id).await?;
+            let args: SetWeightArgs = parse_args(args)?;
+            let date = resolve_weight_date(db, args.date).await?;
+            let grams = weight_kg_to_grams(args.weight_kg)?;
+            let (row, status) = db.sync.set_weight(user_id, date, grams).await?;
+            let status = match status {
+                WeightUpsertStatus::Created => "created",
+                WeightUpsertStatus::Updated => "updated",
+                WeightUpsertStatus::Unchanged => "unchanged",
+            };
+            Ok((
+                match status {
+                    "created" => format!("Se registró el peso para {date}."),
+                    "updated" => format!("Se actualizó el peso para {date}."),
+                    _ => format!("El peso de {date} ya tenía ese valor."),
+                },
+                json!({ "status": status, "measurement": weight_output(&row) }),
+            ))
+        }
+        "delete_weight_log" => {
+            require_weight_tracking(db, user_id).await?;
+            let args: DeleteWeightLogArgs = parse_args(args)?;
+            let date = resolve_weight_date(db, args.date).await?;
+            let (row, already_deleted) = db.sync.soft_delete_weight(user_id, date).await?;
+            Ok((
+                if already_deleted {
+                    format!("El peso de {date} ya estaba eliminado.")
+                } else {
+                    format!("Se eliminó el peso de {date}.")
+                },
+                json!({
+                    "status": if already_deleted { "alreadyDeleted" } else { "deleted" },
+                    "date": date.to_string(),
+                    "updatedAt": row.updated_at
+                }),
+            ))
+        }
         _ => Err(AppError::BadRequest("Unknown tool".into())),
     }
 }
@@ -401,6 +528,7 @@ fn zero_nutrition() -> NutritionValues {
         fiber: 0.0,
         sodium_mg: None,
         cholesterol_mg: None,
+        extended_nutrition: Default::default(),
     }
 }
 
@@ -419,6 +547,64 @@ fn add_optional(left: Option<f64>, right: Option<f64>) -> Option<f64> {
         (None, None) => None,
         (left, right) => Some(left.unwrap_or(0.0) + right.unwrap_or(0.0)),
     }
+}
+
+async fn require_weight_tracking(db: &Database, user_id: i32) -> Result<(), AppError> {
+    if db.sync.weight_tracking_enabled(user_id).await? {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "Weight tracking is disabled; enable it in Balance Settings first".into(),
+        ))
+    }
+}
+
+async fn current_weight_date(db: &Database) -> Result<NaiveDate, AppError> {
+    parse_weight_date(&db.sync.current_santiago_date().await?)
+}
+
+async fn resolve_weight_date(db: &Database, date: Option<String>) -> Result<NaiveDate, AppError> {
+    let today = current_weight_date(db).await?;
+    let date = date
+        .as_deref()
+        .map(parse_weight_date)
+        .transpose()?
+        .unwrap_or(today);
+    if date > today {
+        return Err(AppError::BadRequest(
+            "date cannot be in the future in America/Santiago".into(),
+        ));
+    }
+    Ok(date)
+}
+
+fn parse_weight_date(value: &str) -> Result<NaiveDate, AppError> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| AppError::BadRequest("date must use YYYY-MM-DD".into()))
+}
+
+fn weight_kg_to_grams(weight_kg: f64) -> Result<i32, AppError> {
+    if !weight_kg.is_finite() {
+        return Err(AppError::BadRequest("weightKg must be finite".into()));
+    }
+    let grams = weight_kg * 1000.0;
+    let rounded = grams.round();
+    if (grams - rounded).abs() > 0.000_001 {
+        return Err(AppError::BadRequest(
+            "weightKg must use at most one decimal place".into(),
+        ));
+    }
+    let grams = rounded as i32;
+    crate::connectors::sync::validate_weight_grams(grams)?;
+    Ok(grams)
+}
+
+fn weight_output(row: &WeightLogRow) -> Value {
+    json!({
+        "date": row.measured_on.to_string(),
+        "weightKg": row.weight_grams as f64 / 1000.0,
+        "updatedAt": row.updated_at
+    })
 }
 
 fn tool_success(id: Value, summary: &str, structured: Value) -> axum::response::Response {
@@ -605,8 +791,109 @@ pub(crate) fn tool_definitions() -> Value {
                 "idempotentHint": true,
                 "openWorldHint": false
             }
+        },
+        {
+            "name": "get_weight_history",
+            "title": "Consultar historial de peso",
+            "description": "Consulta exclusivamente mediciones de peso corporal. Sin rango devuelve hasta los 30 registros más recientes. Para un rango, envía startDate y endDate juntos; usa la misma fecha en ambos para un día exacto. No funciona mientras el seguimiento de peso esté desactivado en Configuración.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "startDate": { "type": "string", "format": "date" },
+                    "endDate": { "type": "string", "format": "date" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 366, "default": 30 }
+                },
+                "additionalProperties": false
+            },
+            "outputSchema": weight_history_output_schema(),
+            "securitySchemes": auth,
+            "_meta": { "securitySchemes": auth },
+            "annotations": read_annotations
+        },
+        {
+            "name": "set_weight",
+            "title": "Registrar o corregir peso",
+            "description": "Registra un peso corporal en kg con un decimal. Existe un solo valor por fecha: repetir el mismo valor no cambia nada y enviar otro lo corrige. Omite date solo para hoy. Requiere que el seguimiento esté habilitado en Configuración.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "date": { "type": "string", "format": "date" },
+                    "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0, "description": "Kilograms with at most one decimal place" }
+                },
+                "required": ["weightKg"],
+                "additionalProperties": false
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "enum": ["created", "updated", "unchanged"] },
+                    "measurement": weight_measurement_schema()
+                },
+                "required": ["status", "measurement"],
+                "additionalProperties": false
+            },
+            "securitySchemes": auth,
+            "_meta": { "securitySchemes": auth },
+            "annotations": write_annotations
+        },
+        {
+            "name": "delete_weight_log",
+            "title": "Eliminar peso diario",
+            "description": "Elimina de forma reversible el peso de una fecha. Omite date solo para hoy y confirma la fecha con el usuario. Requiere que el seguimiento esté habilitado en Configuración.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "date": { "type": "string", "format": "date" } },
+                "additionalProperties": false
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "enum": ["deleted", "alreadyDeleted"] },
+                    "date": { "type": "string", "format": "date" },
+                    "updatedAt": { "type": "integer" }
+                },
+                "required": ["status", "date", "updatedAt"],
+                "additionalProperties": false
+            },
+            "securitySchemes": auth,
+            "_meta": { "securitySchemes": auth },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            }
         }
     ])
+}
+
+fn weight_measurement_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "date": { "type": "string", "format": "date" },
+            "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0 },
+            "updatedAt": { "type": "integer" }
+        },
+        "required": ["date", "weightKg", "updatedAt"],
+        "additionalProperties": false
+    })
+}
+
+fn weight_history_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "timezone": { "type": "string", "const": TIMEZONE },
+            "entries": { "type": "array", "items": weight_measurement_schema() },
+            "latest": {
+                "anyOf": [weight_measurement_schema(), { "type": "null" }]
+            },
+            "changeKg": { "type": ["number", "null"] }
+        },
+        "required": ["timezone", "entries", "latest", "changeKg"],
+        "additionalProperties": false
+    })
 }
 
 fn create_food_input_schema() -> Value {
@@ -805,10 +1092,23 @@ mod tests {
                 "create_food",
                 "log_food",
                 "update_food_log",
-                "delete_food_log"
+                "delete_food_log",
+                "get_weight_history",
+                "set_weight",
+                "delete_weight_log"
             ]
         );
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 9);
+    }
+
+    #[test]
+    fn weight_precision_conversion_is_exact_and_bounded() {
+        assert_eq!(weight_kg_to_grams(72.4).unwrap(), 72_400);
+        assert_eq!(weight_kg_to_grams(1.0).unwrap(), 1_000);
+        assert!(weight_kg_to_grams(72.45).is_err());
+        assert!(weight_kg_to_grams(0.9).is_err());
+        assert!(weight_kg_to_grams(500.1).is_err());
+        assert!(weight_kg_to_grams(f64::NAN).is_err());
     }
 
     #[test]

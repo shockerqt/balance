@@ -5,6 +5,7 @@ import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
 import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
 import { parsePortion } from '@/lib/portion';
+import { recoverGuestImport } from '@/services/import/guest-import';
 
 export interface LoggedFoodItem {
   id: string;
@@ -161,12 +162,14 @@ interface MealStoreContextType {
   setSelectedDateId: (dateId: string) => void;
   dayLogs: Record<string, DayLog>;
   currentDayLog: DayLog;
+  mealDocuments: MealLogDoc[];
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
   deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
   moveMultipleFoodsTime: (dateId: string, foodIds: string[], newTime: string) => void;
+  replaceMealDocuments: (documents: MealLogDoc[]) => void;
 }
 
 const MealStoreContext = createContext<MealStoreContextType | undefined>(undefined);
@@ -179,9 +182,9 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     let cancelled = false;
-    syncClient.setNamespace(namespace);
     setLogs([]);
     const ready = (async () => {
+      if (namespace === 'guest') await recoverGuestImport().catch(() => null);
       const raw = await storage.getItem(collectionStorageKey(namespace, 'mealLogs'));
       if (cancelled || !raw) return;
       try {
@@ -207,6 +210,18 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           persistLogs(namespace, next);
           return next;
         });
+      },
+      onPushRejected: (rejections) => {
+        const rejectedIds = new Set(
+          rejections.filter((value) => isMealLogDoc(value.document)).map((value) => value.document.id)
+        );
+        if (!rejectedIds.size) return;
+        setLogs((previous) => {
+          const next = previous.filter((doc) => !rejectedIds.has(doc.id));
+          persistLogs(namespace, next);
+          return next;
+        });
+        void syncClient.resetCollection('mealLogs');
       },
     }, ready);
     return () => {
@@ -316,18 +331,23 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [logs]);
 
   const currentDayLog = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
+  const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
+    setLogs(documents);
+  }, []);
   const value = useMemo<MealStoreContextType>(() => ({
     selectedDateId,
     setSelectedDateId,
     dayLogs,
     currentDayLog,
+    mealDocuments: logs,
     addFood,
     addMultipleFoods,
     updateFood,
     deleteFood,
     deleteMultipleFoods,
     moveMultipleFoodsTime,
-  }), [selectedDateId, dayLogs, currentDayLog, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime]);
+    replaceMealDocuments,
+  }), [selectedDateId, dayLogs, currentDayLog, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 

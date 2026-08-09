@@ -96,6 +96,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   setAuthToken: (token: string | null) => void;
   checkSession: (tokenOverride?: string) => Promise<void>;
+  authorizedFetch: (path: string, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -492,6 +493,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [clearAuthenticatedState]);
 
+  const authorizedFetch = useCallback(
+    async (path: string, init: RequestInit = {}) => {
+      const epoch = epochRef.current;
+      let session = sessionRef.current;
+      if (!session) throw new Error('Debes iniciar sesión para importar al servidor');
+      if (!isSessionFresh(session)) {
+        const refreshed = await refreshSession(session, epoch);
+        if (!refreshed) throw new Error('No se pudo renovar la sesión');
+        session = refreshed;
+      }
+
+      const request = (accessToken: string) => {
+        const headers = new Headers(init.headers);
+        headers.set('Authorization', `Bearer ${accessToken}`);
+        if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+        return fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+      };
+
+      let response = await request(session.accessToken);
+      if (response.status !== 401 || epoch !== epochRef.current) return response;
+      const latest = sessionForUnauthorizedResponse(session, sessionRef.current);
+      const refreshed = latest.accessToken !== session.accessToken ? latest : await refreshSession(session, epoch);
+      if (!refreshed) {
+        await clearAuthenticatedState();
+        return response;
+      }
+      response = await request(refreshed.accessToken);
+      if (response.status === 401 && epoch === epochRef.current) await clearAuthenticatedState();
+      return response;
+    },
+    [clearAuthenticatedState, refreshSession],
+  );
+
   const value = useMemo<AuthContextType>(
     () => ({
       user,
@@ -503,8 +537,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout,
       setAuthToken,
       checkSession,
+      authorizedFetch,
     }),
-    [user, isGuest, isLoading, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession],
+    [user, isGuest, isLoading, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

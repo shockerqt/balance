@@ -1,7 +1,66 @@
-export const SYNC_COLLECTIONS = ['mealTemplates', 'mealLogs'] as const;
+export const SYNC_COLLECTIONS = ['userPreferences', 'mealTemplates', 'mealLogs', 'weightLogs'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
 export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';
+
+export const EXTENDED_NUTRIENT_KEYS = [
+  'alcoholG',
+  'vitaminB12Mcg',
+  'thiamineMg',
+  'riboflavinMg',
+  'niacinMg',
+  'pantothenicAcidMg',
+  'pyridoxineMg',
+  'caffeineMg',
+  'calciumMg',
+  'cholineMg',
+  'copperMg',
+  'cysteineG',
+  'monounsaturatedFatG',
+  'polyunsaturatedFatG',
+  'saturatedFatG',
+  'transFatG',
+  'folateMcg',
+  'histidineG',
+  'ironMg',
+  'isoleucineG',
+  'leucineG',
+  'lysineG',
+  'magnesiumMg',
+  'manganeseMg',
+  'methionineG',
+  'omega3AlaG',
+  'omega3DhaG',
+  'omega3EpaG',
+  'omega3G',
+  'omega6G',
+  'phenylalanineG',
+  'phosphorusMg',
+  'potassiumMg',
+  'seleniumMcg',
+  'starchG',
+  'sugarsG',
+  'addedSugarsG',
+  'threonineG',
+  'tryptophanG',
+  'tyrosineG',
+  'valineG',
+  'vitaminAMcg',
+  'vitaminCMg',
+  'vitaminDMcg',
+  'vitaminEMg',
+  'vitaminKMcg',
+  'waterG',
+  'zincMg',
+] as const;
+
+export type ExtendedNutrientKey = (typeof EXTENDED_NUTRIENT_KEYS)[number];
+export type ExtendedNutrition = Partial<Record<ExtendedNutrientKey, number>>;
+
+export interface ImportProvenance {
+  provider: 'macrofactor';
+  externalId: string;
+}
 
 export interface Nutrition {
   calories: number;
@@ -11,12 +70,15 @@ export interface Nutrition {
   fiber?: number | null;
   sodiumMg?: number | null;
   cholesterolMg?: number | null;
+  extendedNutrition?: ExtendedNutrition | null;
 }
 
 export interface MealTemplateDetails {
   schemaVersion: 1;
   baseAmount: number;
   unit: MealUnit;
+  servingLabel?: string | null;
+  gramsPerUnit?: number | null;
   nutrition: Nutrition;
   chileanSeals?: string[];
   category?: string | null;
@@ -28,6 +90,7 @@ export interface MealTemplateDoc {
   name: string;
   isOfficial: boolean;
   details: MealTemplateDetails;
+  provenance?: ImportProvenance | null;
   updatedAt: number;
   _deleted: boolean;
 }
@@ -39,17 +102,43 @@ export interface MealLogDoc {
   templateId: string | null;
   nameSnapshot: string;
   nutritionSnapshot: NutritionSnapshot;
+  provenance?: ImportProvenance | null;
   quantity: number;
   consumedAt: number;
   updatedAt: number;
   _deleted: boolean;
 }
 
-export type SyncDocument = MealTemplateDoc | MealLogDoc;
+export interface UserPreferences {
+  weightTrackingEnabled?: boolean;
+}
+
+export interface UserPreferencesDoc {
+  id: string | number;
+  preferences: UserPreferences;
+  updatedAt: number;
+  _deleted: boolean;
+}
+
+export interface WeightLogDoc {
+  /** Chilean-local calendar date and stable per-day document id. */
+  id: string;
+  weightGrams: number;
+  updatedAt: number;
+  _deleted: boolean;
+}
+
+export type SyncDocument = UserPreferencesDoc | MealTemplateDoc | MealLogDoc | WeightLogDoc;
 
 export interface SyncCheckpoint {
   updatedAt: number;
   id?: string;
+}
+
+export interface SyncPushRejection {
+  index: number;
+  code: string;
+  message: string;
 }
 
 export function isMealUnit(value: unknown): value is MealUnit {
@@ -58,6 +147,25 @@ export function isMealUnit(value: unknown): value is MealUnit {
 
 const nonNegative = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+function isExtendedNutrition(value: unknown): value is ExtendedNutrition {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const allowed = new Set<string>(EXTENDED_NUTRIENT_KEYS);
+  return Object.entries(value).every(([key, nutrient]) => allowed.has(key) && nonNegative(nutrient));
+}
+
+function isImportProvenance(value: unknown): value is ImportProvenance {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const provenance = value as Record<string, unknown>;
+  return (
+    provenance.provider === 'macrofactor' &&
+    typeof provenance.externalId === 'string' &&
+    provenance.externalId.length > 0 &&
+    provenance.externalId.length <= 128
+  );
+}
 
 export function isNutrition(value: unknown): value is Nutrition {
   if (!value || typeof value !== 'object') return false;
@@ -69,7 +177,10 @@ export function isNutrition(value: unknown): value is Nutrition {
     nonNegative(nutrition.fat) &&
     (nutrition.fiber === undefined || nutrition.fiber === null || nonNegative(nutrition.fiber)) &&
     (nutrition.sodiumMg === undefined || nutrition.sodiumMg === null || nonNegative(nutrition.sodiumMg)) &&
-    (nutrition.cholesterolMg === undefined || nutrition.cholesterolMg === null || nonNegative(nutrition.cholesterolMg))
+    (nutrition.cholesterolMg === undefined ||
+      nutrition.cholesterolMg === null ||
+      nonNegative(nutrition.cholesterolMg)) &&
+    isExtendedNutrition(nutrition.extendedNutrition)
   );
 }
 
@@ -82,6 +193,14 @@ export function isMealTemplateDetails(value: unknown): value is MealTemplateDeta
     Number.isFinite(details.baseAmount) &&
     details.baseAmount > 0 &&
     isMealUnit(details.unit) &&
+    (details.servingLabel === undefined ||
+      details.servingLabel === null ||
+      (typeof details.servingLabel === 'string' && details.servingLabel.length <= 120)) &&
+    (details.gramsPerUnit === undefined ||
+      details.gramsPerUnit === null ||
+      (typeof details.gramsPerUnit === 'number' &&
+        Number.isFinite(details.gramsPerUnit) &&
+        details.gramsPerUnit > 0)) &&
     isNutrition(details.nutrition) &&
     (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
   );
@@ -96,6 +215,7 @@ export function isMealTemplateDoc(value: unknown): value is MealTemplateDoc {
     typeof doc.isOfficial === 'boolean' &&
     typeof doc.updatedAt === 'number' &&
     typeof doc._deleted === 'boolean' &&
+    isImportProvenance(doc.provenance) &&
     isMealTemplateDetails(doc.details)
   );
 }
@@ -114,10 +234,77 @@ export function isMealLogDoc(value: unknown): value is MealLogDoc {
     typeof doc.consumedAt === 'number' &&
     Number.isFinite(doc.consumedAt) &&
     typeof doc.updatedAt === 'number' &&
+    typeof doc._deleted === 'boolean' &&
+    isImportProvenance(doc.provenance)
+  );
+}
+
+export function isUserPreferencesDoc(value: unknown): value is UserPreferencesDoc {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as Record<string, unknown>;
+  if (typeof doc.id !== 'string' && typeof doc.id !== 'number') return false;
+  if (!doc.preferences || typeof doc.preferences !== 'object' || Array.isArray(doc.preferences)) return false;
+  const preferences = doc.preferences as Record<string, unknown>;
+  return (
+    (preferences.weightTrackingEnabled === undefined || typeof preferences.weightTrackingEnabled === 'boolean') &&
+    typeof doc.updatedAt === 'number' &&
+    Number.isFinite(doc.updatedAt) &&
     typeof doc._deleted === 'boolean'
   );
 }
 
+export function isWeightLogDoc(value: unknown): value is WeightLogDoc {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as Record<string, unknown>;
+  return (
+    typeof doc.id === 'string' &&
+    isDateId(doc.id) &&
+    typeof doc.weightGrams === 'number' &&
+    Number.isInteger(doc.weightGrams) &&
+    doc.weightGrams >= 1_000 &&
+    doc.weightGrams <= 500_000 &&
+    doc.weightGrams % 100 === 0 &&
+    typeof doc.updatedAt === 'number' &&
+    Number.isFinite(doc.updatedAt) &&
+    typeof doc._deleted === 'boolean'
+  );
+}
+
+export function isDateId(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 export function isSyncDocument(collection: SyncCollection, value: unknown): value is SyncDocument {
-  return collection === 'mealTemplates' ? isMealTemplateDoc(value) : isMealLogDoc(value);
+  if (collection === 'userPreferences') return isUserPreferencesDoc(value);
+  if (collection === 'mealTemplates') return isMealTemplateDoc(value);
+  if (collection === 'mealLogs') return isMealLogDoc(value);
+  return isWeightLogDoc(value);
+}
+
+export function parsePushRejections(value: unknown, rowCount: number): SyncPushRejection[] | null {
+  if (!Array.isArray(value)) return null;
+  const rejections = new Map<number, SyncPushRejection>();
+  for (const rejection of value) {
+    if (!rejection || typeof rejection !== 'object') return null;
+    const row = rejection as Record<string, unknown>;
+    if (
+      !Number.isInteger(row.index) ||
+      Number(row.index) < 0 ||
+      Number(row.index) >= rowCount ||
+      typeof row.code !== 'string' ||
+      !row.code ||
+      typeof row.message !== 'string' ||
+      !row.message
+    )
+      return null;
+    rejections.set(Number(row.index), {
+      index: Number(row.index),
+      code: row.code,
+      message: row.message,
+    });
+  }
+  return Array.from(rejections.values());
 }

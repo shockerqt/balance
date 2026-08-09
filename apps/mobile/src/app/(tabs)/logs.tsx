@@ -10,8 +10,12 @@ import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
-import { Screen } from '@/components/ui';
+import { Screen, Text } from '@/components/ui';
 import { makeStyles } from '@/theme';
+import { DailyWeightRow } from '@/components/weight/daily-weight-row';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
+import { useWeightStore } from '@/hooks/use-weight-store';
+import { todayId } from '@/hooks/use-meal-store';
 
 /* Registros del dia. La pantalla compone: la ventana de fechas vive
    en lib/dates, la seleccion multiple en use-food-selection, y la
@@ -34,6 +38,8 @@ export default function LogsScreen() {
   } = useMealStore();
 
   const selection = useFoodSelection();
+  const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   // La ventana se reconstruye solo cuando el dia sale de ella.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
@@ -101,6 +107,17 @@ export default function LogsScreen() {
           if (index !== -1) pagerRef.current?.setPage(index);
         }}
       />
+
+      {preferencesReady && weightTrackingEnabled ? (
+        <DailyWeightRow
+          measurement={weightsByDate[selectedDateId]}
+          disabled={selectedDateId > todayId()}
+          onPress={() =>
+            router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } })
+          }
+        />
+      ) : null}
+      {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
       <StickyMacroHeader
         foods={currentDayLog.foods}

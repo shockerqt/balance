@@ -58,4 +58,15 @@ export const storage = {
     }
     webStorage()?.removeItem(key);
   },
+
+  async multiSet(entries: ReadonlyArray<readonly [string, string]>): Promise<void> {
+    for (const [key, value] of entries) memory.set(key, value);
+    try {
+      await AsyncStorage.setMany(Object.fromEntries(entries));
+    } catch {
+      // Sin AsyncStorage: quedan memoria y web.
+    }
+    const web = webStorage();
+    if (web) for (const [key, value] of entries) web.setItem(key, value);
+  },
 };

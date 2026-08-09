@@ -11,6 +11,8 @@
     "expo-constants": "~57.0.8",
     "expo-crypto": "~57.0.1",
     "expo-dev-client": "~57.0.10",
+    "expo-document-picker": "~57.0.1",
+    "expo-file-system": "~57.0.2",
     "expo-linking": "~57.0.4",
     "expo-router": "~57.0.9",
     "expo-secure-store": "~57.0.1",
@@ -28,11 +30,14 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
-    "react-native-worklets": "0.10.1"
+    "react-native-worklets": "0.10.1",
+    "uuid": "^14.0.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.11",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -42,7 +47,9 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
-    "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs"
+    "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs",
+    "test:macrofactor": "tsx --test tests/macro-factor-import.test.mjs",
+    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
   },
   "private": true
 }
