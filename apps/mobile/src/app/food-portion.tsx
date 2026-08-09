@@ -50,6 +50,7 @@ export default function FoodPortionScreen() {
   const confirm = () => {
     incrementFoodFrequency(food.id);
     addFood(targetDateId, {
+      templateId: food.id,
       name: food.name,
       portion: `${quantity}${unit}`,
       ...macros,

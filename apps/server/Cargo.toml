@@ -9,7 +9,6 @@ anyhow = "1.0.98"
 axum = { version = "0.8.1", features = ["ws"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-bigdecimal = { version = "0.4.8", features = ["serde"] }
 chrono = { version = "0.4.41", features = ["serde"] }
 dotenv = "0.15.0"
 jsonwebtoken = "9.3.1"
@@ -22,7 +21,6 @@ sqlx = { version = "0.8.6", features = [
   "postgres",
   "macros",
   "chrono",
-  "bigdecimal",
   "uuid",
 ] }
 tokio = { version = "1.43.0", features = ["rt-multi-thread", "sync"] }

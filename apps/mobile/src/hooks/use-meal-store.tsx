@@ -1,8 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { storage } from '@/services/storage';
+import { useAuth } from './use-auth';
+import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
+import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
+import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
+import { parsePortion } from '@/lib/portion';
 
 export interface LoggedFoodItem {
   id: string;
+  templateId?: string;
   name: string;
   portion: string;
   calories: number;
@@ -10,7 +16,6 @@ export interface LoggedFoodItem {
   carbs: number;
   fat: number;
   fiber?: number;
-  /** "HH:MM" */
   time: string;
   chileanSeals?: string[];
 }
@@ -24,13 +29,11 @@ export interface DayTargets {
 }
 
 export interface DayLog extends DayTargets {
-  /** "YYYY-MM-DD" */
   dateId: string;
   displayDate: string;
   foods: LoggedFoodItem[];
 }
 
-/** Objetivos por defecto. Antes este literal estaba escrito cuatro veces. */
 export const DEFAULT_TARGETS: DayTargets = {
   targetCalories: 2200,
   targetProtein: 150,
@@ -39,14 +42,34 @@ export const DEFAULT_TARGETS: DayTargets = {
   targetFiber: 30,
 };
 
-const STORAGE_KEY = '@balance_meal_logs_v1';
+const CHILE_TIME_ZONE = 'America/Santiago';
 
-/** "YYYY-MM-DD" en hora local. `toISOString()` usa UTC y adelanta el dia en Chile. */
+function uuid(): string {
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function chileDateParts(epochMs: number): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: CHILE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(epochMs));
+  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+  return { year: values.year, month: values.month, day: values.day, hour: values.hour, minute: values.minute };
+}
+
+/** All user-facing day boundaries use Chile, independent of device timezone. */
 export function toDateId(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  const p = chileDateParts(date.getTime());
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
 }
 
 export function todayId(): string {
@@ -54,31 +77,84 @@ export function todayId(): string {
 }
 
 const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-const MONTH_NAMES = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-];
+const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 export function displayDateFor(dateId: string): string {
-  const [y, m, d] = dateId.split('-').map(Number);
-  if (!y || !m || !d) return dateId;
-  const date = new Date(y, m - 1, d);
-  const prefix = dateId === todayId() ? 'Hoy, ' : '';
-  return `${prefix}${DAY_NAMES[date.getDay()]} ${d} de ${MONTH_NAMES[m - 1]}`;
+  const [year, month, day] = dateId.split('-').map(Number);
+  if (!year || !month || !day) return dateId;
+  // Noon UTC avoids the Chile midnight transition for display-only dates.
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  const chile = chileDateParts(date.getTime());
+  const weekday = new Date(Date.UTC(chile.year, chile.month - 1, chile.day, 12)).getUTCDay();
+  return `${dateId === todayId() ? 'Hoy, ' : ''}${DAY_NAMES[weekday]} ${day} de ${MONTH_NAMES[month - 1]}`;
 }
 
-/** Un dia vacio. Un solo lugar donde viven los valores por defecto. */
 export function emptyDayLog(dateId: string): DayLog {
+  return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
+}
+
+function normalizeUnit(unit: string): MealUnit {
+  const normalized = unit.trim().toLowerCase();
+  if (normalized === 'ml' || normalized === 'unit' || normalized === 'portion' || normalized === 'cup' || normalized === 'g') return normalized;
+  if (normalized === 'un' || normalized === 'unidad') return 'unit';
+  if (normalized === 'cc') return 'ml';
+  if (normalized === 'porción' || normalized === 'porcion') return 'portion';
+  if (normalized === 'taza') return 'cup';
+  return 'portion';
+}
+
+function chileOffsetAt(epochMs: number): number {
+  const p = chileDateParts(epochMs);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;
+}
+
+function epochForChileDateTime(dateId: string, time: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateId) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+  const [year, month, day] = dateId.split('-').map(Number);
+  const [hour, minute] = time.split(':').map(Number);
+  const dateOnly = new Date(Date.UTC(year, month - 1, day));
+  if (dateOnly.getUTCFullYear() !== year || dateOnly.getUTCMonth() !== month - 1 || dateOnly.getUTCDate() !== day) return null;
+  const desired = Date.UTC(year, month - 1, day, Number.isFinite(hour) ? hour : 12, Number.isFinite(minute) ? minute : 0);
+  let epoch = desired - chileOffsetAt(desired);
+  epoch = desired - chileOffsetAt(epoch);
+  const resolved = chileDateParts(epoch);
+  if (resolved.year !== year || resolved.month !== month || resolved.day !== day || resolved.hour !== hour || resolved.minute !== minute) return null;
+  return epoch;
+}
+
+function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[]): MealLogDoc[] {
+  const byId = new Map(previous.map((doc) => [doc.id, doc]));
+  for (const value of incoming) {
+    if (!isMealLogDoc(value)) continue;
+    const current = byId.get(value.id);
+    if (!current || value.updatedAt > current.updatedAt || (value.updatedAt === current.updatedAt && value.id >= current.id)) byId.set(value.id, value);
+  }
+  return Array.from(byId.values());
+}
+
+function persistLogs(namespace: string, docs: MealLogDoc[]): void {
+  void storage.setItem(collectionStorageKey(namespace, 'mealLogs'), JSON.stringify(docs));
+}
+
+function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: string, updatedAt = Date.now()): MealLogDoc | null {
+  const parsed = parsePortion(food.portion);
+  const quantity = parsed.quantity > 0 ? parsed.quantity : 1;
+  const unit = normalizeUnit(parsed.unit);
+  const normalizedPortion = `${quantity}${unit}`;
+  const snapshot: NutritionSnapshot = snapshotFromDisplayFood({ ...food, portion: normalizedPortion });
+  const consumedAt = epochForChileDateTime(dateId, food.time);
+  if (consumedAt === null) return null;
   return {
-    dateId,
-    displayDate: displayDateFor(dateId),
-    ...DEFAULT_TARGETS,
-    foods: [],
+    id,
+    templateId: food.templateId ?? null,
+    nameSnapshot: food.name,
+    nutritionSnapshot: { ...snapshot, baseAmount: quantity, unit },
+    quantity,
+    consumedAt,
+    updatedAt,
+    _deleted: false,
   };
 }
-
-let idCounter = 0;
-const nextId = () => `food_${Date.now()}_${idCounter++}_${Math.random().toString(36).slice(2, 7)}`;
 
 interface MealStoreContextType {
   selectedDateId: string;
@@ -96,124 +172,162 @@ interface MealStoreContextType {
 const MealStoreContext = createContext<MealStoreContextType | undefined>(undefined);
 
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [selectedDateId, setSelectedDateId] = useState<string>(todayId);
-  const [dayLogs, setDayLogs] = useState<Record<string, DayLog>>({});
+  const { user } = useAuth();
+  const namespace = user ? `user:${user.id}` : 'guest';
+  const [selectedDateId, setSelectedDateId] = useState(todayId);
+  const [logs, setLogs] = useState<MealLogDoc[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    storage
-      .getItem(STORAGE_KEY)
-      .then((data) => {
-        if (cancelled || !data) return;
-        try {
-          setDayLogs(JSON.parse(data));
-        } catch (e) {
-          console.error('No se pudo leer el registro guardado', e);
-        }
-      });
+    syncClient.setNamespace(namespace);
+    setLogs([]);
+    const ready = (async () => {
+      const raw = await storage.getItem(collectionStorageKey(namespace, 'mealLogs'));
+      if (cancelled || !raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setLogs(parsed.filter(isMealLogDoc));
+      } catch {
+        // Ignore corrupt cache; PostgreSQL is authoritative after reconnect.
+      }
+    })();
+    const unregister = syncClient.registerCollection('mealLogs', {
+      onDocuments: (documents) => {
+        if (cancelled) return;
+        setLogs((previous) => {
+          const next = mergeLogs(previous, documents);
+          persistLogs(namespace, next);
+          return next;
+        });
+      },
+      onPushConflicts: (documents) => {
+        if (!documents.length) return;
+        setLogs((previous) => {
+          const next = mergeLogs(previous, documents);
+          persistLogs(namespace, next);
+          return next;
+        });
+      },
+    }, ready);
     return () => {
       cancelled = true;
+      unregister();
     };
-  }, []);
+  }, [namespace]);
 
-  /**
-   * Toda mutacion pasa por aqui con la forma funcional de setState: dos
-   * operaciones en el mismo tick ya no se pisan, como ocurria al
-   * construir el nuevo estado desde el `dayLogs` capturado en el closure.
-   */
-  const mutate = useCallback((dateId: string, fn: (day: DayLog) => DayLog) => {
-    setDayLogs((prev) => {
-      const next = { ...prev, [dateId]: fn(prev[dateId] ?? emptyDayLog(dateId)) };
-      storage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e: unknown) => {
-        console.error('No se pudo guardar el registro', e);
-      });
+  const replaceLogs = useCallback((next: MealLogDoc[]) => {
+    setLogs(next);
+    persistLogs(namespace, next);
+    return next;
+  }, [namespace]);
+
+  const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
+    const doc = docFromFood(dateId, food, uuid());
+    if (!doc) return;
+    setLogs((previous) => {
+      const next = mergeLogs(previous, [doc]);
+      persistLogs(namespace, next);
       return next;
     });
-  }, []);
+    void syncClient.enqueue('mealLogs', doc);
+  }, [namespace]);
 
-  const addFood = useCallback(
-    (dateId: string, food: Omit<LoggedFoodItem, 'id'>) =>
-      mutate(dateId, (day) => ({ ...day, foods: [...day.foods, { ...food, id: nextId() }] })),
-    [mutate]
-  );
+  const addMultipleFoods = useCallback((dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => {
+    if (!foods.length) return;
+    const docs = foods.map((food) => docFromFood(dateId, food, uuid())).filter((doc): doc is MealLogDoc => doc !== null);
+    if (!docs.length) return;
+    setLogs((previous) => {
+      const next = mergeLogs(previous, docs);
+      persistLogs(namespace, next);
+      return next;
+    });
+    for (const doc of docs) void syncClient.enqueue('mealLogs', doc);
+  }, [namespace]);
 
-  const addMultipleFoods = useCallback(
-    (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => {
-      if (!foods?.length) return;
-      mutate(dateId, (day) => ({
-        ...day,
-        foods: [...day.foods, ...foods.map((f) => ({ ...f, id: nextId() }))],
+  const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => {
+    setLogs((previous) => {
+      const current = previous.find((doc) => doc.id === foodId);
+      if (!current) return previous;
+      const display = logToLoggedFood(current);
+      const merged = { ...display, ...updated, id: foodId };
+      const nextDoc = docFromFood(dateId, merged, foodId);
+      if (!nextDoc) return previous;
+      const next = mergeLogs(previous, [nextDoc]);
+      persistLogs(namespace, next);
+      void syncClient.enqueue('mealLogs', nextDoc);
+      return next;
+    });
+  }, [namespace]);
+
+  const deleteFood = useCallback((dateId: string, foodId: string) => {
+    void dateId;
+    setLogs((previous) => {
+      const current = previous.find((doc) => doc.id === foodId);
+      if (!current) return previous;
+      const deleted = { ...current, updatedAt: Date.now(), _deleted: true };
+      const next = mergeLogs(previous, [deleted]);
+      persistLogs(namespace, next);
+      void syncClient.enqueue('mealLogs', deleted);
+      return next;
+    });
+  }, [namespace]);
+
+  const deleteMultipleFoods = useCallback((dateId: string, foodIds: string[]) => {
+    void dateId;
+    const ids = new Set(foodIds);
+    setLogs((previous) => {
+      const deleted = previous.filter((doc) => ids.has(doc.id)).map((doc) => ({ ...doc, updatedAt: Date.now(), _deleted: true }));
+      if (!deleted.length) return previous;
+      const next = mergeLogs(previous, deleted);
+      persistLogs(namespace, next);
+      for (const doc of deleted) void syncClient.enqueue('mealLogs', doc);
+      return next;
+    });
+  }, [namespace]);
+
+  const moveMultipleFoodsTime = useCallback((dateId: string, foodIds: string[], newTime: string) => {
+    const ids = new Set(foodIds);
+    const consumedAt = epochForChileDateTime(dateId, newTime);
+    if (consumedAt === null) return;
+    setLogs((previous) => {
+      const changed = previous.filter((doc) => ids.has(doc.id) && !doc._deleted).map((doc) => ({
+        ...doc,
+        consumedAt,
+        updatedAt: Date.now(),
       }));
-    },
-    [mutate]
-  );
+      if (!changed.length) return previous;
+      const next = mergeLogs(previous, changed);
+      persistLogs(namespace, next);
+      for (const doc of changed) void syncClient.enqueue('mealLogs', doc);
+      return next;
+    });
+  }, [namespace]);
 
-  const updateFood = useCallback(
-    (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) =>
-      mutate(dateId, (day) => ({
-        ...day,
-        foods: day.foods.map((f) => (f.id === foodId ? { ...f, ...updated } : f)),
-      })),
-    [mutate]
-  );
+  const dayLogs = useMemo(() => {
+    const grouped: Record<string, DayLog> = {};
+    for (const doc of logs) {
+      if (doc._deleted) continue;
+      const dateId = toDateId(new Date(doc.consumedAt));
+      const day = grouped[dateId] ?? emptyDayLog(dateId);
+      day.foods.push(logToLoggedFood(doc));
+      grouped[dateId] = day;
+    }
+    return grouped;
+  }, [logs]);
 
-  const deleteFood = useCallback(
-    (dateId: string, foodId: string) =>
-      mutate(dateId, (day) => ({ ...day, foods: day.foods.filter((f) => f.id !== foodId) })),
-    [mutate]
-  );
-
-  const deleteMultipleFoods = useCallback(
-    (dateId: string, foodIds: string[]) => {
-      const ids = new Set(foodIds);
-      mutate(dateId, (day) => ({ ...day, foods: day.foods.filter((f) => !ids.has(f.id)) }));
-    },
-    [mutate]
-  );
-
-
-  const moveMultipleFoodsTime = useCallback(
-    (dateId: string, foodIds: string[], newTime: string) => {
-      const ids = new Set(foodIds);
-      mutate(dateId, (day) => ({
-        ...day,
-        foods: day.foods.map((f) => (ids.has(f.id) ? { ...f, time: newTime } : f)),
-      }));
-    },
-    [mutate]
-  );
-
-  const currentDayLog = useMemo(
-    () => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId),
-    [dayLogs, selectedDateId]
-  );
-
-  const value = useMemo<MealStoreContextType>(
-    () => ({
-      selectedDateId,
-      setSelectedDateId,
-      dayLogs,
-      currentDayLog,
-      addFood,
-      addMultipleFoods,
-      updateFood,
-      deleteFood,
-      deleteMultipleFoods,
-      moveMultipleFoodsTime,
-    }),
-    [
-      selectedDateId,
-      dayLogs,
-      currentDayLog,
-      addFood,
-      addMultipleFoods,
-      updateFood,
-      deleteFood,
-      deleteMultipleFoods,
-      moveMultipleFoodsTime,
-    ]
-  );
-
+  const currentDayLog = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
+  const value = useMemo<MealStoreContextType>(() => ({
+    selectedDateId,
+    setSelectedDateId,
+    dayLogs,
+    currentDayLog,
+    addFood,
+    addMultipleFoods,
+    updateFood,
+    deleteFood,
+    deleteMultipleFoods,
+    moveMultipleFoodsTime,
+  }), [selectedDateId, dayLogs, currentDayLog, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 
@@ -223,16 +337,12 @@ export const useMealStore = () => {
   return context;
 };
 
-/** Totales del dia. Estaban recalculados a mano en cada pantalla. */
 export function sumDay(foods: LoggedFoodItem[]) {
-  return foods.reduce(
-    (acc, f) => ({
-      calories: acc.calories + (f.calories || 0),
-      protein: acc.protein + (f.protein || 0),
-      carbs: acc.carbs + (f.carbs || 0),
-      fat: acc.fat + (f.fat || 0),
-      fiber: acc.fiber + (f.fiber || 0),
-    }),
-    { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }
-  );
+  return foods.reduce((acc, food) => ({
+    calories: acc.calories + (food.calories || 0),
+    protein: acc.protein + (food.protein || 0),
+    carbs: acc.carbs + (food.carbs || 0),
+    fat: acc.fat + (food.fat || 0),
+    fiber: acc.fiber + (food.fiber || 0),
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
 }

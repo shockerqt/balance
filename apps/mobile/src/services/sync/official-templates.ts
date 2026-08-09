@@ -1,12 +1,7 @@
 import { API_BASE_URL } from '@/services/config';
+import { MealTemplateDoc, isMealTemplateDoc } from './types';
 
-export interface OfficialTemplate {
-  id: string;
-  name: string;
-  details: Record<string, any>;
-  isOfficial: boolean;
-  updatedAt: number;
-}
+export type OfficialTemplate = MealTemplateDoc;
 
 export async function fetchOfficialTemplates(): Promise<OfficialTemplate[]> {
   try {
@@ -21,7 +16,7 @@ export async function fetchOfficialTemplates(): Promise<OfficialTemplate[]> {
     }
 
     const data = await response.json();
-    return data.templates || [];
+    return Array.isArray(data.templates) ? data.templates.filter(isMealTemplateDoc) : [];
   } catch (e) {
     console.warn('[Official Templates] Error fetching official templates in guest mode', e);
     return [];

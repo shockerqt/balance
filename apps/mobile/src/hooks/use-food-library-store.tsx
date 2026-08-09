@@ -1,19 +1,26 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useAuth } from './use-auth';
 import { storage } from '@/services/storage';
+import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
+import { detailsFromLibraryFood, templateToLibraryFood } from '@/services/sync/adapters';
+import { MealTemplateDoc, SyncDocument, isMealTemplateDoc } from '@/services/sync/types';
+import { fetchOfficialTemplates } from '@/services/sync/official-templates';
 
 export interface LibraryFoodItem {
   id: string;
   name: string;
-  portion: string; // e.g. "100g" or "1 unidad"
+  portion: string;
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
   fiber?: number;
-  typicalTime: string; // "HH:MM" e.g. "08:30"
-  frequency: number; // Log count
-  chileanSeals?: string[]; // e.g. ['ALTO EN CALORÍAS', 'ALTO EN SODIO']
-  category?: string; // e.g. "Desayuno", "Proteínas", "Carbohidratos", "Frutas"
+  typicalTime: string;
+  frequency: number;
+  chileanSeals?: string[];
+  category?: string;
+  isOfficial?: boolean;
+  updatedAt?: number;
 }
 
 interface FoodLibraryContextType {
@@ -23,242 +30,164 @@ interface FoodLibraryContextType {
   incrementFoodFrequency: (foodId: string) => void;
 }
 
-const STORAGE_KEY = '@balance_food_library_v1';
+const FREQUENCY_KEY_PREFIX = '@balance_food_frequency_v2:';
 
-const INITIAL_LIBRARY_FOODS: LibraryFoodItem[] = [
-  {
-    id: 'lib_1',
-    name: 'Huevos Revueltos (2 un)',
-    portion: '100g',
-    calories: 150,
-    protein: 12,
-    carbs: 1,
-    fat: 10,
-    fiber: 0,
-    typicalTime: '08:30',
-    frequency: 18,
-    category: 'Desayuno',
-  },
-  {
-    id: 'lib_2',
-    name: 'Pan Marraqueta Integral',
-    portion: '100g',
-    calories: 270,
-    protein: 9,
-    carbs: 52,
-    fat: 2,
-    fiber: 4,
-    typicalTime: '08:30',
-    frequency: 24,
-    category: 'Desayuno',
-  },
-  {
-    id: 'lib_3',
-    name: 'Café Negro sin Azúcar',
-    portion: '200cc',
-    calories: 5,
-    protein: 0,
-    carbs: 1,
-    fat: 0,
-    fiber: 0,
-    typicalTime: '08:30',
-    frequency: 30,
-    category: 'Desayuno',
-  },
-  {
-    id: 'lib_4',
-    name: 'Avena Cereal en Hojuelas',
-    portion: '50g',
-    calories: 190,
-    protein: 7,
-    carbs: 33,
-    fat: 3,
-    fiber: 5,
-    typicalTime: '08:30',
-    frequency: 12,
-    category: 'Desayuno',
-  },
-  {
-    id: 'lib_5',
-    name: 'Manzana Fuji Fresca',
-    portion: '150g',
-    calories: 80,
-    protein: 0,
-    carbs: 21,
-    fat: 0,
-    fiber: 3,
-    typicalTime: '11:00',
-    frequency: 15,
-    category: 'Frutas',
-  },
-  {
-    id: 'lib_6',
-    name: 'Pechuga de Pollo a la Plancha',
-    portion: '200g',
-    calories: 330,
-    protein: 62,
-    carbs: 0,
-    fat: 7,
-    fiber: 0,
-    typicalTime: '13:30',
-    frequency: 22,
-    chileanSeals: [],
-    category: 'Proteínas',
-  },
-  {
-    id: 'lib_7',
-    name: 'Arroz Integral Cocido',
-    portion: '250g',
-    calories: 275,
-    protein: 6,
-    carbs: 58,
-    fat: 2,
-    fiber: 3,
-    typicalTime: '13:30',
-    frequency: 20,
-    category: 'Carbohidratos',
-  },
-  {
-    id: 'lib_8',
-    name: 'Palta Hass Fileteada',
-    portion: '80g',
-    calories: 130,
-    protein: 2,
-    carbs: 7,
-    fat: 12,
-    fiber: 5,
-    typicalTime: '08:30',
-    frequency: 16,
-    category: 'Grasas Saludables',
-  },
-  {
-    id: 'lib_9',
-    name: 'Yogurt Protein Vainilla',
-    portion: '150g',
-    calories: 110,
-    protein: 14,
-    carbs: 10,
-    fat: 1,
-    fiber: 0,
-    typicalTime: '17:00',
-    frequency: 14,
-    chileanSeals: ['ALTO EN AZÚCARES'],
-    category: 'Snacks',
-  },
-  {
-    id: 'lib_10',
-    name: 'Filete de Salmón al Horno',
-    portion: '200g',
-    calories: 410,
-    protein: 40,
-    carbs: 0,
-    fat: 27,
-    fiber: 0,
-    typicalTime: '20:30',
-    frequency: 9,
-    category: 'Proteínas',
-  },
-];
+function uuid(): string {
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
-// Helper to convert "HH:MM" to total minutes from midnight
 const timeToMinutes = (timeStr: string): number => {
-  const parts = timeStr.split(':');
-  if (parts.length === 2) {
-    const h = parseInt(parts[0], 10) || 0;
-    const m = parseInt(parts[1], 10) || 0;
-    return h * 60 + m;
-  }
-  return 720; // 12:00 default
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 720;
 };
+
+function mergeTemplates(previous: MealTemplateDoc[], incoming: SyncDocument[]): MealTemplateDoc[] {
+  const byId = new Map(previous.map((doc) => [doc.id, doc]));
+  for (const value of incoming) {
+    if (!isMealTemplateDoc(value)) continue;
+    const current = byId.get(value.id);
+    if (!current || value.updatedAt > current.updatedAt || (value.updatedAt === current.updatedAt && value.id >= current.id)) {
+      byId.set(value.id, value);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function persistTemplates(namespace: string, docs: MealTemplateDoc[]): void {
+  void storage.setItem(collectionStorageKey(namespace, 'mealTemplates'), JSON.stringify(docs));
+}
 
 const FoodLibraryContext = createContext<FoodLibraryContextType | undefined>(undefined);
 
 export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [libraryFoods, setLibraryFoods] = useState<LibraryFoodItem[]>(INITIAL_LIBRARY_FOODS);
+  const { user, isGuest } = useAuth();
+  const namespace = user ? `user:${user.id}` : 'guest';
+  const [templates, setTemplates] = useState<MealTemplateDoc[]>([]);
+  const [frequencies, setFrequencies] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    storage.getItem(STORAGE_KEY).then((data: string | null) => {
-      if (data) {
-        try {
-          const parsed = JSON.parse(data);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setLibraryFoods(parsed);
-          }
-        } catch (e) {
-          console.error('Failed to parse food library from storage', e);
-        }
+    let cancelled = false;
+    syncClient.setNamespace(namespace);
+    setTemplates([]);
+    setFrequencies({});
+
+    const ready = (async () => {
+      const [rawTemplates, rawFrequencies] = await Promise.all([
+        storage.getItem(collectionStorageKey(namespace, 'mealTemplates')),
+        storage.getItem(`${FREQUENCY_KEY_PREFIX}${namespace}`),
+      ]);
+      if (cancelled) return;
+      try {
+        const parsed = rawTemplates ? JSON.parse(rawTemplates) : [];
+        if (Array.isArray(parsed)) setTemplates(parsed.filter(isMealTemplateDoc));
+      } catch {
+        // Ignore corrupt cache; a server pull will repopulate it.
       }
-    });
-  }, []);
+      try {
+        const parsed = rawFrequencies ? JSON.parse(rawFrequencies) : {};
+        if (parsed && typeof parsed === 'object') setFrequencies(parsed);
+      } catch {
+        // Frequency is optional presentation metadata.
+      }
+      if (!user) {
+        const official = await fetchOfficialTemplates();
+        if (cancelled || !official.length) return;
+        setTemplates((previous) => {
+          const next = mergeTemplates(previous, official);
+          persistTemplates(namespace, next);
+          return next;
+        });
+      }
+    })();
 
-  const saveLibrary = (newLibrary: LibraryFoodItem[]) => {
-    setLibraryFoods(newLibrary);
-    storage.setItem(STORAGE_KEY, JSON.stringify(newLibrary)).catch((e: unknown) => {
-      console.error('Failed to save food library to storage', e);
-    });
-  };
-
-  // Smart Ranking Algorithm: Frequency + Time Delta Proximity
-  const getSmartRecommendations = (targetTime: string, searchQuery: string = ''): LibraryFoodItem[] => {
-    const targetMin = timeToMinutes(targetTime);
-    const queryLower = searchQuery.trim().toLowerCase();
-
-    const filtered = libraryFoods.filter((item) => {
-      if (!queryLower) return true;
-      return (
-        item.name.toLowerCase().includes(queryLower) ||
-        (item.category && item.category.toLowerCase().includes(queryLower))
-      );
-    });
-
-    return filtered.sort((a, b) => {
-      const deltaA = Math.abs(timeToMinutes(a.typicalTime) - targetMin);
-      const deltaB = Math.abs(timeToMinutes(b.typicalTime) - targetMin);
-
-      // Score formula: (frequency + 1) / (1 + deltaHours)
-      const scoreA = (a.frequency + 1) / (1 + deltaA / 60);
-      const scoreB = (b.frequency + 1) / (1 + deltaB / 60);
-
-      return scoreB - scoreA; // Descending order
-    });
-  };
-
-  const addCustomFood = (foodData: Omit<LibraryFoodItem, 'id' | 'frequency'>): LibraryFoodItem => {
-    const newFood: LibraryFoodItem = {
-      ...foodData,
-      id: 'custom_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      frequency: 1,
+    const unregister = syncClient.registerCollection('mealTemplates', {
+      onDocuments: (documents) => {
+        if (cancelled) return;
+        setTemplates((previous) => {
+          const next = mergeTemplates(previous, documents);
+          persistTemplates(namespace, next);
+          return next;
+        });
+      },
+      onPushConflicts: (documents) => {
+        if (!documents.length) return;
+        setTemplates((previous) => {
+          const next = mergeTemplates(previous, documents);
+          persistTemplates(namespace, next);
+          return next;
+        });
+      },
+    }, ready);
+    return () => {
+      cancelled = true;
+      unregister();
     };
+  }, [namespace, isGuest]);
 
-    const updated = [newFood, ...libraryFoods];
-    saveLibrary(updated);
-    return newFood;
-  };
+  const saveFrequencies = useCallback((next: Record<string, number>) => {
+    setFrequencies(next);
+    void storage.setItem(`${FREQUENCY_KEY_PREFIX}${namespace}`, JSON.stringify(next));
+  }, [namespace]);
 
-  const incrementFoodFrequency = (foodId: string) => {
-    const updated = libraryFoods.map((f) =>
-      f.id === foodId ? { ...f, frequency: f.frequency + 1 } : f
-    );
-    saveLibrary(updated);
-  };
-
-  return (
-    <FoodLibraryContext.Provider
-      value={{
-        libraryFoods,
-        getSmartRecommendations,
-        addCustomFood,
-        incrementFoodFrequency,
-      }}>
-      {children}
-    </FoodLibraryContext.Provider>
+  const libraryFoods = useMemo(
+    () => templates
+      .filter((doc) => !doc._deleted)
+      .map((doc) => templateToLibraryFood(doc, frequencies[doc.id] ?? 0)),
+    [templates, frequencies]
   );
+
+  const getSmartRecommendations = useCallback((targetTime: string, searchQuery = '') => {
+    const targetMinutes = timeToMinutes(targetTime);
+    const query = searchQuery.trim().toLowerCase();
+    return libraryFoods
+      .filter((food) => !query || food.name.toLowerCase().includes(query) || food.category?.toLowerCase().includes(query))
+      .slice()
+      .sort((a, b) => {
+        const score = (food: LibraryFoodItem) => (food.frequency + 1) / (1 + Math.abs(timeToMinutes(food.typicalTime) - targetMinutes) / 60);
+        return score(b) - score(a);
+      });
+  }, [libraryFoods]);
+
+  const addCustomFood = useCallback((foodData: Omit<LibraryFoodItem, 'id' | 'frequency'>): LibraryFoodItem => {
+    const now = Date.now();
+    const doc: MealTemplateDoc = {
+      id: uuid(),
+      name: foodData.name.trim(),
+      isOfficial: false,
+      details: detailsFromLibraryFood(foodData),
+      updatedAt: now,
+      _deleted: false,
+    };
+    setTemplates((previous) => {
+      const next = mergeTemplates(previous, [doc]);
+      persistTemplates(namespace, next);
+      return next;
+    });
+    const nextFrequencies = { ...frequencies, [doc.id]: 1 };
+    saveFrequencies(nextFrequencies);
+    void syncClient.enqueue('mealTemplates', doc);
+    return templateToLibraryFood(doc, 1);
+  }, [frequencies, namespace, saveFrequencies]);
+
+  const incrementFoodFrequency = useCallback((foodId: string) => {
+    saveFrequencies({ ...frequencies, [foodId]: (frequencies[foodId] ?? 0) + 1 });
+  }, [frequencies, saveFrequencies]);
+
+  const value = useMemo(() => ({ libraryFoods, getSmartRecommendations, addCustomFood, incrementFoodFrequency }), [
+    libraryFoods,
+    getSmartRecommendations,
+    addCustomFood,
+    incrementFoodFrequency,
+  ]);
+  return <FoodLibraryContext.Provider value={value}>{children}</FoodLibraryContext.Provider>;
 };
 
 export const useFoodLibraryStore = () => {
   const context = useContext(FoodLibraryContext);
-  if (!context) {
-    throw new Error('useFoodLibraryStore must be used within a FoodLibraryProvider');
-  }
+  if (!context) throw new Error('useFoodLibraryStore must be used within a FoodLibraryProvider');
   return context;
 };

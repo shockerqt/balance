@@ -108,8 +108,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(payload.data);
         setIsGuest(false);
         storage.removeItem(GUEST_KEY);
-        // Tras autenticar, sube los registros locales del modo invitado
-        syncClient.connect(activeToken);
+        // La primera sincronización autenticada usa su namespace propio. Nunca
+        // se importan automáticamente documentos del namespace guest.
+        syncClient.setNamespace(`user:${payload.data.id}`);
+        syncClient.connect(activeToken, `user:${payload.data.id}`);
       } catch (e) {
         console.warn('No se pudo verificar la sesion (sin conexion)', e);
         setUser(null);
@@ -151,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const enableGuestMode = useCallback(async () => {
     setIsGuest(true);
     setUser(null);
+    syncClient.setNamespace('guest');
     await storage.setItem(GUEST_KEY, '1');
     // En modo invitado se leen las plantillas oficiales sin abrir WebSocket
     await fetchOfficialTemplates();

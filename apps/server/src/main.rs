@@ -4,9 +4,7 @@ use connectors::{db::Database, gemini::GeminiClient};
 use modules::{
     ai::routes::ai_routes,
     auth::{middleware::auth, oidc::OidcConfig, routes::auth_routes},
-    food::routes::food_routes,
     mcp::{mcp_metadata_routes, mcp_routes},
-    meal::routes::meal_routes,
     sync::routes::{public_template_routes, sync_routes},
     user::routes::user_routes,
 };
@@ -36,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to connect to the database");
 
     let shared_db = Arc::new(db);
+    let sync_hub = modules::sync::hub::SyncHub::default();
     let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
 
     let gemini_api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
@@ -50,11 +49,6 @@ async fn main() -> anyhow::Result<()> {
             user_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
         )
         .nest("/auth", auth_routes())
-        .nest("/meals", meal_routes())
-        .nest(
-            "/foods",
-            food_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
-        )
         .nest(
             "/ai",
             ai_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
@@ -65,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(Extension(shared_db))
                 .layer(Extension(gemini_client))
+                .layer(Extension(sync_hub))
                 .layer(CorsLayer::permissive()),
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
