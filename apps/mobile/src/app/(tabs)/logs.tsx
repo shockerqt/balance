@@ -10,7 +10,7 @@ import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
-import { Screen } from '@/components/ui';
+import { Screen, Text } from '@/components/ui';
 import { makeStyles } from '@/theme';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -39,7 +39,7 @@ export default function LogsScreen() {
 
   const selection = useFoodSelection();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
-  const { weightsByDate } = useWeightStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   // La ventana se reconstruye solo cuando el dia sale de ella.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
@@ -117,6 +117,7 @@ export default function LogsScreen() {
           }
         />
       ) : null}
+      {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
       <StickyMacroHeader
         foods={currentDayLog.foods}

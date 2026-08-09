@@ -71,6 +71,12 @@ export interface SyncCheckpoint {
   id?: string;
 }
 
+export interface SyncPushRejection {
+  index: number;
+  code: string;
+  message: string;
+}
+
 export function isMealUnit(value: unknown): value is MealUnit {
   return value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup';
 }
@@ -186,16 +192,27 @@ export function isSyncDocument(collection: SyncCollection, value: unknown): valu
   return isWeightLogDoc(value);
 }
 
-export function parseRejectedIndexes(value: unknown, rowCount: number): number[] | null {
+export function parsePushRejections(value: unknown, rowCount: number): SyncPushRejection[] | null {
   if (!Array.isArray(value)) return null;
-  const indexes = new Set<number>();
+  const rejections = new Map<number, SyncPushRejection>();
   for (const rejection of value) {
-    const index =
-      rejection && typeof rejection === 'object'
-        ? (rejection as Record<string, unknown>).index
-        : undefined;
-    if (!Number.isInteger(index) || Number(index) < 0 || Number(index) >= rowCount) return null;
-    indexes.add(Number(index));
+    if (!rejection || typeof rejection !== 'object') return null;
+    const row = rejection as Record<string, unknown>;
+    if (
+      !Number.isInteger(row.index) ||
+      Number(row.index) < 0 ||
+      Number(row.index) >= rowCount ||
+      typeof row.code !== 'string' ||
+      !row.code ||
+      typeof row.message !== 'string' ||
+      !row.message
+    )
+      return null;
+    rejections.set(Number(row.index), {
+      index: Number(row.index),
+      code: row.code,
+      message: row.message,
+    });
   }
-  return Array.from(indexes);
+  return Array.from(rejections.values());
 }

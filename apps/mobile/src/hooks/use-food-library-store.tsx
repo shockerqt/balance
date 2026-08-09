@@ -71,7 +71,6 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   useEffect(() => {
     let cancelled = false;
-    syncClient.setNamespace(namespace);
     setTemplates([]);
     setFrequencies({});
 
@@ -120,6 +119,20 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
           persistTemplates(namespace, next);
           return next;
         });
+      },
+      onPushRejected: (rejections) => {
+        const rejectedIds = new Set(
+          rejections
+            .filter((value) => isMealTemplateDoc(value.document))
+            .map((value) => value.document.id)
+        );
+        if (!rejectedIds.size) return;
+        setTemplates((previous) => {
+          const next = previous.filter((doc) => !rejectedIds.has(doc.id));
+          persistTemplates(namespace, next);
+          return next;
+        });
+        void syncClient.resetCollection('mealTemplates');
       },
     }, ready);
     return () => {

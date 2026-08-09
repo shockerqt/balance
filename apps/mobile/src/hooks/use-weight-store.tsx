@@ -13,10 +13,11 @@ import { todayId } from '@/hooks/use-meal-store';
 import { storage } from '@/services/storage';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { SyncDocument, WeightLogDoc, isDateId, isWeightLogDoc } from '@/services/sync/types';
-import { mergeWeightLogs } from '@/services/weight/weight';
+import { mergeWeightLogs, rollbackRejectedWeightLogs } from '@/services/weight/weight';
 
 interface WeightContextValue {
   weightsByDate: Record<string, WeightLogDoc>;
+  syncError: { dateId: string; message: string } | null;
   saveWeight: (dateId: string, weightGrams: number) => boolean;
   deleteWeight: (dateId: string) => void;
 }
@@ -29,6 +30,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const namespace = user ? `user:${user.id}` : 'guest';
   const [logs, setLogs] = useState<WeightLogDoc[]>([]);
   const logsRef = useRef<WeightLogDoc[]>([]);
+  const [syncError, setSyncError] = useState<{ dateId: string; message: string } | null>(null);
 
   const persist = useCallback(
     (next: WeightLogDoc[]) => {
@@ -41,6 +43,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!preferencesReady || !weightTrackingEnabled) {
       logsRef.current = [];
       setLogs([]);
+      setSyncError(null);
       return;
     }
     let cancelled = false;
@@ -72,6 +75,22 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       {
         onDocuments: receive,
         onPushConflicts: receive,
+        onPushRejected: (rejections) => {
+          const rollback = rollbackRejectedWeightLogs(logsRef.current, rejections);
+          logsRef.current = rollback.logs;
+          setLogs(rollback.logs);
+          persist(rollback.logs);
+          const dateId = rollback.rejectedDateIds.at(-1);
+          setSyncError(
+            dateId
+              ? {
+                  dateId,
+                  message: `El servidor rechazó el peso de ${dateId}; se restauró el valor anterior.`,
+                }
+              : null
+          );
+          if (rollback.resetNeeded) void syncClient.resetCollection('weightLogs');
+        },
       },
       ready
     );
@@ -97,11 +116,13 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updatedAt: Date.now(),
         _deleted: false,
       };
+      const previous = logsRef.current.find((doc) => doc.id === dateId) ?? null;
       const next = mergeWeightLogs(logsRef.current, [document]);
       logsRef.current = next;
       setLogs(next);
       persist(next);
-      void syncClient.enqueue('weightLogs', document);
+      setSyncError((current) => (current?.dateId === dateId ? null : current));
+      void syncClient.enqueue('weightLogs', document, previous);
       return true;
     },
     [persist, weightTrackingEnabled]
@@ -117,7 +138,8 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       logsRef.current = next;
       setLogs(next);
       persist(next);
-      void syncClient.enqueue('weightLogs', deleted);
+      setSyncError((current) => (current?.dateId === dateId ? null : current));
+      void syncClient.enqueue('weightLogs', deleted, existing);
     },
     [persist, weightTrackingEnabled]
   );
@@ -127,8 +149,8 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [logs]
   );
   const value = useMemo(
-    () => ({ weightsByDate, saveWeight, deleteWeight }),
-    [weightsByDate, saveWeight, deleteWeight]
+    () => ({ weightsByDate, syncError, saveWeight, deleteWeight }),
+    [weightsByDate, syncError, saveWeight, deleteWeight]
   );
   return <WeightContext.Provider value={value}>{children}</WeightContext.Provider>;
 };

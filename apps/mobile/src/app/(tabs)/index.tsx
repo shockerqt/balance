@@ -28,7 +28,7 @@ export default function SummaryScreen() {
   const { currentDayLog, dayLogs } = useMealStore();
   const { user, isGuest } = useAuth();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
-  const { weightsByDate } = useWeightStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -125,6 +125,7 @@ export default function SummaryScreen() {
             }
           />
         ) : null}
+        {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
         <WeeklyChart dayLogs={dayLogs} referenceDateId={currentDayLog.dateId} />
       </ScrollView>

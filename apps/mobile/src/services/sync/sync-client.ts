@@ -7,7 +7,8 @@ import {
   SyncCheckpoint,
   SyncCollection,
   SyncDocument,
-  parseRejectedIndexes,
+  SyncPushRejection,
+  parsePushRejections,
   isSyncDocument,
 } from './types';
 
@@ -25,12 +26,20 @@ export interface PullResult {
 export interface CollectionHandlers {
   onDocuments: (documents: SyncDocument[], result: PullResult) => void;
   onPushConflicts?: (documents: SyncDocument[]) => void;
+  onPushRejected?: (rejections: RejectedDocument[]) => void;
+}
+
+export interface RejectedDocument {
+  document: SyncDocument;
+  previousDocument?: SyncDocument | null;
+  code: string;
+  message: string;
 }
 
 interface PushResult {
   conflicts: SyncDocument[];
   invalidConflict: boolean;
-  rejectedIndexes: number[];
+  rejections: SyncPushRejection[];
 }
 
 interface PendingRequest<T> {
@@ -45,6 +54,7 @@ interface PendingRequest<T> {
 interface OutboxEntry {
   collection: SyncCollection;
   document: SyncDocument;
+  previousDocument?: SyncDocument | null;
   queuedAt: number;
 }
 
@@ -235,7 +245,7 @@ export class SyncClient {
 
   async push(collection: SyncCollection, rows: { newDocumentState: SyncDocument }[]): Promise<PushResult> {
     if (this.disabledCollections.has(collection)) throw new Error('SYNC_COLLECTION_DISABLED');
-    if (!rows.length) return { conflicts: [], invalidConflict: false, rejectedIndexes: [] };
+    if (!rows.length) return { conflicts: [], invalidConflict: false, rejections: [] };
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('SYNC_OFFLINE');
     const requestId = nextRequestId();
     return this.request<PushResult>(
@@ -244,7 +254,7 @@ export class SyncClient {
       { event: 'push', requestId, collection, rows },
       (message) => {
         if (!Array.isArray(message.conflicts)) {
-          return { conflicts: [], invalidConflict: true, rejectedIndexes: [] };
+          return { conflicts: [], invalidConflict: true, rejections: [] };
         }
         const conflicts: SyncDocument[] = [];
         let invalidConflict = false;
@@ -252,20 +262,24 @@ export class SyncClient {
           if (isSyncDocument(collection, doc)) conflicts.push(doc);
           else invalidConflict = true;
         }
-        const rejectedIndexes: number[] = [];
+        let rejections: SyncPushRejection[] = [];
         if (message.rejections !== undefined) {
-          const parsed = parseRejectedIndexes(message.rejections, rows.length);
-          if (parsed) rejectedIndexes.push(...parsed);
+          const parsed = parsePushRejections(message.rejections, rows.length);
+          if (parsed) rejections = parsed;
           else invalidConflict = true;
         }
-        return { conflicts, invalidConflict, rejectedIndexes };
+        return { conflicts, invalidConflict, rejections };
       },
       this.namespace,
       this.namespaceGeneration,
     );
   }
 
-  async enqueue(collection: SyncCollection, document: SyncDocument): Promise<void> {
+  async enqueue(
+    collection: SyncCollection,
+    document: SyncDocument,
+    previousDocument?: SyncDocument | null
+  ): Promise<void> {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
     const previous = this.enqueueChains.get(namespace) ?? Promise.resolve();
@@ -277,7 +291,13 @@ export class SyncClient {
           const saved = JSON.parse(raw) as OutboxEntry[];
           if (Array.isArray(saved)) {
             for (const entry of saved) {
-              if (isCollection(entry.collection) && isSyncDocument(entry.collection, entry.document)) {
+              if (
+                isCollection(entry.collection) &&
+                isSyncDocument(entry.collection, entry.document) &&
+                (entry.previousDocument === undefined ||
+                  entry.previousDocument === null ||
+                  isSyncDocument(entry.collection, entry.previousDocument))
+              ) {
                 entries.set(`${entry.collection}:${entry.document.id}`, entry);
               }
             }
@@ -286,7 +306,14 @@ export class SyncClient {
           // Invalid outbox data is discarded for this namespace only.
         }
       }
-      entries.set(`${collection}:${document.id}`, { collection, document, queuedAt: Date.now() });
+      const key = `${collection}:${document.id}`;
+      const queued = entries.get(key);
+      entries.set(key, {
+        collection,
+        document,
+        previousDocument: queued ? queued.previousDocument : previousDocument,
+        queuedAt: Date.now(),
+      });
       await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(entries.values())));
       if (this.isCurrent(namespace, generation)) {
         this.outbox = entries;
@@ -318,6 +345,11 @@ export class SyncClient {
     });
     this.resyncs.set(collection, operation);
     return operation;
+  }
+
+  async resetCollection(collection: SyncCollection): Promise<void> {
+    await storage.removeItem(checkpointStorageKey(this.namespace, collection));
+    await this.resyncCollection(collection);
   }
 
   private async performResync(collection: SyncCollection, namespace: string, generation: number, ready?: Promise<void>): Promise<void> {
@@ -496,11 +528,14 @@ export class SyncClient {
           if (!this.isCurrent(namespace, generation)) return;
           this.handlers.get(collection)?.onPushConflicts?.(result.conflicts);
           if (result.invalidConflict) return;
-          if (result.rejectedIndexes.length) {
-            console.warn(
-              `Se descartaron ${result.rejectedIndexes.length} documento(s) inválido(s) de ${collection}`
-            );
-          }
+          const rejectedDocuments = result.rejections.map((rejection) => ({
+            document: entries[rejection.index].document,
+            previousDocument: entries[rejection.index].previousDocument,
+            code: rejection.code,
+            message: rejection.message,
+          }));
+          if (rejectedDocuments.length)
+            this.handlers.get(collection)?.onPushRejected?.(rejectedDocuments);
           for (const entry of entries) {
             const current = this.outbox.get(`${collection}:${entry.document.id}`);
             if (current?.document.updatedAt === entry.document.updatedAt) this.outbox.delete(`${collection}:${entry.document.id}`);

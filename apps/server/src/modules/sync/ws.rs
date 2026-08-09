@@ -556,24 +556,25 @@ async fn handle_push(
         }
 
         "mealTemplates" => {
-            for row in req.rows {
+            for (index, row) in req.rows.into_iter().enumerate() {
                 let doc = match parse_meal_template_document(row.new_document_state) {
                     Ok(doc) => doc,
                     Err(error) => {
-                        let message = client_error_message(error);
-                        send_sync_error(socket, &request_id, "invalid_document", &message).await;
-                        return;
+                        rejections.push(json!({
+                            "index": index,
+                            "code": "invalid_document",
+                            "message": client_error_message(error)
+                        }));
+                        continue;
                     }
                 };
                 if doc.is_official {
-                    send_sync_error(
-                        socket,
-                        &request_id,
-                        "invalid_document",
-                        "Clients cannot create or mutate official templates",
-                    )
-                    .await;
-                    return;
+                    rejections.push(json!({
+                        "index": index,
+                        "code": "invalid_document",
+                        "message": "Clients cannot create or mutate official templates"
+                    }));
+                    continue;
                 }
                 let deleted_at = if doc.deleted {
                     Some(doc.updated_at)
@@ -604,6 +605,9 @@ async fn handle_push(
                     })),
                     Ok(None) => changed = true,
                     Err(error) => {
+                        if changed {
+                            sync_hub.notify(user.id, "mealTemplates");
+                        }
                         send_app_error(socket, &request_id, error, "meal template").await;
                         return;
                     }
@@ -614,7 +618,8 @@ async fn handle_push(
                 "event": "push_response",
                 "requestId": request_id,
                 "collection": "mealTemplates",
-                "conflicts": conflicts
+                "conflicts": conflicts,
+                "rejections": rejections
             });
 
             let _ = socket.send(Message::Text(resp.to_string().into())).await;
@@ -624,13 +629,16 @@ async fn handle_push(
         }
 
         "mealLogs" => {
-            for row in req.rows {
+            for (index, row) in req.rows.into_iter().enumerate() {
                 let doc = match parse_meal_log_document(row.new_document_state) {
                     Ok(doc) => doc,
                     Err(error) => {
-                        let message = client_error_message(error);
-                        send_sync_error(socket, &request_id, "invalid_document", &message).await;
-                        return;
+                        rejections.push(json!({
+                            "index": index,
+                            "code": "invalid_document",
+                            "message": client_error_message(error)
+                        }));
+                        continue;
                     }
                 };
                 let deleted_at = if doc.deleted {
@@ -665,6 +673,9 @@ async fn handle_push(
                     })),
                     Ok(None) => changed = true,
                     Err(error) => {
+                        if changed {
+                            sync_hub.notify(user.id, "mealLogs");
+                        }
                         send_app_error(socket, &request_id, error, "meal log").await;
                         return;
                     }
@@ -675,7 +686,8 @@ async fn handle_push(
                 "event": "push_response",
                 "requestId": request_id,
                 "collection": "mealLogs",
-                "conflicts": conflicts
+                "conflicts": conflicts,
+                "rejections": rejections
             });
 
             let _ = socket.send(Message::Text(resp.to_string().into())).await;

@@ -11,7 +11,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { user, isGuest, logout } = useAuth();
-  const { preferencesReady, weightTrackingEnabled, setWeightTrackingEnabled } =
+  const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled } =
     usePreferencesStore();
 
   const handleLogout = async () => {
@@ -46,6 +46,7 @@ export default function SettingsScreen() {
               />
             </View>
           </Card>
+          {syncError ? <Text tone="danger">{syncError}</Text> : null}
         </View>
 
         <View style={styles.section}>
