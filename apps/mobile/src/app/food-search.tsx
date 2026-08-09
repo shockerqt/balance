@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
-import { useMealStore, LoggedFoodItem } from '@/hooks/use-meal-store';
+import { useMealStore, LoggedFoodItem, todayId } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Icon, Input, Sheet, Text } from '@/components/ui';
 import { LibraryFoodRow } from '@/components/food-search/library-food-row';
@@ -51,7 +51,7 @@ export function FoodSearchScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ dateId?: string; time?: string }>();
 
-  const targetDateId = params.dateId || '2026-08-02';
+  const targetDateId = params.dateId || todayId();
   const initialTime = params.time || '08:30';
 
   const { getSmartRecommendations, libraryFoods, incrementFoodFrequency } = useFoodLibraryStore();
@@ -144,6 +144,7 @@ export function FoodSearchScreen() {
       const scale = q / item.baseQty;
 
       return {
+        templateId: item.originalFoodId,
         name: item.name,
         portion: `${q}${item.unit}`,
         calories: Math.round(item.baseCalories * scale),

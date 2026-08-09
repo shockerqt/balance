@@ -100,6 +100,13 @@ CREATE TABLE meal_logs (
     deleted_at BIGINT
 );
 
+CREATE INDEX idx_user_preferences_sync ON user_preferences (id, updated_at);
+CREATE INDEX idx_meal_templates_sync ON meal_templates (user_id, updated_at, id);
+CREATE INDEX idx_meal_templates_official ON meal_templates (is_official, deleted_at);
+CREATE INDEX idx_meal_logs_sync ON meal_logs (user_id, updated_at, id);
+CREATE INDEX idx_meal_logs_daily
+    ON meal_logs (user_id, consumed_at) WHERE deleted_at IS NULL;
+
 -- API integration tests use this controlled identity and never need a
 -- production account.
 INSERT INTO users (id, email) VALUES (1, 'sqlx-ci@example.invalid');

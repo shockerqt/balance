@@ -1,7 +1,136 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
+
+use crate::shared::error::AppError;
+
+pub const FOOD_SCHEMA_VERSION: i32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FoodUnit {
+    G,
+    Ml,
+    Unit,
+    Portion,
+    Cup,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NutritionValues {
+    pub calories: f64,
+    pub protein: f64,
+    pub carbs: f64,
+    pub fat: f64,
+    #[serde(default)]
+    pub fiber: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sodium_mg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cholesterol_mg: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FoodDetails {
+    pub schema_version: i32,
+    pub base_amount: f64,
+    pub unit: FoodUnit,
+    pub nutrition: NutritionValues,
+    #[serde(default)]
+    pub chilean_seals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typical_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NutritionSnapshot {
+    pub schema_version: i32,
+    pub base_amount: f64,
+    pub unit: FoodUnit,
+    pub nutrition: NutritionValues,
+}
+
+impl FoodDetails {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.schema_version != FOOD_SCHEMA_VERSION {
+            return Err(AppError::BadRequest(
+                "Unsupported food schema version".into(),
+            ));
+        }
+        if !self.base_amount.is_finite() || self.base_amount <= 0.0 {
+            return Err(AppError::BadRequest(
+                "baseAmount must be greater than zero".into(),
+            ));
+        }
+        self.nutrition.validate()?;
+        if let Some(time) = &self.typical_time {
+            chrono::NaiveTime::parse_from_str(time, "%H:%M")
+                .map_err(|_| AppError::BadRequest("typicalTime must use HH:MM".into()))?;
+        }
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> NutritionSnapshot {
+        NutritionSnapshot {
+            schema_version: self.schema_version,
+            base_amount: self.base_amount,
+            unit: self.unit,
+            nutrition: self.nutrition.clone(),
+        }
+    }
+}
+
+impl NutritionSnapshot {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if self.schema_version != FOOD_SCHEMA_VERSION {
+            return Err(AppError::BadRequest(
+                "Unsupported nutrition snapshot schema version".into(),
+            ));
+        }
+        if !self.base_amount.is_finite() || self.base_amount <= 0.0 {
+            return Err(AppError::BadRequest(
+                "nutritionSnapshot.baseAmount must be greater than zero".into(),
+            ));
+        }
+        self.nutrition.validate()
+    }
+}
+
+impl NutritionValues {
+    fn validate(&self) -> Result<(), AppError> {
+        let required = [
+            ("calories", self.calories),
+            ("protein", self.protein),
+            ("carbs", self.carbs),
+            ("fat", self.fat),
+            ("fiber", self.fiber),
+        ];
+        for (name, value) in required {
+            if !value.is_finite() || value < 0.0 {
+                return Err(AppError::BadRequest(format!(
+                    "{name} must be a finite non-negative number"
+                )));
+            }
+        }
+        for (name, value) in [
+            ("sodiumMg", self.sodium_mg),
+            ("cholesterolMg", self.cholesterol_mg),
+        ] {
+            if matches!(value, Some(value) if !value.is_finite() || value < 0.0) {
+                return Err(AppError::BadRequest(format!(
+                    "{name} must be a finite non-negative number"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct UserPreferencesRow {
@@ -33,6 +162,54 @@ pub struct MealLogRow {
     pub consumed_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MealLogMutation {
+    pub id: Uuid,
+    pub template_id: Option<Uuid>,
+    pub quantity: f64,
+    pub consumed_at: i64,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoodTemplate {
+    pub id: Uuid,
+    pub name: String,
+    pub is_official: bool,
+    pub details: FoodDetails,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Consumption {
+    pub id: Uuid,
+    pub template_id: Option<Uuid>,
+    pub name: String,
+    pub snapshot: NutritionSnapshot,
+    pub quantity: f64,
+    pub consumed_at: i64,
+    pub updated_at: i64,
+}
+
+impl Consumption {
+    pub fn scaled_nutrition(&self) -> NutritionValues {
+        let factor = self.quantity / self.snapshot.base_amount;
+        let nutrition = &self.snapshot.nutrition;
+        NutritionValues {
+            calories: nutrition.calories * factor,
+            protein: nutrition.protein * factor,
+            carbs: nutrition.carbs * factor,
+            fat: nutrition.fat * factor,
+            fiber: nutrition.fiber * factor,
+            sodium_mg: nutrition.sodium_mg.map(|value| value * factor),
+            cholesterol_mg: nutrition.cholesterol_mg.map(|value| value * factor),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -161,7 +338,7 @@ impl SyncDatasource {
         details: Value,
         updated_at: i64,
         deleted_at: Option<i64>,
-    ) -> Result<Option<MealTemplateRow>, sqlx::Error> {
+    ) -> Result<Option<MealTemplateRow>, AppError> {
         let existing = sqlx::query_as::<_, MealTemplateRow>(
             "SELECT id, user_id, is_official, name, details, updated_at, deleted_at FROM meal_templates WHERE id = $1",
         )
@@ -174,6 +351,12 @@ impl SyncDatasource {
             if current.is_official {
                 tracing::warn!("Blocked attempt to mutate official template id={}", id);
                 return Ok(Some(current.clone()));
+            }
+
+            if current.user_id != Some(user_id) {
+                return Err(AppError::Conflict(
+                    "Template id is already owned by another user".into(),
+                ));
             }
 
             if current.updated_at >= updated_at {
@@ -190,6 +373,8 @@ impl SyncDatasource {
                 details = EXCLUDED.details,
                 updated_at = EXCLUDED.updated_at,
                 deleted_at = EXCLUDED.deleted_at
+            WHERE meal_templates.user_id = EXCLUDED.user_id
+              AND meal_templates.is_official = FALSE
             "#,
         )
         .bind(id)
@@ -200,6 +385,12 @@ impl SyncDatasource {
         .bind(deleted_at)
         .execute(&self.pool)
         .await?;
+
+        if _res.rows_affected() == 0 {
+            return Err(AppError::Conflict(
+                "Template id could not be written for this user".into(),
+            ));
+        }
 
         Ok(None)
     }
@@ -235,55 +426,844 @@ impl SyncDatasource {
     pub async fn push_meal_log(
         &self,
         user_id: i32,
-        id: Uuid,
-        template_id: Option<Uuid>,
-        name_snapshot: String,
-        nutrition_snapshot: Value,
-        quantity: f64,
-        consumed_at: i64,
-        updated_at: i64,
-        deleted_at: Option<i64>,
-    ) -> Result<Option<MealLogRow>, sqlx::Error> {
+        mutation: MealLogMutation,
+    ) -> Result<Option<MealLogRow>, AppError> {
+        validate_quantity(mutation.quantity)?;
+        let mut tx = self.pool.begin().await?;
         let existing = sqlx::query_as::<_, MealLogRow>(
-            "SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot, quantity, consumed_at, updated_at, deleted_at FROM meal_logs WHERE id = $1 AND user_id = $2",
+            r#"
+            SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                   quantity, consumed_at, updated_at, deleted_at
+            FROM meal_logs
+            WHERE id = $1 AND user_id = $2
+            FOR UPDATE
+            "#,
+        )
+        .bind(mutation.id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(ref current) = existing
+            && current.updated_at >= mutation.updated_at
+        {
+            tx.commit().await?;
+            return Ok(Some(current.clone()));
+        }
+
+        if existing.is_some() {
+            sqlx::query(
+                r#"
+                UPDATE meal_logs
+                SET quantity = $3,
+                    consumed_at = $4,
+                    updated_at = $5,
+                    deleted_at = $6
+                WHERE id = $1 AND user_id = $2
+                "#,
+            )
+            .bind(mutation.id)
+            .bind(user_id)
+            .bind(mutation.quantity)
+            .bind(mutation.consumed_at)
+            .bind(mutation.updated_at)
+            .bind(mutation.deleted_at)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(None);
+        }
+
+        let template_id = mutation.template_id.ok_or_else(|| {
+            AppError::BadRequest("templateId is required for a new meal log".into())
+        })?;
+        let template = get_food_template_in_tx(&mut tx, user_id, template_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Food not found".into()))?;
+        let nutrition_snapshot = serde_json::to_value(template.details.snapshot())
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let result = sqlx::query(
+            r#"
+            INSERT INTO meal_logs
+                (id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                 quantity, consumed_at, updated_at, deleted_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(mutation.id)
+        .bind(user_id)
+        .bind(template_id)
+        .bind(&template.name)
+        .bind(nutrition_snapshot)
+        .bind(mutation.quantity)
+        .bind(mutation.consumed_at)
+        .bind(mutation.updated_at)
+        .bind(mutation.deleted_at)
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::Conflict(
+                "Meal log id could not be written for this user".into(),
+            ));
+        }
+
+        tx.commit().await?;
+        Ok(None)
+    }
+
+    pub async fn search_food_templates(
+        &self,
+        user_id: i32,
+        query: &str,
+        source: &str,
+        limit: i64,
+    ) -> Result<Vec<FoodTemplate>, AppError> {
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        let rows = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            FROM meal_templates
+            WHERE deleted_at IS NULL
+              AND (user_id = $1 OR is_official = TRUE)
+              AND name ILIKE $2 ESCAPE '\'
+              AND (
+                    $3 = 'all'
+                 OR ($3 = 'personal' AND user_id = $1 AND is_official = FALSE)
+                 OR ($3 = 'official' AND is_official = TRUE)
+              )
+            ORDER BY CASE WHEN lower(name) = lower($4) THEN 0 ELSE 1 END,
+                     is_official DESC,
+                     name ASC,
+                     id ASC
+            LIMIT $5
+            "#,
+        )
+        .bind(user_id)
+        .bind(pattern)
+        .bind(source)
+        .bind(query)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(food_template_from_row).collect()
+    }
+
+    pub async fn create_personal_food(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        name: &str,
+        details: &FoodDetails,
+    ) -> Result<(FoodTemplate, bool), AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::BadRequest("name cannot be empty".into()));
+        }
+        details.validate()?;
+
+        let duplicate = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            SELECT id
+            FROM meal_templates
+            WHERE user_id = $1
+              AND is_official = FALSE
+              AND deleted_at IS NULL
+              AND lower(btrim(name)) = lower($2)
+              AND id <> $3
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if duplicate.is_some() {
+            return Err(AppError::Conflict(
+                "A personal food with the same name already exists".into(),
+            ));
+        }
+
+        let details_json =
+            serde_json::to_value(details).map_err(|error| AppError::Internal(error.to_string()))?;
+        let result = sqlx::query(
+            r#"
+            INSERT INTO meal_templates
+                (id, user_id, is_official, name, details, updated_at, deleted_at)
+            VALUES
+                ($1, $2, FALSE, $3, $4,
+                 floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                 NULL)
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(name)
+        .bind(details_json)
+        .execute(&self.pool)
+        .await?;
+
+        let row = self
+            .get_food_template(user_id, id)
+            .await?
+            .ok_or_else(|| AppError::Conflict("operationId is already in use".into()))?;
+        Ok((row, result.rows_affected() == 1))
+    }
+
+    pub async fn get_food_template(
+        &self,
+        user_id: i32,
+        id: Uuid,
+    ) -> Result<Option<FoodTemplate>, AppError> {
+        let row = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            FROM meal_templates
+            WHERE id = $1
+              AND deleted_at IS NULL
+              AND (user_id = $2 OR is_official = TRUE)
+            "#,
         )
         .bind(id)
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await?;
+        row.map(food_template_from_row).transpose()
+    }
 
-        if let Some(ref current) = existing
-            && current.updated_at >= updated_at
-        {
-            return Ok(Some(current.clone()));
+    pub async fn create_consumption(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        template_id: Uuid,
+        quantity: f64,
+        unit: FoodUnit,
+        consumed_at: i64,
+    ) -> Result<(Consumption, bool), AppError> {
+        validate_quantity(quantity)?;
+        let mut tx = self.pool.begin().await?;
+        let template = get_food_template_in_tx(&mut tx, user_id, template_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Food not found".into()))?;
+        if template.details.unit != unit {
+            return Err(AppError::BadRequest(
+                "unit must match the food base portion unit".into(),
+            ));
         }
-
-        let _res = sqlx::query(
+        let snapshot = serde_json::to_value(template.details.snapshot())
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let result = sqlx::query(
             r#"
-            INSERT INTO meal_logs (id, user_id, template_id, name_snapshot, nutrition_snapshot, quantity, consumed_at, updated_at, deleted_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
-                template_id = EXCLUDED.template_id,
-                name_snapshot = EXCLUDED.name_snapshot,
-                nutrition_snapshot = EXCLUDED.nutrition_snapshot,
-                quantity = EXCLUDED.quantity,
-                consumed_at = EXCLUDED.consumed_at,
-                updated_at = EXCLUDED.updated_at,
-                deleted_at = EXCLUDED.deleted_at
+            INSERT INTO meal_logs
+                (id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                 quantity, consumed_at, updated_at, deleted_at)
+            VALUES
+                ($1, $2, $3, $4, $5, $6, $7,
+                 floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                 NULL)
+            ON CONFLICT (id) DO NOTHING
             "#,
         )
         .bind(id)
         .bind(user_id)
         .bind(template_id)
-        .bind(name_snapshot)
-        .bind(nutrition_snapshot)
+        .bind(&template.name)
+        .bind(snapshot)
         .bind(quantity)
         .bind(consumed_at)
-        .bind(updated_at)
-        .bind(deleted_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        Ok(None)
+        let row = get_consumption_in_tx(&mut tx, user_id, id)
+            .await?
+            .ok_or_else(|| AppError::Conflict("operationId is already in use".into()))?;
+        tx.commit().await?;
+        Ok((row, result.rows_affected() == 1))
+    }
+
+    pub async fn get_daily_consumptions(
+        &self,
+        user_id: i32,
+        date: &str,
+    ) -> Result<Vec<Consumption>, AppError> {
+        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("date must use YYYY-MM-DD".into()))?;
+        let (start, end) = self.day_bounds(date).await?;
+        let rows = sqlx::query_as::<_, MealLogRow>(
+            r#"
+            SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                   quantity, consumed_at, updated_at, deleted_at
+            FROM meal_logs
+            WHERE user_id = $1
+              AND deleted_at IS NULL
+              AND consumed_at >= $2
+              AND consumed_at < $3
+            ORDER BY consumed_at ASC, id ASC
+            "#,
+        )
+        .bind(user_id)
+        .bind(start)
+        .bind(end)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(consumption_from_row).collect()
+    }
+
+    pub async fn update_consumption(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        quantity: Option<f64>,
+        consumed_at: Option<i64>,
+    ) -> Result<Consumption, AppError> {
+        if quantity.is_none() && consumed_at.is_none() {
+            return Err(AppError::BadRequest(
+                "At least one of quantity or consumedAt is required".into(),
+            ));
+        }
+        if let Some(quantity) = quantity {
+            validate_quantity(quantity)?;
+        }
+        let row = sqlx::query_as::<_, MealLogRow>(
+            r#"
+            UPDATE meal_logs
+            SET quantity = COALESCE($3, quantity),
+                consumed_at = COALESCE($4, consumed_at),
+                updated_at = floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+            WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+            RETURNING id, user_id, template_id, name_snapshot,
+                      nutrition_snapshot, quantity, consumed_at, updated_at,
+                      deleted_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(quantity)
+        .bind(consumed_at)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Consumption not found".into()))?;
+        consumption_from_row(row)
+    }
+
+    pub async fn soft_delete_consumption(
+        &self,
+        user_id: i32,
+        id: Uuid,
+    ) -> Result<Consumption, AppError> {
+        let row = sqlx::query_as::<_, MealLogRow>(
+            r#"
+            UPDATE meal_logs
+            SET deleted_at = COALESCE(
+                    deleted_at,
+                    floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+                ),
+                updated_at = CASE
+                    WHEN deleted_at IS NULL
+                    THEN floor(extract(epoch from clock_timestamp()) * 1000)::bigint
+                    ELSE updated_at
+                END
+            WHERE id = $1 AND user_id = $2
+            RETURNING id, user_id, template_id, name_snapshot,
+                      nutrition_snapshot, quantity, consumed_at, updated_at,
+                      deleted_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Consumption not found".into()))?;
+        consumption_from_row(row)
+    }
+
+    pub async fn current_santiago_date(&self) -> Result<String, AppError> {
+        let date = sqlx::query_scalar::<_, String>(
+            "SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(date)
+    }
+
+    pub async fn current_santiago_datetime(&self) -> Result<(String, String), AppError> {
+        let result = sqlx::query_as::<_, (String, String)>(
+            r#"
+            SELECT
+                to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD'),
+                to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'HH24:MI')
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(result)
+    }
+
+    pub async fn local_datetime_to_epoch(&self, date: &str, time: &str) -> Result<i64, AppError> {
+        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map_err(|_| AppError::BadRequest("date must use YYYY-MM-DD".into()))?;
+        chrono::NaiveTime::parse_from_str(time, "%H:%M")
+            .map_err(|_| AppError::BadRequest("time must use HH:MM".into()))?;
+        let (epoch, round_trip) = sqlx::query_as::<_, (i64, String)>(
+            r#"
+            SELECT
+                floor(extract(epoch from (($1::date + $2::time)
+                    AT TIME ZONE 'America/Santiago')) * 1000)::bigint,
+                to_char(
+                    ((($1::date + $2::time) AT TIME ZONE 'America/Santiago')
+                        AT TIME ZONE 'America/Santiago'),
+                    'YYYY-MM-DD HH24:MI'
+                )
+            "#,
+        )
+        .bind(date)
+        .bind(time)
+        .fetch_one(&self.pool)
+        .await?;
+        if round_trip != format!("{date} {time}") {
+            return Err(AppError::BadRequest(
+                "The local date/time does not exist in America/Santiago".into(),
+            ));
+        }
+        Ok(epoch)
+    }
+
+    async fn day_bounds(&self, date: &str) -> Result<(i64, i64), AppError> {
+        let bounds = sqlx::query_as::<_, (i64, i64)>(
+            r#"
+            SELECT
+                floor(extract(epoch from ($1::date::timestamp
+                    AT TIME ZONE 'America/Santiago')) * 1000)::bigint,
+                floor(extract(epoch from (($1::date + 1)::timestamp
+                    AT TIME ZONE 'America/Santiago')) * 1000)::bigint
+            "#,
+        )
+        .bind(date)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(bounds)
+    }
+}
+
+fn food_template_from_row(row: MealTemplateRow) -> Result<FoodTemplate, AppError> {
+    let details: FoodDetails = serde_json::from_value(row.details)
+        .map_err(|error| AppError::Internal(format!("Invalid food details: {error}")))?;
+    details.validate()?;
+    Ok(FoodTemplate {
+        id: row.id,
+        name: row.name,
+        is_official: row.is_official,
+        details,
+        updated_at: row.updated_at,
+    })
+}
+
+fn consumption_from_row(row: MealLogRow) -> Result<Consumption, AppError> {
+    let snapshot: NutritionSnapshot = serde_json::from_value(row.nutrition_snapshot)
+        .map_err(|error| AppError::Internal(format!("Invalid nutrition snapshot: {error}")))?;
+    snapshot.validate().map_err(|error| match error {
+        AppError::BadRequest(message) => AppError::Internal(message),
+        other => other,
+    })?;
+    validate_quantity(row.quantity)?;
+    Ok(Consumption {
+        id: row.id,
+        template_id: row.template_id,
+        name: row.name_snapshot,
+        snapshot,
+        quantity: row.quantity,
+        consumed_at: row.consumed_at,
+        updated_at: row.updated_at,
+    })
+}
+
+async fn get_food_template_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    id: Uuid,
+) -> Result<Option<FoodTemplate>, AppError> {
+    let row = sqlx::query_as::<_, MealTemplateRow>(
+        r#"
+        SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+        FROM meal_templates
+        WHERE id = $1
+          AND deleted_at IS NULL
+          AND (user_id = $2 OR is_official = TRUE)
+        FOR SHARE
+        "#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    row.map(food_template_from_row).transpose()
+}
+
+async fn get_consumption_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    id: Uuid,
+) -> Result<Option<Consumption>, AppError> {
+    let row = sqlx::query_as::<_, MealLogRow>(
+        r#"
+        SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+               quantity, consumed_at, updated_at, deleted_at
+        FROM meal_logs
+        WHERE id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    row.map(consumption_from_row).transpose()
+}
+
+fn validate_quantity(quantity: f64) -> Result<(), AppError> {
+    if !quantity.is_finite() || quantity <= 0.0 {
+        return Err(AppError::BadRequest(
+            "quantity must be a finite number greater than zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_food_unit_serde() {
+        assert_eq!(
+            serde_json::from_str::<FoodUnit>("\"g\"").unwrap(),
+            FoodUnit::G
+        );
+        assert_eq!(
+            serde_json::from_str::<FoodUnit>("\"ml\"").unwrap(),
+            FoodUnit::Ml
+        );
+        assert_eq!(
+            serde_json::from_str::<FoodUnit>("\"unit\"").unwrap(),
+            FoodUnit::Unit
+        );
+        assert_eq!(
+            serde_json::from_str::<FoodUnit>("\"portion\"").unwrap(),
+            FoodUnit::Portion
+        );
+        assert_eq!(
+            serde_json::from_str::<FoodUnit>("\"cup\"").unwrap(),
+            FoodUnit::Cup
+        );
+
+        assert!(serde_json::from_str::<FoodUnit>("\"grams\"").is_err());
+        assert!(serde_json::from_str::<FoodUnit>("\"G\"").is_err());
+        assert!(serde_json::from_str::<FoodUnit>("\"kg\"").is_err());
+        assert!(serde_json::from_str::<FoodUnit>("\"\"").is_err());
+        assert!(serde_json::from_str::<FoodUnit>("123").is_err());
+    }
+
+    #[test]
+    fn test_nutrition_values_validation() {
+        let valid = NutritionValues {
+            calories: 100.0,
+            protein: 10.0,
+            carbs: 20.0,
+            fat: 5.0,
+            fiber: 2.0,
+            sodium_mg: Some(150.0),
+            cholesterol_mg: Some(10.0),
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.calories = -1.0;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.protein = -0.1;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.carbs = -5.0;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.fat = -0.01;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.fiber = -1.0;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.sodium_mg = Some(-10.0);
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.cholesterol_mg = Some(-1.0);
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.calories = f64::NAN;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.protein = f64::INFINITY;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn test_food_details_validation() {
+        let valid_nutrition = NutritionValues {
+            calories: 200.0,
+            protein: 5.0,
+            carbs: 30.0,
+            fat: 8.0,
+            fiber: 1.0,
+            sodium_mg: None,
+            cholesterol_mg: None,
+        };
+        let valid = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            base_amount: 100.0,
+            unit: FoodUnit::G,
+            nutrition: valid_nutrition,
+            chilean_seals: vec![],
+            category: Some("Snack".into()),
+            typical_time: Some("14:30".into()),
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.schema_version = 99;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.base_amount = 0.0;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.base_amount = -50.0;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.base_amount = f64::NAN;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.typical_time = Some("25:00".into());
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.typical_time = Some("invalid-time".into());
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_quantity() {
+        assert!(validate_quantity(1.0).is_ok());
+        assert!(validate_quantity(0.5).is_ok());
+
+        assert!(validate_quantity(0.0).is_err());
+        assert!(validate_quantity(-1.0).is_err());
+        assert!(validate_quantity(f64::NAN).is_err());
+        assert!(validate_quantity(f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn test_nutrition_values_serde_deny_unknown() {
+        let json_data = serde_json::json!({
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0,
+            "fiber": 1.0,
+            "sodiumMg": 50.0,
+            "cholesterolMg": 0.0,
+            "extraField": "not_allowed"
+        });
+        assert!(serde_json::from_value::<NutritionValues>(json_data).is_err());
+    }
+
+    #[test]
+    fn optional_nutrition_fields_are_omitted_and_missing_fields_deserialize() {
+        let nutrition = NutritionValues {
+            calories: 100.0,
+            protein: 10.0,
+            carbs: 20.0,
+            fat: 5.0,
+            fiber: 0.0,
+            sodium_mg: None,
+            cholesterol_mg: None,
+        };
+        let serialized = serde_json::to_value(&nutrition).unwrap();
+        assert!(serialized.get("sodiumMg").is_none());
+        assert!(serialized.get("cholesterolMg").is_none());
+
+        let deserialized: NutritionValues = serde_json::from_value(json!({
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0
+        }))
+        .unwrap();
+        assert_eq!(deserialized.sodium_mg, None);
+        assert_eq!(deserialized.cholesterol_mg, None);
+    }
+
+    #[test]
+    fn test_scaled_nutrition() {
+        let consumption = Consumption {
+            id: Uuid::new_v4(),
+            template_id: Some(Uuid::new_v4()),
+            name: "Manzana".into(),
+            snapshot: NutritionSnapshot {
+                schema_version: FOOD_SCHEMA_VERSION,
+                base_amount: 100.0,
+                unit: FoodUnit::G,
+                nutrition: NutritionValues {
+                    calories: 52.0,
+                    protein: 0.3,
+                    carbs: 13.8,
+                    fat: 0.2,
+                    fiber: 2.4,
+                    sodium_mg: Some(1.0),
+                    cholesterol_mg: Some(0.0),
+                },
+            },
+            quantity: 200.0,
+            consumed_at: 1700000000,
+            updated_at: 1700000000,
+        };
+        let scaled = consumption.scaled_nutrition();
+        assert_eq!(scaled.calories, 104.0);
+        assert_eq!(scaled.protein, 0.6);
+        assert_eq!(scaled.carbs, 27.6);
+        assert_eq!(scaled.fat, 0.4);
+        assert_eq!(scaled.fiber, 4.8);
+        assert_eq!(scaled.sodium_mg, Some(2.0));
+        assert_eq!(scaled.cholesterol_mg, Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn test_canonical_lax_flow_and_cross_user_isolation() {
+        let Ok(database_url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, email) VALUES (2, 'bal011-user2@example.invalid') ON CONFLICT (id) DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let datasource = SyncDatasource::new(pool);
+        let food_id = Uuid::new_v4();
+        let details = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            base_amount: 100.0,
+            unit: FoodUnit::G,
+            nutrition: NutritionValues {
+                calories: 52.0,
+                protein: 0.3,
+                carbs: 14.0,
+                fat: 0.2,
+                fiber: 2.4,
+                sodium_mg: None,
+                cholesterol_mg: None,
+            },
+            chilean_seals: vec![],
+            category: Some("fruit".into()),
+            typical_time: None,
+        };
+        let (food, created) = datasource
+            .create_personal_food(1, food_id, "Manzana BAL-011", &details)
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(food.id, food_id);
+        assert!(
+            datasource
+                .get_food_template(2, food_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let template_collision = datasource
+            .push_meal_template(
+                2,
+                food_id,
+                "Intento ajeno".into(),
+                serde_json::to_value(&details).unwrap(),
+                i64::MAX - 1,
+                None,
+            )
+            .await;
+        assert!(matches!(template_collision, Err(AppError::Conflict(_))));
+
+        let consumed_at = datasource
+            .local_datetime_to_epoch("2026-08-09", "12:30")
+            .await
+            .unwrap();
+        let log_id = Uuid::new_v4();
+        let (log, logged) = datasource
+            .create_consumption(1, log_id, food_id, 150.0, FoodUnit::G, consumed_at)
+            .await
+            .unwrap();
+        assert!(logged);
+        assert_eq!(log.scaled_nutrition().calories, 78.0);
+        assert_eq!(
+            datasource
+                .get_daily_consumptions(1, "2026-08-09")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            datasource
+                .get_daily_consumptions(2, "2026-08-09")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let mobile_log_id = Uuid::new_v4();
+        assert!(
+            datasource
+                .push_meal_log(
+                    1,
+                    MealLogMutation {
+                        id: mobile_log_id,
+                        template_id: Some(food_id),
+                        quantity: 200.0,
+                        consumed_at: consumed_at + 60_000,
+                        updated_at: 1_786_233_600_000,
+                        deleted_at: None,
+                    },
+                )
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let mobile_log = datasource
+            .get_daily_consumptions(1, "2026-08-09")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == mobile_log_id)
+            .unwrap();
+        assert_eq!(mobile_log.snapshot, details.snapshot());
+        assert_eq!(mobile_log.scaled_nutrition().calories, 104.0);
     }
 }

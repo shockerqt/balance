@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("Failed to connect to the database");
 
     let shared_db = Arc::new(db);
+    let sync_hub = modules::sync::hub::SyncHub::default();
     let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
 
     let gemini_api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
@@ -65,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(Extension(shared_db))
                 .layer(Extension(gemini_client))
+                .layer(Extension(sync_hub))
                 .layer(CorsLayer::permissive()),
         )
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
