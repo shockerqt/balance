@@ -15,7 +15,7 @@ const FILTERS: { value: FoodLibraryFilter; label: string }[] = [
 export default function LibraryScreen() {
   const styles = useStyles();
   const router = useRouter();
-  const { libraryFoods, isLibraryReady } = useFoodLibraryStore();
+  const { libraryFoods, isLibraryReady, syncNotice, clearSyncNotice } = useFoodLibraryStore();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FoodLibraryFilter>('all');
 
@@ -54,6 +54,21 @@ export default function LibraryScreen() {
       </View>
 
       <View style={styles.controls}>
+        {syncNotice ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Cerrar aviso de sincronización"
+            activeOpacity={0.75}
+            style={styles.syncNotice}
+            onPress={clearSyncNotice}>
+            <Icon name="refresh-cw" size={18} tone="accent" />
+            <Text variant="caption" tone="secondary" selectable style={styles.syncNoticeCopy}>
+              {syncNotice}
+            </Text>
+            <Icon name="x" size={16} tone="muted" />
+          </TouchableOpacity>
+        ) : null}
+
         <Input
           value={query}
           onChangeText={setQuery}
@@ -123,6 +138,17 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: t.space.xl,
     paddingBottom: t.space.lg
   },
+  syncNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: t.space.sm,
+    padding: t.space.md,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.primary,
+    borderRadius: t.radius.sm,
+    backgroundColor: t.colors.surfaceRaised
+  },
+  syncNoticeCopy: { flex: 1 },
   filters: {
     flexDirection: 'row',
     gap: t.space.sm

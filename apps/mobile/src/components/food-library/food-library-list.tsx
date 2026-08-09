@@ -9,11 +9,12 @@ export type FoodLibraryFilter = 'all' | 'personal' | 'official';
 
 interface FoodLibraryListProps {
   foods: LibraryFoodItem[];
-  filter: FoodLibraryFilter;
-  query: string;
+  filter?: FoodLibraryFilter;
+  query?: string;
   isReady: boolean;
   onPressFood: (food: LibraryFoodItem) => void;
-  onCreateFood: () => void;
+  onCreateFood?: () => void;
+  emptyMessage?: string;
 }
 
 const normalize = (value: string) =>
@@ -22,18 +23,12 @@ const normalize = (value: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase('es-CL');
 
-export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
-  foods,
-  filter,
-  query,
-  isReady,
-  onPressFood,
-  onCreateFood
-}) => {
-  const styles = useStyles();
-  const theme = useTheme();
-
-  const sections = useMemo(() => {
+export const useFoodLibrarySections = (
+  foods: LibraryFoodItem[],
+  filter: FoodLibraryFilter = 'all',
+  query = ''
+) =>
+  useMemo(() => {
     const needle = normalize(query.trim());
     const visible = foods
       .filter((food) => {
@@ -72,11 +67,24 @@ export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
     ];
   }, [filter, foods, query]);
 
-  const emptyCopy = query.trim()
+export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
+  foods,
+  filter = 'all',
+  query = '',
+  isReady,
+  onPressFood,
+  onCreateFood,
+  emptyMessage,
+}) => {
+  const styles = useStyles();
+  const theme = useTheme();
+  const sections = useFoodLibrarySections(foods, filter, query);
+
+  const emptyCopy = emptyMessage ?? (query.trim()
     ? 'No hay alimentos que coincidan con esta búsqueda.'
     : filter === 'official'
       ? 'El catálogo oficial todavía no está disponible. Tus alimentos personales siguen funcionando sin conexión.'
-      : 'Tu biblioteca personal está vacía. Crea un alimento para reutilizar sus datos cada vez que lo registres.';
+      : 'Tu biblioteca personal está vacía. Crea un alimento para reutilizar sus datos cada vez que lo registres.');
 
   return (
     <SectionList
@@ -113,7 +121,7 @@ export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
               <Text variant="body" tone="secondary" style={styles.emptyCopy}>
                 {emptyCopy}
               </Text>
-              {filter !== 'official' && !query.trim() ? (
+              {onCreateFood && filter !== 'official' && !query.trim() ? (
                 <Button title="Crear alimento" size="md" onPress={onCreateFood} />
               ) : null}
             </>
@@ -134,7 +142,7 @@ const IconEmpty = () => {
 };
 
 const useStyles = makeStyles((t) => ({
-  content: { paddingBottom: 112 },
+  content: { paddingBottom: t.space.xxxl * 3 + t.space.lg },
   emptyContent: { flexGrow: 1 },
   sectionHeader: {
     flexDirection: 'row',
