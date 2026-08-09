@@ -30,6 +30,8 @@ CREATE TABLE meal_templates (
     is_official BOOLEAN NOT NULL DEFAULT FALSE,
     name VARCHAR(255) NOT NULL,
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_provider VARCHAR(32),
+    external_id VARCHAR(128),
     updated_at BIGINT NOT NULL,
     deleted_at BIGINT
 );
@@ -40,6 +42,8 @@ CREATE TABLE meal_logs (
     template_id UUID REFERENCES meal_templates(id) ON DELETE SET NULL,
     name_snapshot VARCHAR(255) NOT NULL,
     nutrition_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_provider VARCHAR(32),
+    external_id VARCHAR(128),
     quantity DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     consumed_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
@@ -58,6 +62,26 @@ CREATE TABLE weight_logs (
     PRIMARY KEY (user_id, measured_on)
 );
 
+CREATE TABLE food_import_sessions (
+    id UUID PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(32) NOT NULL,
+    file_fingerprint VARCHAR(128) NOT NULL,
+    expected_rows INTEGER NOT NULL CHECK (expected_rows BETWEEN 1 AND 100000),
+    templates JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status VARCHAR(16) NOT NULL CHECK (status IN ('staged', 'committed', 'cancelled')),
+    summary JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    committed_at TIMESTAMPTZ
+);
+
+CREATE TABLE food_import_rows (
+    session_id UUID NOT NULL REFERENCES food_import_sessions(id) ON DELETE CASCADE,
+    row_index INTEGER NOT NULL CHECK (row_index >= 2),
+    payload JSONB NOT NULL,
+    PRIMARY KEY (session_id, row_index)
+);
+
 CREATE INDEX idx_user_preferences_sync ON user_preferences (id, updated_at);
 CREATE INDEX idx_meal_templates_sync ON meal_templates (user_id, updated_at, id);
 CREATE INDEX idx_meal_templates_official ON meal_templates (is_official, deleted_at);
@@ -66,6 +90,14 @@ CREATE INDEX idx_meal_logs_daily
     ON meal_logs (user_id, consumed_at) WHERE deleted_at IS NULL;
 CREATE INDEX idx_weight_logs_sync
     ON weight_logs (user_id, updated_at, measured_on);
+CREATE UNIQUE INDEX idx_meal_templates_import_identity
+    ON meal_templates (user_id, source_provider, external_id)
+    WHERE source_provider IS NOT NULL AND external_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_meal_logs_import_identity
+    ON meal_logs (user_id, source_provider, external_id)
+    WHERE source_provider IS NOT NULL AND external_id IS NOT NULL;
+CREATE INDEX idx_food_import_sessions_owner
+    ON food_import_sessions (user_id, created_at DESC);
 
 -- API integration tests use this controlled identity and never need a
 -- production account.

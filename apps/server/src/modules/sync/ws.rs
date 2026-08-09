@@ -59,10 +59,19 @@ pub enum IncomingMessage {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportProvenanceDocument {
+    provider: String,
+    external_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MealTemplateDocument {
     id: Uuid,
     name: String,
     details: FoodDetails,
+    #[serde(default)]
+    provenance: Option<ImportProvenanceDocument>,
     is_official: bool,
     updated_at: i64,
     #[serde(rename = "_deleted")]
@@ -76,6 +85,8 @@ struct MealLogDocument {
     template_id: Option<Uuid>,
     name_snapshot: String,
     nutrition_snapshot: NutritionSnapshot,
+    #[serde(default)]
+    provenance: Option<ImportProvenanceDocument>,
     quantity: f64,
     consumed_at: i64,
     updated_at: i64,
@@ -125,6 +136,7 @@ async fn get_official_templates_handler(
                         "id": r.id.to_string(),
                         "name": r.name,
                         "details": r.details,
+                        "provenance": provenance_json(r.source_provider, r.external_id),
                         "isOfficial": r.is_official,
                         "updatedAt": r.updated_at,
                         "_deleted": false
@@ -381,6 +393,7 @@ async fn handle_pull(
                         "templateId": r.template_id.map(|t| t.to_string()),
                         "nameSnapshot": r.name_snapshot,
                         "nutritionSnapshot": r.nutrition_snapshot,
+                        "provenance": provenance_json(r.source_provider, r.external_id),
                         "quantity": r.quantity,
                         "consumedAt": r.consumed_at,
                         "updatedAt": r.updated_at,
@@ -582,6 +595,14 @@ async fn handle_push(
                     None
                 };
                 let details = serde_json::to_value(&doc.details).expect("FoodDetails serializes");
+                let (source_provider, external_id) = match provenance_parts(doc.provenance) {
+                    Ok(parts) => parts,
+                    Err(error) => {
+                        let message = client_error_message(error);
+                        send_sync_error(socket, &request_id, "invalid_document", &message).await;
+                        return;
+                    }
+                };
 
                 match db
                     .sync
@@ -590,6 +611,8 @@ async fn handle_push(
                         doc.id,
                         doc.name,
                         details,
+                        source_provider,
+                        external_id,
                         doc.updated_at,
                         deleted_at,
                     )
@@ -599,6 +622,7 @@ async fn handle_push(
                         "id": conflict.id.to_string(),
                         "name": conflict.name,
                         "details": conflict.details,
+                        "provenance": provenance_json(conflict.source_provider, conflict.external_id),
                         "isOfficial": conflict.is_official,
                         "updatedAt": conflict.updated_at,
                         "_deleted": conflict.deleted_at.is_some(),
@@ -646,6 +670,11 @@ async fn handle_push(
                 } else {
                     None
                 };
+                if let Err(error) = provenance_parts(doc.provenance) {
+                    let message = client_error_message(error);
+                    send_sync_error(socket, &request_id, "invalid_document", &message).await;
+                    return;
+                }
                 match db
                     .sync
                     .push_meal_log(
@@ -666,6 +695,7 @@ async fn handle_push(
                         "templateId": conflict.template_id.map(|t| t.to_string()),
                         "nameSnapshot": conflict.name_snapshot,
                         "nutritionSnapshot": conflict.nutrition_snapshot,
+                        "provenance": provenance_json(conflict.source_provider, conflict.external_id),
                         "quantity": conflict.quantity,
                         "consumedAt": conflict.consumed_at,
                         "updatedAt": conflict.updated_at,
@@ -941,6 +971,31 @@ fn client_error_message(error: AppError) -> String {
     match error {
         AppError::BadRequest(message) => message,
         _ => "Invalid sync document".into(),
+    }
+}
+
+fn provenance_parts(
+    provenance: Option<ImportProvenanceDocument>,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    let Some(provenance) = provenance else {
+        return Ok((None, None));
+    };
+    if provenance.provider != "macrofactor"
+        || provenance.external_id.is_empty()
+        || provenance.external_id.len() > 128
+    {
+        return Err(AppError::BadRequest("Invalid import provenance".into()));
+    }
+    Ok((Some(provenance.provider), Some(provenance.external_id)))
+}
+
+fn provenance_json(provider: Option<String>, external_id: Option<String>) -> Value {
+    match (provider, external_id) {
+        (Some(provider), Some(external_id)) => json!({
+            "provider": provider,
+            "externalId": external_id,
+        }),
+        _ => Value::Null,
     }
 }
 

@@ -420,9 +420,7 @@ export class SyncClient {
       this.resolvePending(
         typeof message.requestId === 'string'
           ? message.requestId
-          : collection
-            ? (this.collectionFallbackRequests.get(collection)?.[0] ?? '')
-            : '',
+          : collection ? this.collectionFallbackRequests.get(collection)?.[0] ?? '' : '',
         message,
         new Error(String(message.code || nestedError || 'SYNC_SERVER_ERROR')),
       );

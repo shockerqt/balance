@@ -2,11 +2,63 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use crate::shared::error::AppError;
 
 pub const FOOD_SCHEMA_VERSION: i32 = 1;
+
+pub const EXTENDED_NUTRIENT_KEYS: &[&str] = &[
+    "alcoholG",
+    "vitaminB12Mcg",
+    "thiamineMg",
+    "riboflavinMg",
+    "niacinMg",
+    "pantothenicAcidMg",
+    "pyridoxineMg",
+    "caffeineMg",
+    "calciumMg",
+    "cholineMg",
+    "copperMg",
+    "cysteineG",
+    "monounsaturatedFatG",
+    "polyunsaturatedFatG",
+    "saturatedFatG",
+    "transFatG",
+    "folateMcg",
+    "histidineG",
+    "ironMg",
+    "isoleucineG",
+    "leucineG",
+    "lysineG",
+    "magnesiumMg",
+    "manganeseMg",
+    "methionineG",
+    "omega3AlaG",
+    "omega3DhaG",
+    "omega3EpaG",
+    "omega3G",
+    "omega6G",
+    "phenylalanineG",
+    "phosphorusMg",
+    "potassiumMg",
+    "seleniumMcg",
+    "starchG",
+    "sugarsG",
+    "addedSugarsG",
+    "threonineG",
+    "tryptophanG",
+    "tyrosineG",
+    "valineG",
+    "vitaminAMcg",
+    "vitaminCMg",
+    "vitaminDMcg",
+    "vitaminEMg",
+    "vitaminKMcg",
+    "waterG",
+    "zincMg",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -31,6 +83,8 @@ pub struct NutritionValues {
     pub sodium_mg: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cholesterol_mg: Option<f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extended_nutrition: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +93,10 @@ pub struct FoodDetails {
     pub schema_version: i32,
     pub base_amount: f64,
     pub unit: FoodUnit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grams_per_unit: Option<f64>,
     pub nutrition: NutritionValues,
     #[serde(default)]
     pub chilean_seals: Vec<String>,
@@ -54,6 +112,10 @@ pub struct NutritionSnapshot {
     pub schema_version: i32,
     pub base_amount: f64,
     pub unit: FoodUnit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grams_per_unit: Option<f64>,
     pub nutrition: NutritionValues,
 }
 
@@ -70,6 +132,7 @@ impl FoodDetails {
             ));
         }
         self.nutrition.validate()?;
+        validate_serving_metadata(self.serving_label.as_deref(), self.grams_per_unit)?;
         if let Some(time) = &self.typical_time {
             chrono::NaiveTime::parse_from_str(time, "%H:%M")
                 .map_err(|_| AppError::BadRequest("typicalTime must use HH:MM".into()))?;
@@ -82,6 +145,8 @@ impl FoodDetails {
             schema_version: self.schema_version,
             base_amount: self.base_amount,
             unit: self.unit,
+            serving_label: self.serving_label.clone(),
+            grams_per_unit: self.grams_per_unit,
             nutrition: self.nutrition.clone(),
         }
     }
@@ -99,12 +164,13 @@ impl NutritionSnapshot {
                 "nutritionSnapshot.baseAmount must be greater than zero".into(),
             ));
         }
-        self.nutrition.validate()
+        self.nutrition.validate()?;
+        validate_serving_metadata(self.serving_label.as_deref(), self.grams_per_unit)
     }
 }
 
 impl NutritionValues {
-    fn validate(&self) -> Result<(), AppError> {
+    pub(crate) fn validate(&self) -> Result<(), AppError> {
         let required = [
             ("calories", self.calories),
             ("protein", self.protein),
@@ -129,6 +195,18 @@ impl NutritionValues {
                 )));
             }
         }
+        for (name, value) in &self.extended_nutrition {
+            if !EXTENDED_NUTRIENT_KEYS.contains(&name.as_str()) {
+                return Err(AppError::BadRequest(format!(
+                    "Unknown extended nutrient: {name}"
+                )));
+            }
+            if !value.is_finite() || *value < 0.0 {
+                return Err(AppError::BadRequest(format!(
+                    "extendedNutrition.{name} must be a finite non-negative number"
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -148,6 +226,8 @@ pub struct MealTemplateRow {
     pub is_official: bool,
     pub name: String,
     pub details: Value,
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
 }
@@ -159,6 +239,8 @@ pub struct MealLogRow {
     pub template_id: Option<Uuid>,
     pub name_snapshot: String,
     pub nutrition_snapshot: Value,
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
     pub quantity: f64,
     pub consumed_at: i64,
     pub updated_at: i64,
@@ -225,6 +307,11 @@ impl Consumption {
             fiber: nutrition.fiber * factor,
             sodium_mg: nutrition.sodium_mg.map(|value| value * factor),
             cholesterol_mg: nutrition.cholesterol_mg.map(|value| value * factor),
+            extended_nutrition: nutrition
+                .extended_nutrition
+                .iter()
+                .map(|(name, value)| (name.clone(), value * factor))
+                .collect(),
         }
     }
 }
@@ -322,7 +409,8 @@ impl SyncDatasource {
     pub async fn get_official_templates(&self) -> Result<Vec<MealTemplateRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, MealTemplateRow>(
             r#"
-            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
             FROM meal_templates
             WHERE is_official = TRUE AND deleted_at IS NULL
             ORDER BY name ASC
@@ -343,7 +431,8 @@ impl SyncDatasource {
     ) -> Result<Vec<MealTemplateRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, MealTemplateRow>(
             r#"
-            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
             FROM meal_templates
             WHERE (user_id = $1 OR is_official = TRUE)
               AND (updated_at > $2 OR (updated_at = $2 AND id > COALESCE($3, '00000000-0000-0000-0000-000000000000'::uuid)))
@@ -367,11 +456,13 @@ impl SyncDatasource {
         id: Uuid,
         name: String,
         details: Value,
+        source_provider: Option<String>,
+        external_id: Option<String>,
         updated_at: i64,
         deleted_at: Option<i64>,
     ) -> Result<Option<MealTemplateRow>, AppError> {
         let existing = sqlx::query_as::<_, MealTemplateRow>(
-            "SELECT id, user_id, is_official, name, details, updated_at, deleted_at FROM meal_templates WHERE id = $1",
+            "SELECT id, user_id, is_official, name, details, source_provider, external_id, updated_at, deleted_at FROM meal_templates WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -397,11 +488,15 @@ impl SyncDatasource {
 
         let _res = sqlx::query(
             r#"
-            INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at)
-            VALUES ($1, $2, FALSE, $3, $4, $5, $6)
+            INSERT INTO meal_templates
+                (id, user_id, is_official, name, details, source_provider, external_id,
+                 updated_at, deleted_at)
+            VALUES ($1, $2, FALSE, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 details = EXCLUDED.details,
+                source_provider = EXCLUDED.source_provider,
+                external_id = EXCLUDED.external_id,
                 updated_at = EXCLUDED.updated_at,
                 deleted_at = EXCLUDED.deleted_at
             WHERE meal_templates.user_id = EXCLUDED.user_id
@@ -412,6 +507,8 @@ impl SyncDatasource {
         .bind(user_id)
         .bind(name)
         .bind(details)
+        .bind(source_provider)
+        .bind(external_id)
         .bind(updated_at)
         .bind(deleted_at)
         .execute(&self.pool)
@@ -436,7 +533,8 @@ impl SyncDatasource {
     ) -> Result<Vec<MealLogRow>, sqlx::Error> {
         let rows = sqlx::query_as::<_, MealLogRow>(
             r#"
-            SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot, quantity, consumed_at, updated_at, deleted_at
+            SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                   source_provider, external_id, quantity, consumed_at, updated_at, deleted_at
             FROM meal_logs
             WHERE user_id = $1
               AND (updated_at > $2 OR (updated_at = $2 AND id > COALESCE($3, '00000000-0000-0000-0000-000000000000'::uuid)))
@@ -464,7 +562,7 @@ impl SyncDatasource {
         let existing = sqlx::query_as::<_, MealLogRow>(
             r#"
             SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
-                   quantity, consumed_at, updated_at, deleted_at
+                   source_provider, external_id, quantity, consumed_at, updated_at, deleted_at
             FROM meal_logs
             WHERE id = $1 AND user_id = $2
             FOR UPDATE
@@ -776,7 +874,8 @@ impl SyncDatasource {
         let pattern = format!("%{escaped}%");
         let rows = sqlx::query_as::<_, MealTemplateRow>(
             r#"
-            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
             FROM meal_templates
             WHERE deleted_at IS NULL
               AND (user_id = $1 OR is_official = TRUE)
@@ -874,7 +973,8 @@ impl SyncDatasource {
     ) -> Result<Option<FoodTemplate>, AppError> {
         let row = sqlx::query_as::<_, MealTemplateRow>(
             r#"
-            SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
             FROM meal_templates
             WHERE id = $1
               AND deleted_at IS NULL
@@ -949,7 +1049,7 @@ impl SyncDatasource {
         let rows = sqlx::query_as::<_, MealLogRow>(
             r#"
             SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
-                   quantity, consumed_at, updated_at, deleted_at
+                   source_provider, external_id, quantity, consumed_at, updated_at, deleted_at
             FROM meal_logs
             WHERE user_id = $1
               AND deleted_at IS NULL
@@ -989,7 +1089,8 @@ impl SyncDatasource {
                 updated_at = floor(extract(epoch from clock_timestamp()) * 1000)::bigint
             WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
             RETURNING id, user_id, template_id, name_snapshot,
-                      nutrition_snapshot, quantity, consumed_at, updated_at,
+                      nutrition_snapshot, source_provider, external_id,
+                      quantity, consumed_at, updated_at,
                       deleted_at
             "#,
         )
@@ -1022,7 +1123,8 @@ impl SyncDatasource {
                 END
             WHERE id = $1 AND user_id = $2
             RETURNING id, user_id, template_id, name_snapshot,
-                      nutrition_snapshot, quantity, consumed_at, updated_at,
+                      nutrition_snapshot, source_provider, external_id,
+                      quantity, consumed_at, updated_at,
                       deleted_at
             "#,
         )
@@ -1141,7 +1243,8 @@ async fn get_food_template_in_tx(
 ) -> Result<Option<FoodTemplate>, AppError> {
     let row = sqlx::query_as::<_, MealTemplateRow>(
         r#"
-        SELECT id, user_id, is_official, name, details, updated_at, deleted_at
+        SELECT id, user_id, is_official, name, details, source_provider, external_id,
+               updated_at, deleted_at
         FROM meal_templates
         WHERE id = $1
           AND deleted_at IS NULL
@@ -1164,7 +1267,7 @@ async fn get_consumption_in_tx(
     let row = sqlx::query_as::<_, MealLogRow>(
         r#"
         SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
-               quantity, consumed_at, updated_at, deleted_at
+               source_provider, external_id, quantity, consumed_at, updated_at, deleted_at
         FROM meal_logs
         WHERE id = $1 AND user_id = $2
         "#,
@@ -1180,6 +1283,23 @@ fn validate_quantity(quantity: f64) -> Result<(), AppError> {
     if !quantity.is_finite() || quantity <= 0.0 {
         return Err(AppError::BadRequest(
             "quantity must be a finite number greater than zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_serving_metadata(
+    serving_label: Option<&str>,
+    grams_per_unit: Option<f64>,
+) -> Result<(), AppError> {
+    if matches!(serving_label, Some(label) if label.chars().count() > 120) {
+        return Err(AppError::BadRequest(
+            "servingLabel cannot exceed 120 characters".into(),
+        ));
+    }
+    if matches!(grams_per_unit, Some(value) if !value.is_finite() || value <= 0.0) {
+        return Err(AppError::BadRequest(
+            "gramsPerUnit must be a finite number greater than zero".into(),
         ));
     }
     Ok(())
@@ -1249,6 +1369,7 @@ mod tests {
             fiber: 2.0,
             sodium_mg: Some(150.0),
             cholesterol_mg: Some(10.0),
+            extended_nutrition: Default::default(),
         };
         assert!(valid.validate().is_ok());
 
@@ -1290,6 +1411,54 @@ mod tests {
     }
 
     #[test]
+    fn extended_nutrition_is_allowlisted_validated_and_scaled() {
+        let nutrition: NutritionValues = serde_json::from_value(json!({
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0,
+            "extendedNutrition": {
+                "vitaminCMg": 12.5,
+                "omega3DhaG": 0.4
+            }
+        }))
+        .unwrap();
+        assert!(nutrition.validate().is_ok());
+        assert_eq!(nutrition.extended_nutrition["vitaminCMg"], 12.5);
+
+        let mut snapshot = NutritionSnapshot {
+            schema_version: FOOD_SCHEMA_VERSION,
+            base_amount: 1.0,
+            unit: FoodUnit::Portion,
+            serving_label: Some("serving".into()),
+            grams_per_unit: Some(100.0),
+            nutrition,
+        };
+        let scaled = Consumption {
+            id: Uuid::new_v4(),
+            template_id: None,
+            name: "fixture".into(),
+            snapshot: snapshot.clone(),
+            quantity: 2.0,
+            consumed_at: 1,
+            updated_at: 1,
+        }
+        .scaled_nutrition();
+        assert_eq!(scaled.extended_nutrition["vitaminCMg"], 25.0);
+
+        snapshot
+            .nutrition
+            .extended_nutrition
+            .insert("unknownNutrient".into(), 1.0);
+        assert!(snapshot.validate().is_err());
+        snapshot
+            .nutrition
+            .extended_nutrition
+            .insert("vitaminCMg".into(), f64::INFINITY);
+        assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
     fn test_food_details_validation() {
         let valid_nutrition = NutritionValues {
             calories: 200.0,
@@ -1299,12 +1468,15 @@ mod tests {
             fiber: 1.0,
             sodium_mg: None,
             cholesterol_mg: None,
+            extended_nutrition: Default::default(),
         };
         let valid = FoodDetails {
             schema_version: FOOD_SCHEMA_VERSION,
             base_amount: 100.0,
             unit: FoodUnit::G,
             nutrition: valid_nutrition,
+            serving_label: None,
+            grams_per_unit: None,
             chilean_seals: vec![],
             category: Some("Snack".into()),
             typical_time: Some("14:30".into()),
@@ -1372,6 +1544,7 @@ mod tests {
             fiber: 0.0,
             sodium_mg: None,
             cholesterol_mg: None,
+            extended_nutrition: Default::default(),
         };
         let serialized = serde_json::to_value(&nutrition).unwrap();
         assert!(serialized.get("sodiumMg").is_none());
@@ -1406,7 +1579,10 @@ mod tests {
                     fiber: 2.4,
                     sodium_mg: Some(1.0),
                     cholesterol_mg: Some(0.0),
+                    extended_nutrition: Default::default(),
                 },
+                serving_label: None,
+                grams_per_unit: None,
             },
             quantity: 200.0,
             consumed_at: 1700000000,
@@ -1448,7 +1624,10 @@ mod tests {
                 fiber: 2.4,
                 sodium_mg: None,
                 cholesterol_mg: None,
+                extended_nutrition: Default::default(),
             },
+            serving_label: None,
+            grams_per_unit: None,
             chilean_seals: vec![],
             category: Some("fruit".into()),
             typical_time: None,
@@ -1473,6 +1652,8 @@ mod tests {
                 food_id,
                 "Intento ajeno".into(),
                 serde_json::to_value(&details).unwrap(),
+                None,
+                None,
                 i64::MAX - 1,
                 None,
             )

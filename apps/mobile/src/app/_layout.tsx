@@ -48,6 +48,17 @@ function Navigation() {
             contentStyle: { backgroundColor: theme.colors.background },
           }}
         />
+        <Stack.Screen
+          name="macro-factor-import"
+          options={{
+            headerShown: true,
+            title: 'Importar MacroFactor',
+            headerBackTitle: 'Atrás',
+            headerStyle: { backgroundColor: theme.colors.surface },
+            headerTintColor: theme.colors.text,
+            contentStyle: { backgroundColor: theme.colors.background },
+          }}
+        />
       </Stack>
     </NavigationThemeProvider>
   );

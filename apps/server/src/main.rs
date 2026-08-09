@@ -4,6 +4,7 @@ use connectors::{db::Database, gemini::GeminiClient};
 use modules::{
     ai::routes::ai_routes,
     auth::{middleware::auth, oidc::OidcConfig, routes::auth_routes},
+    imports::import_routes,
     mcp::{mcp_metadata_routes, mcp_routes},
     sync::routes::{public_template_routes, sync_routes},
     user::routes::user_routes,
@@ -53,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
             "/ai",
             ai_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
         )
+        .merge(import_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)))
         .merge(sync_routes().route_layer(middleware::from_fn_with_state(oidc, auth)))
         .nest_service("/mockups", ServeDir::new("static/mockups"))
         .layer(

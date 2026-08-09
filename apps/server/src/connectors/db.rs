@@ -1,3 +1,4 @@
+use super::imports::ImportDatasource;
 use super::sync::SyncDatasource;
 use super::user::UserDatasource;
 use sqlx::postgres::PgPoolOptions;
@@ -6,6 +7,7 @@ use sqlx::postgres::PgPoolOptions;
 pub struct Database {
     pub user: UserDatasource,
     pub sync: SyncDatasource,
+    pub imports: ImportDatasource,
 }
 
 impl Database {
@@ -16,6 +18,7 @@ impl Database {
             .await?;
 
         Ok(Self {
+            imports: ImportDatasource::new(pool.clone()),
             user: UserDatasource { pool: pool.clone() },
             sync: SyncDatasource::new(pool.clone()),
         })

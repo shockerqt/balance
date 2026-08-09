@@ -51,6 +51,27 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <Text variant="label" tone="muted">
+            DATOS
+          </Text>
+          <Card>
+            <View style={styles.account}>
+              <View style={styles.settingCopy}>
+                <Text variant="heading">Importar desde MacroFactor</Text>
+                <Text variant="body" tone="secondary">
+                  Añade el historial y los nutrientes de una exportación XLSX.
+                </Text>
+              </View>
+              <Button
+                title="Abrir importador"
+                variant="secondary"
+                onPress={() => router.push('/macro-factor-import')}
+              />
+            </View>
+          </Card>
+        </View>
+
+        <View style={styles.section}>
+          <Text variant="label" tone="muted">
             CUENTA
           </Text>
           <Card>
@@ -60,9 +81,7 @@ export default function SettingsScreen() {
                   {isGuest ? 'Modo invitado' : (user?.name ?? 'Cuenta Balance')}
                 </Text>
                 <Text variant="body" tone="secondary" selectable>
-                  {isGuest
-                    ? 'Los datos permanecen solo en este dispositivo.'
-                    : (user?.email ?? 'Sesión autenticada')}
+                  {isGuest ? 'Los datos permanecen solo en este dispositivo.' : (user?.email ?? 'Sesión autenticada')}
                 </Text>
               </View>
               <Button
