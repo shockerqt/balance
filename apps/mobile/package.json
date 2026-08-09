@@ -36,13 +36,14 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081",
+    "start": "APP_VARIANT=development REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
-    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
+    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
+    "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs"
   },
   "private": true
 }

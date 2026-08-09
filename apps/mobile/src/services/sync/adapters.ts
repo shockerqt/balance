@@ -6,6 +6,7 @@ import {
   NutritionSnapshot,
   MealUnit,
 } from './types';
+import { parseFoodPortion } from '@/lib/food-portions';
 
 export interface LibraryFoodAdapter {
   id: string;
@@ -16,6 +17,8 @@ export interface LibraryFoodAdapter {
   carbs: number;
   fat: number;
   fiber?: number;
+  sodiumMg?: number;
+  cholesterolMg?: number;
   typicalTime: string;
   chileanSeals?: string[];
   category?: string;
@@ -53,6 +56,8 @@ export function templateToLibraryFood(doc: MealTemplateDoc, frequency = 0): Libr
     carbs: details.nutrition.carbs,
     fat: details.nutrition.fat,
     fiber: details.nutrition.fiber == null ? undefined : details.nutrition.fiber,
+    sodiumMg: details.nutrition.sodiumMg == null ? undefined : details.nutrition.sodiumMg,
+    cholesterolMg: details.nutrition.cholesterolMg == null ? undefined : details.nutrition.cholesterolMg,
     typicalTime: details.typicalTime == null ? '12:00' : details.typicalTime,
     frequency,
     chileanSeals: details.chileanSeals,
@@ -113,20 +118,20 @@ export function logToLoggedFood(doc: MealLogDoc): LoggedFoodAdapter {
 }
 
 export function detailsFromLibraryFood(food: Omit<LibraryFoodAdapter, 'id'>): MealTemplateDetails {
-  const match = food.portion.trim().match(/^([0-9]+(?:\.[0-9]+)?)\s*(g|ml|unit|unidad|portion|porción|cup|taza)$/i);
-  const baseAmount = match ? Number(match[1]) : 100;
-  const rawUnit = match?.[2].toLowerCase();
-  const unit: MealUnit = rawUnit === 'unidad' ? 'unit' : rawUnit === 'porción' ? 'portion' : rawUnit === 'taza' ? 'cup' : (rawUnit as MealUnit) || 'g';
+  const portion = parseFoodPortion(food.portion);
+  if (!portion) throw new Error('INVALID_FOOD_PORTION');
   return {
     schemaVersion: 1,
-    baseAmount: baseAmount > 0 ? baseAmount : 100,
-    unit,
+    baseAmount: portion.baseAmount,
+    unit: portion.unit,
     nutrition: {
       calories: Math.max(0, food.calories),
       protein: Math.max(0, food.protein),
       carbs: Math.max(0, food.carbs),
       fat: Math.max(0, food.fat),
       ...(food.fiber === undefined ? {} : { fiber: Math.max(0, food.fiber) }),
+      ...(food.sodiumMg === undefined ? {} : { sodiumMg: Math.max(0, food.sodiumMg) }),
+      ...(food.cholesterolMg === undefined ? {} : { cholesterolMg: Math.max(0, food.cholesterolMg) }),
     },
     ...(food.chileanSeals?.length ? { chileanSeals: food.chileanSeals } : {}),
     ...(food.category ? { category: food.category } : {}),

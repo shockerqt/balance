@@ -25,6 +25,14 @@ export default function TabLayout() {
           renderingMode="template"
         />
       </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="library">
+        <NativeTabs.Trigger.Label>Biblioteca</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'books.vertical', selected: 'books.vertical.fill' }}
+          md={{ default: 'menu_book', selected: 'menu_book' }}
+        />
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
