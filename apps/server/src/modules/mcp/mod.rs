@@ -22,6 +22,7 @@ use crate::{
 const MCP_URL: &str = "https://balance.shocker.cl/api/mcp";
 const AUTHORIZATION_SERVER: &str = "https://auth.shocker.cl/realms/balance";
 const TIMEZONE: &str = "America/Santiago";
+const SERVER_INSTRUCTIONS: &str = "Usa get_daily_log para consultar consumos, el diario o lo que el usuario comió en una fecha; para varios días llámala una vez por cada fecha exacta. Usa search_foods exclusivamente para buscar alimentos disponibles en el catálogo oficial o personal. Nunca uses search_foods para consultar consumos, historial o fechas. Si una consulta de historial no identifica una fecha, pide aclararla; omite date únicamente cuando el usuario dice hoy.";
 
 pub fn mcp_routes() -> Router {
     Router::new().route("/mcp", post(mcp_post_handler))
@@ -140,7 +141,8 @@ async fn mcp_post_handler(
             "result": {
                 "protocolVersion": "2025-11-25",
                 "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "balance", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": { "name": "balance", "version": env!("CARGO_PKG_VERSION") },
+                "instructions": SERVER_INSTRUCTIONS
             }
         }))
         .into_response(),
@@ -484,8 +486,8 @@ pub(crate) fn tool_definitions() -> Value {
     json!([
         {
             "name": "search_foods",
-            "title": "Buscar alimentos",
-            "description": "Busca alimentos oficiales y personales antes de registrar un consumo. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
+            "title": "Buscar en el catálogo de alimentos",
+            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre o categoría. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -503,8 +505,8 @@ pub(crate) fn tool_definitions() -> Value {
         },
         {
             "name": "get_daily_log",
-            "title": "Consultar registro diario",
-            "description": "Obtiene lo consumido y sus totales para una fecha. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago.",
+            "title": "Consultar consumos por fecha",
+            "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "date": { "type": "string", "format": "date" } },
@@ -914,6 +916,46 @@ mod tests {
         assert!(
             get_desc("delete_food_log")
                 .contains("Confirma con el usuario el registro seleccionado")
+        );
+    }
+
+    #[test]
+    fn catalog_and_history_routing_rules_are_mutually_exclusive() {
+        let tools = tool_definitions();
+        let get_tool = |name: &str| {
+            tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool.get("name") == Some(&Value::String(name.into())))
+                .unwrap()
+        };
+
+        let search_foods = get_tool("search_foods");
+        let get_daily_log = get_tool("get_daily_log");
+        let search_description = search_foods["description"].as_str().unwrap();
+        let daily_description = get_daily_log["description"].as_str().unwrap();
+
+        assert!(search_description.contains("exclusivamente"));
+        assert!(search_description.contains("catálogo"));
+        assert!(search_description.contains("NUNCA consulta consumos"));
+        assert!(search_description.contains("usa get_daily_log"));
+        assert!(daily_description.contains("consumos ya registrados"));
+        assert!(daily_description.contains("una vez por cada fecha exacta"));
+        assert!(daily_description.contains("NUNCA busca alimentos en el catálogo"));
+        assert!(SERVER_INSTRUCTIONS.contains("Nunca uses search_foods"));
+
+        assert!(
+            search_foods
+                .pointer("/inputSchema/properties/date")
+                .is_none(),
+            "search_foods must not accept dates"
+        );
+        assert!(
+            get_daily_log
+                .pointer("/inputSchema/properties/query")
+                .is_none(),
+            "get_daily_log must not accept catalog queries"
         );
     }
 
