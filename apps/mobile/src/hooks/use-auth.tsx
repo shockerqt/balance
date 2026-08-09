@@ -12,13 +12,16 @@ import {
   refreshDelayMs,
   refreshRetryDelayMs,
   isSessionFresh,
+  LEGACY_TOKEN_KEY,
+  LEGACY_WEB_TOKEN_KEY,
   mergeRefreshedSession,
   nextSessionLineage,
-  parseStoredSession,
-  serializeSessionRecord,
+  resolveStoredSession,
   SerializedSessionWriter,
+  SESSION_KEY,
   sessionForUnauthorizedResponse,
   sessionForVerifiedProfile,
+  sessionWritePlan,
   StoredAuthSession,
   StoredUserProfile,
 } from '@/services/auth/session-state';
@@ -31,14 +34,8 @@ interface ApiResponse<T> {
   data?: T | null;
 }
 
-// SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
-const SESSION_KEY = 'balance.auth.session.v2';
-const REFRESH_KEY = 'balance.auth.refresh.v2';
-const LEGACY_TOKEN_KEY = 'balance.auth.token.v1';
-const LEGACY_WEB_TOKEN_KEY = '@balance_auth_token_v1';
 const GUEST_KEY = '@balance_guest_v1';
 const AUTH_SCOPES = ['openid', 'profile', 'email'];
-const LOGGED_OUT_MARKER = '{"version":2,"loggedOut":true}';
 
 const readValue = (key: string) => (Platform.OS === 'web' ? storage.getItem(key) : SecureStore.getItemAsync(key));
 
@@ -53,42 +50,21 @@ const writeValue = async (key: string, value: string | null) => {
 };
 
 const readSession = async (): Promise<StoredAuthSession | null> => {
-  const rawSession = await readValue(SESSION_KEY);
-  if (rawSession === LOGGED_OUT_MARKER) return null;
-  const saved = parseStoredSession(rawSession);
-  if (saved) {
-    // Browser storage is readable by page JavaScript and never holds refresh
-    // credentials. `saved.refreshToken` covers records written inline before
-    // the credential moved to its own key.
-    const refreshToken =
-      Platform.OS === 'web' ? undefined : (saved.refreshToken ?? (await readValue(REFRESH_KEY)) ?? undefined);
-    return { ...saved, refreshToken, lineage: saved.lineage ?? nextSessionLineage() };
-  }
-
-  // BAL-011 persisted only the access token. Keep it for a one-time migration;
-  // the API will validate it, but it cannot be refreshed after expiration.
-  const legacyToken =
-    (await readValue(LEGACY_TOKEN_KEY)) ?? (Platform.OS === 'web' ? await storage.getItem(LEGACY_WEB_TOKEN_KEY) : null);
-  return legacyToken
-    ? {
-        version: 2,
-        accessToken: legacyToken,
-        issuedAt: Math.floor(Date.now() / 1000),
-        lineage: nextSessionLineage(),
-      }
-    : null;
+  const isWeb = Platform.OS === 'web';
+  const [record, legacyToken, legacyWebToken] = await Promise.all([
+    readValue(SESSION_KEY),
+    readValue(LEGACY_TOKEN_KEY),
+    isWeb ? storage.getItem(LEGACY_WEB_TOKEN_KEY) : Promise.resolve(null),
+  ]);
+  return resolveStoredSession(record, legacyToken ?? legacyWebToken, isWeb);
 };
 
+// Sequential on purpose: the plan's ordering is what keeps an interrupted
+// write safe, and running the steps in parallel would throw it away.
 const writeSession = async (session: StoredAuthSession | null) => {
-  // Android SecureStore rejects values past 2 KB and two JWTs in one record can
-  // cross it, so the refresh token gets its own entry: written before the
-  // record that references it, and cleared first on logout.
-  await writeValue(REFRESH_KEY, session?.refreshToken ?? null);
-  // The marker prevents a partially failed logout from falling back to a
-  // surviving v1 token. A later login replaces it with a valid v2 session.
-  await writeValue(SESSION_KEY, session ? serializeSessionRecord(session) : LOGGED_OUT_MARKER);
-  await writeValue(LEGACY_TOKEN_KEY, null);
-  if (Platform.OS === 'web') await storage.removeItem(LEGACY_WEB_TOKEN_KEY);
+  for (const { key, value } of sessionWritePlan(session, Platform.OS === 'web')) {
+    await writeValue(key, value);
+  }
 };
 
 const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: StoredAuthSession): StoredAuthSession =>
@@ -174,6 +150,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [commitSession],
   );
 
+  // Every new set of credentials goes through here. Publishing them to
+  // `sessionRef` synchronously, before any storage I/O, keeps the ref in step
+  // with `epochRef`: a timer or an AppState check that fires mid-write must
+  // never see the new epoch paired with the previous account's session and
+  // persist that back over this one.
+  const adoptSession = useCallback(
+    (session: StoredAuthSession, expectedEpoch: number) => {
+      sessionRef.current = session;
+      setSessionRevision((revision) => revision + 1);
+      return persistSession(session, expectedEpoch);
+    },
+    [persistSession],
+  );
+
   const clearAuthenticatedState = useCallback(async () => {
     const epoch = ++epochRef.current;
     setUser(null);
@@ -198,19 +188,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const epoch = ++epochRef.current;
       // A token arriving from a deep link starts its own credential chain: it
       // may belong to a different account than the one currently cached.
-      const session: StoredAuthSession = {
-        version: 2,
-        accessToken: token,
-        issuedAt: Math.floor(Date.now() / 1000),
-        lineage: nextSessionLineage(),
-      };
-      // Adopt it in memory before storage I/O so the `checkSession` that
-      // follows verifies this same chain instead of opening another one.
-      sessionRef.current = session;
-      setSessionRevision((revision) => revision + 1);
-      void persistSession(session, epoch);
+      // Adopting it before the I/O also lets the `checkSession` that follows
+      // verify this same chain instead of opening another one.
+      void adoptSession(
+        {
+          version: 2,
+          accessToken: token,
+          issuedAt: Math.floor(Date.now() / 1000),
+          lineage: nextSessionLineage(),
+        },
+        epoch,
+      );
     },
-    [clearAuthenticatedState, persistSession],
+    [adoptSession, clearAuthenticatedState],
   );
 
   const refreshSession = useCallback(
@@ -231,14 +221,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
           if (epoch !== epochRef.current) return null;
           const refreshed = fromTokenResponse(response, session);
-          // The provider may have invalidated the previous rotating refresh
-          // token already. Adopt the new token in memory before SecureStore I/O
-          // so this process never attempts to reuse the old credential.
-          sessionRef.current = refreshed;
-          setSessionRevision((revision) => revision + 1);
           setRefreshRetryAt(null);
           refreshAttemptRef.current = 0;
-          await persistSession(refreshed, epoch);
+          // The provider may have invalidated the previous rotating refresh
+          // token already, so this process must never fall back to it.
+          await adoptSession(refreshed, epoch);
           return epoch === epochRef.current ? refreshed : null;
         } catch (error) {
           // invalid_grant means the refresh session was expired, revoked, reused,
@@ -269,7 +256,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (refreshRef.current?.promise === promise) refreshRef.current = null;
       }
     },
-    [clearAuthenticatedState, persistSession],
+    [adoptSession, clearAuthenticatedState],
   );
 
   const verifySession = useCallback(
@@ -466,14 +453,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!tokenResponse.accessToken) return;
       const session = fromTokenResponse(tokenResponse);
       const epoch = ++epochRef.current;
-      if (!(await persistSession(session, epoch))) return;
+      if (!(await adoptSession(session, epoch))) return;
       await verifySession(session);
     } catch (error) {
       console.error('Fallo el login con Google', error);
     } finally {
       setIsLoading(false);
     }
-  }, [persistSession, verifySession]);
+  }, [adoptSession, verifySession]);
 
   const logout = useCallback(async () => {
     const refreshToken = sessionRef.current?.refreshToken;

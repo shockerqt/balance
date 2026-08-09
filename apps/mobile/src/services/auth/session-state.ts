@@ -176,35 +176,69 @@ export const mergeRefreshedSession = (
   lineage: previous.lineage,
 });
 
-// expo-secure-store rejects values past 2048 bytes on Android.
-export const SECURE_STORE_VALUE_LIMIT = 2_048;
+// SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
+export const SESSION_KEY = "balance.auth.session.v2";
+export const LEGACY_TOKEN_KEY = "balance.auth.token.v1";
+export const LEGACY_WEB_TOKEN_KEY = "@balance_auth_token_v1";
+export const LOGGED_OUT_MARKER = '{"version":2,"loggedOut":true}';
 
-const utf8Length = (value: string) => {
-  let bytes = 0;
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return bytes;
+export interface SessionWrite {
+  key: string;
+  value: string | null;
+}
+
+// The whole session lives in one record, so a write either lands or does not:
+// there is no window where a rotated refresh token belongs to one generation
+// and the access token to another. The record is also written first, and every
+// later step only removes copies `resolveStoredSession` already ignores, so an
+// interrupted plan can neither resurrect a closed session nor split an open
+// one. Applied in order, and never in parallel.
+export const sessionWritePlan = (
+  session: StoredAuthSession | null,
+  web: boolean,
+): SessionWrite[] => {
+  const writes: SessionWrite[] = [
+    {
+      key: SESSION_KEY,
+      // Browser storage is readable by page JavaScript, so refresh credentials
+      // never reach it. The marker stops a partially failed logout from
+      // falling back to a surviving v1 token; a later login replaces it.
+      value: session
+        ? JSON.stringify(
+            web ? { ...session, refreshToken: undefined } : session,
+          )
+        : LOGGED_OUT_MARKER,
+    },
+    { key: LEGACY_TOKEN_KEY, value: null },
+  ];
+  if (web) writes.push({ key: LEGACY_WEB_TOKEN_KEY, value: null });
+  return writes;
 };
 
-// The refresh token is stored under its own key, so only the access token
-// weighs on this record. `user` and `scope` are caches the client rebuilds
-// from `/me`, so they are what gets dropped if the record is still too large;
-// the tokens themselves are never sacrificed.
-export const serializeSessionRecord = (
-  session: StoredAuthSession,
-  limit = SECURE_STORE_VALUE_LIMIT,
-): string => {
-  const { refreshToken: _refreshToken, ...record } = session;
-  const candidates = [
-    record,
-    { ...record, user: undefined },
-    { ...record, user: undefined, scope: undefined },
-  ];
-  for (const candidate of candidates) {
-    const serialized = JSON.stringify(candidate);
-    if (utf8Length(serialized) <= limit) return serialized;
-  }
-  return JSON.stringify(candidates[candidates.length - 1]);
+export const resolveStoredSession = (
+  record: string | null,
+  legacyToken: string | null,
+  web: boolean,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): StoredAuthSession | null => {
+  if (record === LOGGED_OUT_MARKER) return null;
+
+  const saved = parseStoredSession(record);
+  if (saved)
+    return {
+      ...saved,
+      refreshToken: web ? undefined : saved.refreshToken,
+      lineage: saved.lineage ?? nextSessionLineage(),
+    };
+
+  // BAL-011 persisted only the access token. Keep it for a one-time migration;
+  // the API will validate it, but it cannot be refreshed after expiration.
+  return legacyToken
+    ? {
+        version: 2,
+        accessToken: legacyToken,
+        issuedAt: nowSeconds,
+        lineage: nextSessionLineage(),
+      }
+    : null;
 };

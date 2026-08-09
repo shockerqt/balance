@@ -3,16 +3,19 @@ import test from "node:test";
 import {
   accessTokenChanged,
   isSessionFresh,
+  LEGACY_TOKEN_KEY,
+  LOGGED_OUT_MARKER,
   mergeRefreshedSession,
   nextSessionLineage,
   parseStoredSession,
   refreshDelayMs,
   refreshRetryDelayMs,
-  SECURE_STORE_VALUE_LIMIT,
-  serializeSessionRecord,
+  resolveStoredSession,
   SerializedSessionWriter,
+  SESSION_KEY,
   sessionForUnauthorizedResponse,
   sessionForVerifiedProfile,
+  sessionWritePlan,
 } from "../src/services/auth/session-state.ts";
 
 const session = {
@@ -136,23 +139,110 @@ test("backs off repeated transient refresh failures up to a cap", () => {
   assert.equal(refreshRetryDelayMs(99), 300_000);
 });
 
-test("stores the session without the refresh token and within the limit", () => {
-  const record = JSON.parse(serializeSessionRecord(session));
-  assert.equal(record.refreshToken, undefined);
-  assert.equal(record.accessToken, "access-1");
-  assert.deepEqual(record.user, session.user);
+test("writes the deciding record first and keeps it off the web", () => {
+  const native = sessionWritePlan(session, false);
+  assert.equal(native[0].key, SESSION_KEY);
+  assert.deepEqual(JSON.parse(native[0].value), session);
+  assert.deepEqual(native.slice(1), [{ key: LEGACY_TOKEN_KEY, value: null }]);
 
-  // The profile is a cache the client rebuilds from /me; the token is not.
-  const large = {
+  // Page JavaScript can read browser storage, so the refresh token is dropped
+  // by the write path too, not only when the session is read back.
+  const web = sessionWritePlan(session, true);
+  assert.equal(JSON.parse(web[0].value).refreshToken, undefined);
+  assert.equal(web.length, 3);
+
+  assert.equal(sessionWritePlan(null, false)[0].value, LOGGED_OUT_MARKER);
+});
+
+// Applies the first `steps` writes of a plan, as an interrupted logout or a
+// crashed rotation would leave the device.
+const applyPartially = (store, plan, steps) => {
+  for (const { key, value } of plan.slice(0, steps)) {
+    if (value === null) delete store[key];
+    else store[key] = value;
+  }
+  return resolveStoredSession(
+    store[SESSION_KEY] ?? null,
+    store[LEGACY_TOKEN_KEY] ?? null,
+    false,
+  );
+};
+
+test("an interrupted logout can never resurrect the session", () => {
+  const plan = sessionWritePlan(null, false);
+  for (let steps = 1; steps <= plan.length; steps += 1) {
+    const store = {
+      [SESSION_KEY]: JSON.stringify(session),
+      [LEGACY_TOKEN_KEY]: "legacy-access-token",
+    };
+    // The tombstone lands first, so every later failure is already harmless.
+    assert.equal(applyPartially(store, plan, steps), null);
+  }
+});
+
+test("an interrupted rotation never mixes two generations", () => {
+  const rotated = {
     ...session,
-    accessToken: "a".repeat(SECURE_STORE_VALUE_LIMIT - 200),
-    scope: "openid profile email",
-    user: { id: 7, email: "user@example.test", name: "n".repeat(400) },
+    accessToken: "access-2",
+    refreshToken: "refresh-2",
+    issuedAt: 1_300,
   };
-  const trimmed = JSON.parse(serializeSessionRecord(large));
-  assert.equal(trimmed.accessToken, large.accessToken);
-  assert.equal(trimmed.user, undefined);
-  assert.equal(trimmed.scope, "openid profile email");
+  const plan = sessionWritePlan(rotated, false);
+  for (let steps = 0; steps <= plan.length; steps += 1) {
+    const store = {
+      [SESSION_KEY]: JSON.stringify(session),
+      [LEGACY_TOKEN_KEY]: "legacy-access-token",
+    };
+    const resolved = applyPartially(store, plan, steps);
+    // Either generation is acceptable; a mix of the two is not, because the
+    // provider revokes the previous refresh token once rotation completes.
+    const expected = steps === 0 ? session : rotated;
+    assert.equal(resolved.accessToken, expected.accessToken);
+    assert.equal(resolved.refreshToken, expected.refreshToken);
+    assert.equal(resolved.issuedAt, expected.issuedAt);
+  }
+});
+
+test("migrates a v1 token only when no v2 record decides otherwise", () => {
+  const { lineage, ...migrated } = resolveStoredSession(
+    null,
+    "v1-token",
+    false,
+    4_000,
+  );
+  assert.deepEqual(migrated, {
+    version: 2,
+    accessToken: "v1-token",
+    issuedAt: 4_000,
+  });
+  assert.equal(typeof lineage, "string");
+  // A tombstone outranks a v1 token that a failed logout left behind.
+  assert.equal(
+    resolveStoredSession(LOGGED_OUT_MARKER, "v1-token", false),
+    null,
+  );
+  assert.equal(
+    resolveStoredSession(JSON.stringify(session), "v1-token", false)
+      .accessToken,
+    "access-1",
+  );
+  assert.equal(resolveStoredSession(null, null, false), null);
+});
+
+test("never returns a refresh token to the web platform", () => {
+  assert.equal(
+    resolveStoredSession(JSON.stringify(session), null, true).refreshToken,
+    undefined,
+  );
+});
+
+test("gives a migrated record a lineage so it is never adopted blindly", () => {
+  const stored = { ...session, lineage: undefined };
+  const resolved = resolveStoredSession(JSON.stringify(stored), null, false);
+  assert.equal(typeof resolved.lineage, "string");
+  // A second read is a different chain: nothing links the two in storage.
+  const other = resolveStoredSession(JSON.stringify(stored), null, false);
+  assert.equal(sessionForVerifiedProfile(resolved, other), resolved);
 });
 
 test("reconnects sync only when an established token changes", () => {
