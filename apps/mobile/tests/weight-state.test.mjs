@@ -5,9 +5,10 @@ import {
   mergeWeightLogs,
   parseWeightInput,
   previousWeight,
+  rollbackRejectedWeightLogs,
   weightTrendDates,
 } from '../src/services/weight/weight.ts';
-import { isDateId } from '../src/services/sync/types.ts';
+import { isDateId, parsePushRejections } from '../src/services/sync/types.ts';
 
 test('parses Chilean decimal input into exact 100 gram increments', () => {
   assert.equal(parseWeightInput('72,4'), 72_400);
@@ -43,4 +44,40 @@ test('accepts only real ISO calendar dates for daily identity', () => {
   assert.equal(isDateId('2026-02-29'), false);
   assert.equal(isDateId('2026-13-01'), false);
   assert.equal(isDateId('09-08-2026'), false);
+});
+
+test('accepts only bounded row rejections so poison documents can be discarded safely', () => {
+  assert.deepEqual(
+    parsePushRejections(
+      [
+        { index: 1, code: 'invalid_document', message: 'bad row' },
+        { index: 1, code: 'invalid_document', message: 'newest reason' },
+      ],
+      2
+    ),
+    [{ index: 1, code: 'invalid_document', message: 'newest reason' }]
+  );
+  assert.equal(
+    parsePushRejections([{ index: 2, code: 'invalid_document', message: 'bad row' }], 2),
+    null
+  );
+  assert.equal(parsePushRejections([{ index: 0, code: '', message: 'bad row' }], 1), null);
+  assert.equal(parsePushRejections({}, 1), null);
+});
+
+test('rolls rejected optimistic weights back to the prior local snapshot', () => {
+  const prior = { id: '2026-08-09', weightGrams: 72_400, updatedAt: 1, _deleted: false };
+  const edited = { ...prior, weightGrams: 72_500, updatedAt: 2 };
+  assert.deepEqual(
+    rollbackRejectedWeightLogs([edited], [{ document: edited, previousDocument: prior }]),
+    { logs: [prior], rejectedDateIds: ['2026-08-09'], resetNeeded: false }
+  );
+  assert.deepEqual(
+    rollbackRejectedWeightLogs([edited], [{ document: edited, previousDocument: null }]),
+    { logs: [], rejectedDateIds: ['2026-08-09'], resetNeeded: false }
+  );
+  assert.equal(
+    rollbackRejectedWeightLogs([edited], [{ document: edited }]).resetNeeded,
+    true
+  );
 });

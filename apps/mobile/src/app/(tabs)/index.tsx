@@ -28,7 +28,7 @@ export default function SummaryScreen() {
   const { currentDayLog, dayLogs } = useMealStore();
   const { user, isGuest } = useAuth();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
-  const { weightsByDate } = useWeightStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -40,10 +40,9 @@ export default function SummaryScreen() {
 
   const openAddFood = () => {
     const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
-      2,
-      '0'
-    )}`;
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(
+      now.getMinutes()
+    ).padStart(2, '0')}`;
     router.push({ pathname: '/food-search', params: { dateId: currentDayLog.dateId, time } });
   };
 
@@ -51,8 +50,7 @@ export default function SummaryScreen() {
     <Screen>
       <ScrollView
         contentContainerStyle={{ padding: theme.space.xl, gap: theme.space.xl }}
-        showsVerticalScrollIndicator={false}
-      >
+        showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <View style={[styles.row, { gap: theme.space.md }]}>
             <View
@@ -63,8 +61,7 @@ export default function SummaryScreen() {
                   borderColor: theme.colors.border,
                   borderWidth: theme.border.hairline,
                 },
-              ]}
-            >
+              ]}>
               <Text variant="heading">{initialsOf(user?.name)}</Text>
             </View>
             <View>
@@ -103,8 +100,7 @@ export default function SummaryScreen() {
                 borderRadius: theme.radius.sm,
                 paddingHorizontal: theme.space.md,
                 paddingVertical: theme.space.xs,
-              }}
-            >
+              }}>
               <Text variant="number" tone={over ? 'danger' : 'accent'}>
                 {Math.round(ratio * 100)}%
               </Text>
@@ -129,6 +125,7 @@ export default function SummaryScreen() {
             }
           />
         ) : null}
+        {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
         <WeeklyChart dayLogs={dayLogs} referenceDateId={currentDayLog.dateId} />
       </ScrollView>

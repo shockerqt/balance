@@ -111,7 +111,6 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   useEffect(() => {
     let cancelled = false;
-    syncClient.setNamespace(namespace);
     templatesRef.current = [];
     frequenciesRef.current = {};
     setTemplates([]);
@@ -164,6 +163,23 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
         commitTemplates((previous) => mergeTemplates(previous, documents));
         setSyncNotice('Otro dispositivo tenía una versión más reciente. Revisa la ficha antes de volver a editar.');
       },
+      onPushRejected: (rejections) => {
+        if (cancelled || !rejections.length) return;
+        commitTemplates((previous) => {
+          const byId = new Map(previous.map((doc) => [doc.id, doc]));
+          for (const rejection of rejections) {
+            if (!isMealTemplateDoc(rejection.document)) continue;
+            if (rejection.previousDocument && isMealTemplateDoc(rejection.previousDocument)) {
+              byId.set(rejection.document.id, rejection.previousDocument);
+            } else {
+              byId.delete(rejection.document.id);
+            }
+          }
+          return Array.from(byId.values());
+        });
+        setSyncNotice('El servidor rechazó un cambio. Se restauró la última versión guardada.');
+        void syncClient.resetCollection('mealTemplates');
+      },
     }, ready);
     return () => {
       cancelled = true;
@@ -195,7 +211,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const doc = createPersonalTemplate(uuid(), foodData.name, detailsFromLibraryFood(foodData), now);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
     commitFrequencies((current) => ({ ...current, [doc.id]: 1 }));
-    void syncClient.enqueue('mealTemplates', doc);
+    void syncClient.enqueue('mealTemplates', doc, null);
     return templateToLibraryFood(doc, 1);
   }, [commitFrequencies, commitTemplates]);
 
@@ -209,7 +225,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     } : editedDetails;
     const doc = updatePersonalTemplate(current, foodData.name, details);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
-    void syncClient.enqueue('mealTemplates', doc);
+    void syncClient.enqueue('mealTemplates', doc, current ?? null);
     return templateToLibraryFood(doc, frequenciesRef.current[doc.id] ?? 0);
   }, [commitTemplates]);
 
@@ -217,7 +233,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const current = templatesRef.current.find((doc) => doc.id === foodId);
     const doc = deletePersonalTemplate(current);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
-    void syncClient.enqueue('mealTemplates', doc);
+    void syncClient.enqueue('mealTemplates', doc, current ?? null);
   }, [commitTemplates]);
 
   const incrementFoodFrequency = useCallback((foodId: string) => {
@@ -227,6 +243,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const clearSyncNotice = useCallback(() => setSyncNotice(''), []);
 
   const replaceTemplateDocuments = useCallback((documents: MealTemplateDoc[]) => {
+    templatesRef.current = documents;
     setTemplates(documents);
   }, []);
 

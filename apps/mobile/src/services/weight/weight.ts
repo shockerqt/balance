@@ -28,6 +28,24 @@ export function mergeWeightLogs(previous: WeightLogDoc[], incoming: unknown[]): 
   return Array.from(byId.values());
 }
 
+export function rollbackRejectedWeightLogs(
+  current: WeightLogDoc[],
+  rejections: { document: unknown; previousDocument?: unknown | null }[]
+): { logs: WeightLogDoc[]; rejectedDateIds: string[]; resetNeeded: boolean } {
+  let logs = current;
+  let resetNeeded = false;
+  const rejectedDateIds: string[] = [];
+  for (const rejection of rejections) {
+    if (!isWeightLog(rejection.document)) continue;
+    const dateId = rejection.document.id;
+    logs = logs.filter((doc) => doc.id !== dateId);
+    if (isWeightLog(rejection.previousDocument)) logs = [...logs, rejection.previousDocument];
+    else if (rejection.previousDocument === undefined) resetNeeded = true;
+    rejectedDateIds.push(dateId);
+  }
+  return { logs, rejectedDateIds, resetNeeded };
+}
+
 function isWeightLog(value: unknown): value is WeightLogDoc {
   if (!value || typeof value !== 'object') return false;
   const doc = value as Record<string, unknown>;
@@ -54,7 +72,7 @@ export function previousWeight(
   return dates.length ? logs[dates[dates.length - 1]] : null;
 }
 
-const DAY_INITIALS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const DAY_INITIALS = ['D', 'L', 'M', 'Mi', 'J', 'V', 'S'];
 
 export function weightTrendDates(dateId: string): { id: string; initial: string }[] {
   const [year, month, day] = dateId.split('-').map(Number);

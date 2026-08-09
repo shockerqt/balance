@@ -257,7 +257,7 @@ pub struct MealLogMutation {
     pub deleted_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
 pub struct WeightLogRow {
     pub user_id: i32,
     pub measured_on: NaiveDate,

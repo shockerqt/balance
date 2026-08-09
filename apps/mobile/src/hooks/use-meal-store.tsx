@@ -182,7 +182,6 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     let cancelled = false;
-    syncClient.setNamespace(namespace);
     setLogs([]);
     const ready = (async () => {
       if (namespace === 'guest') await recoverGuestImport().catch(() => null);
@@ -211,6 +210,18 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           persistLogs(namespace, next);
           return next;
         });
+      },
+      onPushRejected: (rejections) => {
+        const rejectedIds = new Set(
+          rejections.filter((value) => isMealLogDoc(value.document)).map((value) => value.document.id)
+        );
+        if (!rejectedIds.size) return;
+        setLogs((previous) => {
+          const next = previous.filter((doc) => !rejectedIds.has(doc.id));
+          persistLogs(namespace, next);
+          return next;
+        });
+        void syncClient.resetCollection('mealLogs');
       },
     }, ready);
     return () => {

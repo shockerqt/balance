@@ -1,4 +1,12 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { storage } from '@/services/storage';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
@@ -7,6 +15,7 @@ import { SyncDocument, UserPreferencesDoc, isUserPreferencesDoc } from '@/servic
 interface PreferencesContextValue {
   preferencesReady: boolean;
   weightTrackingEnabled: boolean;
+  syncError: string | null;
   setWeightTrackingEnabled: (enabled: boolean) => void;
 }
 
@@ -36,13 +45,16 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [user?.id]
   );
   const [document, setDocument] = useState(defaultDoc);
+  const documentRef = useRef(defaultDoc);
   const [preferencesReady, setPreferencesReady] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const enabled = document.preferences.weightTrackingEnabled !== false;
 
   useEffect(() => {
     let cancelled = false;
-    syncClient.setNamespace(namespace);
+    documentRef.current = defaultDoc;
     setDocument(defaultDoc);
+    setSyncError(null);
     setPreferencesReady(false);
     const ready = (async () => {
       try {
@@ -51,7 +63,11 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
         try {
           const parsed = JSON.parse(raw);
           const cached = Array.isArray(parsed) ? parsed.find(isUserPreferencesDoc) : parsed;
-          if (isUserPreferencesDoc(cached)) setDocument(mergePreference(defaultDoc, [cached]));
+          if (isUserPreferencesDoc(cached)) {
+            const next = mergePreference(defaultDoc, [cached]);
+            documentRef.current = next;
+            setDocument(next);
+          }
         } catch {
           // Invalid local preferences fall back to the enabled default.
         }
@@ -63,20 +79,33 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     })();
     const receive = (documents: SyncDocument[]) => {
       if (cancelled) return;
-      setDocument((current) => {
-        const next = mergePreference(current, documents);
-        void storage.setItem(
-          collectionStorageKey(namespace, 'userPreferences'),
-          JSON.stringify([next])
-        );
-        return next;
-      });
+      const next = mergePreference(documentRef.current, documents);
+      documentRef.current = next;
+      setDocument(next);
+      void storage.setItem(
+        collectionStorageKey(namespace, 'userPreferences'),
+        JSON.stringify([next])
+      );
     };
     const unregister = syncClient.registerCollection(
       'userPreferences',
       {
         onDocuments: receive,
         onPushConflicts: receive,
+        onPushRejected: (rejections) => {
+          const rejection = rejections.find((value) => isUserPreferencesDoc(value.document));
+          if (!rejection) return;
+          const previous = rejection.previousDocument;
+          const next = isUserPreferencesDoc(previous) ? previous : defaultDoc;
+          documentRef.current = next;
+          setDocument(next);
+          setSyncError('No se pudo guardar la preferencia. Se restauró el valor anterior.');
+          void storage.setItem(
+            collectionStorageKey(namespace, 'userPreferences'),
+            JSON.stringify([next])
+          );
+          if (previous === undefined) void syncClient.resetCollection('userPreferences');
+        },
       },
       ready
     );
@@ -92,20 +121,21 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const setWeightTrackingEnabled = useCallback(
     (weightTrackingEnabled: boolean) => {
-      setDocument((current) => {
-        const next: UserPreferencesDoc = {
-          id: user?.id ?? 'guest',
-          preferences: { ...current.preferences, weightTrackingEnabled },
-          updatedAt: Date.now(),
-          _deleted: false,
-        };
-        void storage.setItem(
-          collectionStorageKey(namespace, 'userPreferences'),
-          JSON.stringify([next])
-        );
-        void syncClient.enqueue('userPreferences', next);
-        return next;
-      });
+      const next: UserPreferencesDoc = {
+        id: user?.id ?? 'guest',
+        preferences: { ...documentRef.current.preferences, weightTrackingEnabled },
+        updatedAt: Date.now(),
+        _deleted: false,
+      };
+      const previous = documentRef.current;
+      documentRef.current = next;
+      setDocument(next);
+      setSyncError(null);
+      void storage.setItem(
+        collectionStorageKey(namespace, 'userPreferences'),
+        JSON.stringify([next])
+      );
+      void syncClient.enqueue('userPreferences', next, previous);
     },
     [namespace, user?.id]
   );
@@ -114,9 +144,10 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     () => ({
       preferencesReady,
       weightTrackingEnabled: enabled,
+      syncError,
       setWeightTrackingEnabled,
     }),
-    [enabled, preferencesReady, setWeightTrackingEnabled]
+    [enabled, preferencesReady, setWeightTrackingEnabled, syncError]
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 };

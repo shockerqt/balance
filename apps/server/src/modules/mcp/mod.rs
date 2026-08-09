@@ -818,7 +818,7 @@ pub(crate) fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "date": { "type": "string", "format": "date" },
-                    "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0, "multipleOf": 0.1 }
+                    "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0, "description": "Kilograms with at most one decimal place" }
                 },
                 "required": ["weightKg"],
                 "additionalProperties": false
@@ -872,7 +872,7 @@ fn weight_measurement_schema() -> Value {
         "type": "object",
         "properties": {
             "date": { "type": "string", "format": "date" },
-            "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0, "multipleOf": 0.1 },
+            "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0 },
             "updatedAt": { "type": "integer" }
         },
         "required": ["date", "weightKg", "updatedAt"],

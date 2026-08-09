@@ -10,7 +10,7 @@ import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
-import { Screen } from '@/components/ui';
+import { Screen, Text } from '@/components/ui';
 import { makeStyles } from '@/theme';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -29,12 +29,17 @@ export default function LogsScreen() {
   const router = useRouter();
   const pagerRef = useRef<PagerView>(null);
 
-  const { selectedDateId, setSelectedDateId, currentDayLog, dayLogs, deleteMultipleFoods } =
-    useMealStore();
+  const {
+    selectedDateId,
+    setSelectedDateId,
+    currentDayLog,
+    dayLogs,
+    deleteMultipleFoods,
+  } = useMealStore();
 
   const selection = useFoodSelection();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
-  const { weightsByDate } = useWeightStore();
+  const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   // La ventana se reconstruye solo cuando el dia sale de ella.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
@@ -83,10 +88,7 @@ export default function LogsScreen() {
   const openBatchMove = useCallback(() => {
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
-    router.push({
-      pathname: '/batch-move',
-      params: { dateId: selectedDateId, ids: ids.join(',') },
-    });
+    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
     selection.clear();
   }, [router, selectedDateId, selection]);
 
@@ -115,6 +117,7 @@ export default function LogsScreen() {
           }
         />
       ) : null}
+      {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
       <StickyMacroHeader
         foods={currentDayLog.foods}
@@ -130,8 +133,7 @@ export default function LogsScreen() {
         style={styles.pager}
         scrollEnabled={!selection.isSelectionMode}
         initialPage={activeIndex !== -1 ? activeIndex : 0}
-        onPageSelected={onPageSelected}
-      >
+        onPageSelected={onPageSelected}>
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
           const log = dayLogs[dateId] ?? emptyDayLog(dateId);
@@ -166,6 +168,8 @@ export default function LogsScreen() {
       ) : (
         <FloatingAddButton onPress={() => openFoodSearch()} />
       )}
+
+
     </Screen>
   );
 }
