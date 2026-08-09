@@ -7,6 +7,9 @@ import { useTheme } from '@/theme';
 import { Button, Card, ProgressBar, Screen, Text } from '@/components/ui';
 import { MacroGrid } from '@/components/summary/macro-grid';
 import { WeeklyChart } from '@/components/summary/weekly-chart';
+import { WeightTrendCard } from '@/components/weight/weight-trend-card';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
+import { useWeightStore } from '@/hooks/use-weight-store';
 
 /* Resumen del dia. No declara colores ni tamaños de fuente: todo
    sale del tema y de las primitivas. Su StyleSheet es solo layout. */
@@ -23,7 +26,9 @@ export default function SummaryScreen() {
   const theme = useTheme();
   const router = useRouter();
   const { currentDayLog, dayLogs } = useMealStore();
-  const { user, isGuest, logout } = useAuth();
+  const { user, isGuest } = useAuth();
+  const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
+  const { weightsByDate } = useWeightStore();
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -35,22 +40,19 @@ export default function SummaryScreen() {
 
   const openAddFood = () => {
     const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, '0')}:${String(
-      now.getMinutes()
-    ).padStart(2, '0')}`;
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+      2,
+      '0'
+    )}`;
     router.push({ pathname: '/food-search', params: { dateId: currentDayLog.dateId, time } });
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    router.replace("/login");
   };
 
   return (
     <Screen>
       <ScrollView
         contentContainerStyle={{ padding: theme.space.xl, gap: theme.space.xl }}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.header}>
           <View style={[styles.row, { gap: theme.space.md }]}>
             <View
@@ -61,7 +63,8 @@ export default function SummaryScreen() {
                   borderColor: theme.colors.border,
                   borderWidth: theme.border.hairline,
                 },
-              ]}>
+              ]}
+            >
               <Text variant="heading">{initialsOf(user?.name)}</Text>
             </View>
             <View>
@@ -72,11 +75,11 @@ export default function SummaryScreen() {
             </View>
           </View>
           <Button
-            title="Cerrar sesión"
+            title="Configuración"
             variant="ghost"
             size="md"
-            onPress={handleLogout}
-            accessibilityLabel="Cerrar sesión y volver al inicio"
+            onPress={() => router.push('/settings')}
+            accessibilityLabel="Abrir Configuración"
           />
         </View>
 
@@ -100,7 +103,8 @@ export default function SummaryScreen() {
                 borderRadius: theme.radius.sm,
                 paddingHorizontal: theme.space.md,
                 paddingVertical: theme.space.xs,
-              }}>
+              }}
+            >
               <Text variant="number" tone={over ? 'danger' : 'accent'}>
                 {Math.round(ratio * 100)}%
               </Text>
@@ -115,6 +119,16 @@ export default function SummaryScreen() {
         </Card>
 
         <Button title="Registrar comida" onPress={openAddFood} />
+
+        {preferencesReady && weightTrackingEnabled ? (
+          <WeightTrendCard
+            dateId={currentDayLog.dateId}
+            weightsByDate={weightsByDate}
+            onPress={() =>
+              router.push({ pathname: '/weight-entry', params: { dateId: currentDayLog.dateId } })
+            }
+          />
+        ) : null}
 
         <WeeklyChart dayLogs={dayLogs} referenceDateId={currentDayLog.dateId} />
       </ScrollView>

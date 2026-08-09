@@ -102,6 +102,9 @@ La escala tipográfica: `display` `title` `heading` `body` `bodyStrong` `label`
   sugería el nombre anterior de la carpeta.
 - **Nada de datos inventados presentados como reales.** Si un widget no tiene
   datos, muestra su estado vacío; no rellena con cifras de ejemplo.
+- **Peso exacto y opcional.** Los documentos de peso usan la fecha local como
+  identidad, guardan gramos enteros en pasos de 100 y nunca interpolan días sin
+  medición. `weightTrackingEnabled` pausa UI, sync y MCP sin borrar historial.
 
 ### Convenciones de React Native
 

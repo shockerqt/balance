@@ -1,4 +1,9 @@
-export const SYNC_COLLECTIONS = ['mealTemplates', 'mealLogs'] as const;
+export const SYNC_COLLECTIONS = [
+  'userPreferences',
+  'mealTemplates',
+  'mealLogs',
+  'weightLogs',
+] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
 export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';
@@ -45,7 +50,26 @@ export interface MealLogDoc {
   _deleted: boolean;
 }
 
-export type SyncDocument = MealTemplateDoc | MealLogDoc;
+export interface UserPreferences {
+  weightTrackingEnabled?: boolean;
+}
+
+export interface UserPreferencesDoc {
+  id: string | number;
+  preferences: UserPreferences;
+  updatedAt: number;
+  _deleted: boolean;
+}
+
+export interface WeightLogDoc {
+  /** Chilean-local calendar date and stable per-day document id. */
+  id: string;
+  weightGrams: number;
+  updatedAt: number;
+  _deleted: boolean;
+}
+
+export type SyncDocument = UserPreferencesDoc | MealTemplateDoc | MealLogDoc | WeightLogDoc;
 
 export interface SyncCheckpoint {
   updatedAt: number;
@@ -53,7 +77,9 @@ export interface SyncCheckpoint {
 }
 
 export function isMealUnit(value: unknown): value is MealUnit {
-  return value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup';
+  return (
+    value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup'
+  );
 }
 
 const nonNegative = (value: unknown): value is number =>
@@ -68,8 +94,12 @@ export function isNutrition(value: unknown): value is Nutrition {
     nonNegative(nutrition.carbs) &&
     nonNegative(nutrition.fat) &&
     (nutrition.fiber === undefined || nutrition.fiber === null || nonNegative(nutrition.fiber)) &&
-    (nutrition.sodiumMg === undefined || nutrition.sodiumMg === null || nonNegative(nutrition.sodiumMg)) &&
-    (nutrition.cholesterolMg === undefined || nutrition.cholesterolMg === null || nonNegative(nutrition.cholesterolMg))
+    (nutrition.sodiumMg === undefined ||
+      nutrition.sodiumMg === null ||
+      nonNegative(nutrition.sodiumMg)) &&
+    (nutrition.cholesterolMg === undefined ||
+      nutrition.cholesterolMg === null ||
+      nonNegative(nutrition.cholesterolMg))
   );
 }
 
@@ -83,7 +113,9 @@ export function isMealTemplateDetails(value: unknown): value is MealTemplateDeta
     details.baseAmount > 0 &&
     isMealUnit(details.unit) &&
     isNutrition(details.nutrition) &&
-    (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
+    (details.typicalTime === undefined ||
+      details.typicalTime === null ||
+      /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
   );
 }
 
@@ -118,6 +150,51 @@ export function isMealLogDoc(value: unknown): value is MealLogDoc {
   );
 }
 
+export function isUserPreferencesDoc(value: unknown): value is UserPreferencesDoc {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as Record<string, unknown>;
+  if (typeof doc.id !== 'string' && typeof doc.id !== 'number') return false;
+  if (!doc.preferences || typeof doc.preferences !== 'object' || Array.isArray(doc.preferences))
+    return false;
+  const preferences = doc.preferences as Record<string, unknown>;
+  return (
+    (preferences.weightTrackingEnabled === undefined ||
+      typeof preferences.weightTrackingEnabled === 'boolean') &&
+    typeof doc.updatedAt === 'number' &&
+    Number.isFinite(doc.updatedAt) &&
+    typeof doc._deleted === 'boolean'
+  );
+}
+
+export function isWeightLogDoc(value: unknown): value is WeightLogDoc {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as Record<string, unknown>;
+  return (
+    typeof doc.id === 'string' &&
+    isDateId(doc.id) &&
+    typeof doc.weightGrams === 'number' &&
+    Number.isInteger(doc.weightGrams) &&
+    doc.weightGrams >= 1_000 &&
+    doc.weightGrams <= 500_000 &&
+    doc.weightGrams % 100 === 0 &&
+    typeof doc.updatedAt === 'number' &&
+    Number.isFinite(doc.updatedAt) &&
+    typeof doc._deleted === 'boolean'
+  );
+}
+
+export function isDateId(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
 export function isSyncDocument(collection: SyncCollection, value: unknown): value is SyncDocument {
-  return collection === 'mealTemplates' ? isMealTemplateDoc(value) : isMealLogDoc(value);
+  if (collection === 'userPreferences') return isUserPreferencesDoc(value);
+  if (collection === 'mealTemplates') return isMealTemplateDoc(value);
+  if (collection === 'mealLogs') return isMealLogDoc(value);
+  return isWeightLogDoc(value);
 }

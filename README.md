@@ -1,6 +1,7 @@
 # balance
 
-Registro nutricional: anotas lo que comes y lo contrastas con tus objetivos diarios.
+Registro nutricional y corporal: anotas lo que comes, contrastas tus objetivos
+diarios y, si lo deseas, mantienes un registro diario de peso.
 
 Monorepo con tres aplicaciones independientes —no comparten dependencias entre
 sí, cada una se instala y se ejecuta por su cuenta.

@@ -5,6 +5,8 @@ import { StatusBar } from 'expo-status-bar';
 import { MealStoreProvider } from '@/hooks/use-meal-store';
 import { FoodLibraryProvider } from '@/hooks/use-food-library-store';
 import { AuthProvider } from '@/hooks/use-auth';
+import { PreferencesProvider } from '@/hooks/use-preferences-store';
+import { WeightProvider } from '@/hooks/use-weight-store';
 import { ThemeProvider, useTheme } from '@/theme';
 
 /** Los sheets comparten configuracion salvo la altura. */
@@ -33,6 +35,18 @@ function Navigation() {
         <Stack.Screen name="date-picker" options={sheet([0.6])} />
         <Stack.Screen name="food-edit" options={sheet([0.6, 0.95])} />
         <Stack.Screen name="batch-move" options={sheet([0.55])} />
+        <Stack.Screen name="weight-entry" options={sheet([0.5])} />
+        <Stack.Screen
+          name="settings"
+          options={{
+            headerShown: true,
+            title: 'Configuración',
+            headerBackTitle: 'Atrás',
+            headerStyle: { backgroundColor: theme.colors.surface },
+            headerTintColor: theme.colors.text,
+            contentStyle: { backgroundColor: theme.colors.background },
+          }}
+        />
       </Stack>
     </NavigationThemeProvider>
   );
@@ -42,11 +56,15 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <MealStoreProvider>
-          <FoodLibraryProvider>
-            <Navigation />
-          </FoodLibraryProvider>
-        </MealStoreProvider>
+        <PreferencesProvider>
+          <WeightProvider>
+            <MealStoreProvider>
+              <FoodLibraryProvider>
+                <Navigation />
+              </FoodLibraryProvider>
+            </MealStoreProvider>
+          </WeightProvider>
+        </PreferencesProvider>
       </AuthProvider>
     </ThemeProvider>
   );

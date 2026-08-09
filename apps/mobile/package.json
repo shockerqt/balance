@@ -40,7 +40,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
   },
   "private": true
 }
