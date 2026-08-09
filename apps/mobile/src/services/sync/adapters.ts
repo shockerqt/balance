@@ -16,6 +16,8 @@ export interface LibraryFoodAdapter {
   carbs: number;
   fat: number;
   fiber?: number;
+  sodiumMg?: number;
+  cholesterolMg?: number;
   typicalTime: string;
   chileanSeals?: string[];
   category?: string;
@@ -53,6 +55,8 @@ export function templateToLibraryFood(doc: MealTemplateDoc, frequency = 0): Libr
     carbs: details.nutrition.carbs,
     fat: details.nutrition.fat,
     fiber: details.nutrition.fiber == null ? undefined : details.nutrition.fiber,
+    sodiumMg: details.nutrition.sodiumMg == null ? undefined : details.nutrition.sodiumMg,
+    cholesterolMg: details.nutrition.cholesterolMg == null ? undefined : details.nutrition.cholesterolMg,
     typicalTime: details.typicalTime == null ? '12:00' : details.typicalTime,
     frequency,
     chileanSeals: details.chileanSeals,
@@ -127,6 +131,8 @@ export function detailsFromLibraryFood(food: Omit<LibraryFoodAdapter, 'id'>): Me
       carbs: Math.max(0, food.carbs),
       fat: Math.max(0, food.fat),
       ...(food.fiber === undefined ? {} : { fiber: Math.max(0, food.fiber) }),
+      ...(food.sodiumMg === undefined ? {} : { sodiumMg: Math.max(0, food.sodiumMg) }),
+      ...(food.cholesterolMg === undefined ? {} : { cholesterolMg: Math.max(0, food.cholesterolMg) }),
     },
     ...(food.chileanSeals?.length ? { chileanSeals: food.chileanSeals } : {}),
     ...(food.category ? { category: food.category } : {}),

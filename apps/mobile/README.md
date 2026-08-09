@@ -9,6 +9,12 @@ npm run android        # o ios / web
 npx tsc --noEmit       # verificación de tipos (lenta: volcar a archivo antes de filtrar)
 ```
 
+`npm run start` fija la variante `development`: requiere la build interna
+`Balance Dev` (`com.balance.app.dev`) y conserva el callback OAuth
+`balance-dev://auth-callback`. El servidor Metro está pensado para revisión en
+una red privada o mediante un túnel autorizado, no para exposición pública
+permanente.
+
 ## Estructura
 
 ```
