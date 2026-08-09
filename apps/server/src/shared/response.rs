@@ -1,6 +1,5 @@
 use axum::Json;
 use chrono::Utc;
-use reqwest::StatusCode;
 use serde::Serialize;
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -8,7 +7,6 @@ use utoipa::ToSchema;
 use super::error::{AppError, ErrorResponse};
 
 pub type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
-pub type ApiResultWithCode<T> = Result<(StatusCode, Json<ApiResponse<T>>), AppError>;
 
 #[derive(Serialize, ToSchema)]
 pub struct ApiResponse<T> {

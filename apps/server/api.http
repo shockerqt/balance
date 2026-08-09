@@ -1,65 +1,34 @@
-### Obtener usuario actual
+### Current user (replace the placeholder; never store a real token here)
 GET http://localhost:8080/me
-accept: application/json
-Cookie: token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImZtanU5NkBnbWFpbC5jb20iLCJleHAiOjE3NTExMjE0NzIsImlhdCI6MTc1MDUxNjY3Mn0.JlDzF3s0JqcUqgmcbIHV0g68JGwGfHRQ3QhcQd88s5o; theme=dark
+Authorization: Bearer {{access_token}}
+Accept: application/json
 
 ###
 
-### Autenticación Google (inicia flujo OAuth)
-GET http://localhost:8080/auth/google
-
-###
-
-### Obtener todas las comidas
-GET http://localhost:8080/meals/
-
-###
-
-### Crear una comida
-POST http://localhost:8080/meals/create
+### MCP tool discovery
+POST http://localhost:8080/mcp
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
-  "name": "Ejemplo de comida",
-  "description": "Descripción de ejemplo"
+  "jsonrpc": "2.0",
+  "id": "tools-1",
+  "method": "tools/list"
 }
 
 ###
 
-### Actualizar una comida
-POST http://localhost:8080/meals/update
+### MCP daily log
+POST http://localhost:8080/mcp
+Authorization: Bearer {{access_token}}
 Content-Type: application/json
 
 {
-  "id": 1,
-  "name": "Comida actualizada",
-  "description": "Descripción actualizada"
-}
-
-###
-
-### Obtener todos los alimentos
-GET http://localhost:8080/foods/
-
-###
-
-### Crear un alimento
-POST http://localhost:8080/foods/create
-Content-Type: application/json
-
-{
-  "name": "Ejemplo de alimento",
-  "calories": 100
-}
-
-###
-
-### Actualizar un alimento
-POST http://localhost:8080/foods/update
-Content-Type: application/json
-
-{
-  "id": 1,
-  "name": "Alimento actualizado",
-  "calories": 150
+  "jsonrpc": "2.0",
+  "id": "daily-1",
+  "method": "tools/call",
+  "params": {
+    "name": "get_daily_log",
+    "arguments": {}
+  }
 }

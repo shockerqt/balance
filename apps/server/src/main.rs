@@ -4,9 +4,7 @@ use connectors::{db::Database, gemini::GeminiClient};
 use modules::{
     ai::routes::ai_routes,
     auth::{middleware::auth, oidc::OidcConfig, routes::auth_routes},
-    food::routes::food_routes,
     mcp::{mcp_metadata_routes, mcp_routes},
-    meal::routes::meal_routes,
     sync::routes::{public_template_routes, sync_routes},
     user::routes::user_routes,
 };
@@ -51,11 +49,6 @@ async fn main() -> anyhow::Result<()> {
             user_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
         )
         .nest("/auth", auth_routes())
-        .nest("/meals", meal_routes())
-        .nest(
-            "/foods",
-            food_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
-        )
         .nest(
             "/ai",
             ai_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
