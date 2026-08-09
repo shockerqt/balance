@@ -296,7 +296,10 @@ async fn call_tool(
                     fiber: args.fiber,
                     sodium_mg: args.sodium_mg,
                     cholesterol_mg: args.cholesterol_mg,
+                    extended_nutrition: Default::default(),
                 },
+                serving_label: None,
+                grams_per_unit: None,
                 chilean_seals: args.chilean_seals,
                 category: args.category,
                 typical_time: args.typical_time,
@@ -525,6 +528,7 @@ fn zero_nutrition() -> NutritionValues {
         fiber: 0.0,
         sodium_mg: None,
         cholesterol_mg: None,
+        extended_nutrition: Default::default(),
     }
 }
 

@@ -10,6 +10,7 @@ import {
   deletePersonalTemplate,
   updatePersonalTemplate,
 } from '@/lib/food-library-documents';
+import { recoverGuestImport } from '@/services/import/guest-import';
 
 export interface LibraryFoodItem {
   id: string;
@@ -37,12 +38,14 @@ export type LibraryFoodDraft = Omit<
 
 interface FoodLibraryContextType {
   libraryFoods: LibraryFoodItem[];
+  templateDocuments: MealTemplateDoc[];
   isLibraryReady: boolean;
   getSmartRecommendations: (targetTime: string, searchQuery?: string) => LibraryFoodItem[];
   addCustomFood: (food: LibraryFoodDraft) => LibraryFoodItem;
   updateCustomFood: (foodId: string, food: LibraryFoodDraft) => LibraryFoodItem;
   deleteCustomFood: (foodId: string) => void;
   incrementFoodFrequency: (foodId: string) => void;
+  replaceTemplateDocuments: (documents: MealTemplateDoc[]) => void;
 }
 
 const FREQUENCY_KEY_PREFIX = '@balance_food_frequency_v2:';
@@ -93,6 +96,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setIsLibraryReady(false);
 
     const ready = (async () => {
+      if (namespace === 'guest') await recoverGuestImport().catch(() => null);
       const [rawTemplates, rawFrequencies] = await Promise.all([
         storage.getItem(collectionStorageKey(namespace, 'mealTemplates')),
         storage.getItem(`${FREQUENCY_KEY_PREFIX}${namespace}`),
@@ -187,7 +191,13 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const updateCustomFood = useCallback((foodId: string, foodData: LibraryFoodDraft): LibraryFoodItem => {
     const current = templates.find((doc) => doc.id === foodId);
-    const doc = updatePersonalTemplate(current, foodData.name, detailsFromLibraryFood(foodData));
+    const editedDetails = detailsFromLibraryFood(foodData);
+    const details = current ? {
+      ...current.details,
+      ...editedDetails,
+      nutrition: { ...current.details.nutrition, ...editedDetails.nutrition },
+    } : editedDetails;
+    const doc = updatePersonalTemplate(current, foodData.name, details);
     setTemplates((previous) => {
       const next = mergeTemplates(previous, [doc]);
       persistTemplates(namespace, next);
@@ -215,22 +225,30 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     saveFrequencies({ ...frequencies, [foodId]: (frequencies[foodId] ?? 0) + 1 });
   }, [frequencies, saveFrequencies]);
 
+  const replaceTemplateDocuments = useCallback((documents: MealTemplateDoc[]) => {
+    setTemplates(documents);
+  }, []);
+
   const value = useMemo(() => ({
     libraryFoods,
+    templateDocuments: templates,
     isLibraryReady,
     getSmartRecommendations,
     addCustomFood,
     updateCustomFood,
     deleteCustomFood,
     incrementFoodFrequency,
+    replaceTemplateDocuments,
   }), [
     libraryFoods,
+    templates,
     isLibraryReady,
     getSmartRecommendations,
     addCustomFood,
     updateCustomFood,
     deleteCustomFood,
     incrementFoodFrequency,
+    replaceTemplateDocuments,
   ]);
   return <FoodLibraryContext.Provider value={value}>{children}</FoodLibraryContext.Provider>;
 };
