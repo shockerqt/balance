@@ -7,6 +7,8 @@ on:
     paths:
       - 'apps/server/**'
       - 'scripts/sqlx-test-schema.sql'
+      - 'scripts/ensure-lax-sync-schema.sql'
+      - 'scripts/ensure-macrofactor-import-schema.sql'
       - 'scripts/ensure-weight-tracking-schema.sql'
       - '.sqlx/**'
       - 'Cargo.toml'
@@ -17,6 +19,8 @@ on:
     paths:
       - 'apps/server/**'
       - 'scripts/sqlx-test-schema.sql'
+      - 'scripts/ensure-lax-sync-schema.sql'
+      - 'scripts/ensure-macrofactor-import-schema.sql'
       - 'scripts/ensure-weight-tracking-schema.sql'
       - '.sqlx/**'
       - 'Cargo.toml'

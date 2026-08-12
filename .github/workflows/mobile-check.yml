@@ -43,6 +43,14 @@ jobs:
         working-directory: apps/mobile
         run: npm run test:auth
 
+      - name: Test food library document state
+        working-directory: apps/mobile
+        run: npm run test:food-library
+
+      - name: Test MacroFactor import planning
+        working-directory: apps/mobile
+        run: npm run test:macrofactor
+
       - name: Resolve Daily Expo configuration
         working-directory: apps/mobile
         run: APP_VARIANT=daily npx expo config --type public

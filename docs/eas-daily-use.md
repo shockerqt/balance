@@ -78,6 +78,9 @@ Para verificar una OTA en el teléfono:
 No hace falta reinstalar la APK para un cambio OTA compatible.
 
 Los cambios nativos requieren una nueva APK: dependencias nativas, permisos, iconos, configuración Expo o `runtimeVersion`.
+Antes de construirla, se debe incrementar `expo.version` —y `android.versionCode`—
+para que la política `runtimeVersion: appVersion` impida que una OTA destinada
+al binario nuevo llegue a instalaciones antiguas incompatibles.
 
 ### Publicación desde CI
 

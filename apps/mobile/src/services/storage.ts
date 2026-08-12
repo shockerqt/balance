@@ -62,7 +62,7 @@ export const storage = {
   async multiSet(entries: ReadonlyArray<readonly [string, string]>): Promise<void> {
     for (const [key, value] of entries) memory.set(key, value);
     try {
-      await AsyncStorage.setMany(Object.fromEntries(entries));
+      await AsyncStorage.multiSet(entries.map(([key, value]) => [key, value]));
     } catch {
       // Sin AsyncStorage: quedan memoria y web.
     }

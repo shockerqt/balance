@@ -76,7 +76,8 @@ hasta que una tarea específica la repare y establezca un baseline verificable.
   que representa el esquema canónico completo y nunca debe apuntar a producción.
 - Producción se prepara mediante scripts aditivos e idempotentes revisados:
   primero `scripts/ensure-lax-sync-schema.sql` y, para el seguimiento corporal,
-  `scripts/ensure-weight-tracking-schema.sql`.
+  `scripts/ensure-weight-tracking-schema.sql`; la importación de MacroFactor
+  requiere además `scripts/ensure-macrofactor-import-schema.sql`.
 - Cada script productivo se ejecuta manualmente con `psql --set ON_ERROR_STOP=1`
   después de un backup verificado y antes de desplegar el binario que depende de
   su esquema. La aplicación del script y el despliegue requieren aprobación
