@@ -34,8 +34,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: "4. Install Mobile Dependencies"
-        run: |
-          npm --prefix apps/mobile install
+        run: npm --prefix apps/mobile ci
+
+      - name: "4b. Resolve Development Client Configuration"
+        working-directory: apps/mobile
+        run: npx expo config --type public
 
       - name: "5. Prebuild Native Android Code"
         run: |

@@ -41,7 +41,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "APP_VARIANT=development REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081",
+    "start": "APP_VARIANT=development expo start --dev-client --host localhost --port 8081",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
