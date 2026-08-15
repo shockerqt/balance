@@ -52,13 +52,18 @@ Esto ejecuta automáticamente el comando configurado:
 
 ## 4. Automatización CI/CD (GitHub Actions)
 
-### A. Compilación del APK Móvil (`.github/workflows/build-mobile.yml`)
-- **Evento**: Se activa automáticamente al hacer `git push` en `apps/mobile/**` o manualmente mediante `workflow_dispatch`.
-- **Optimizaciones**:
-  - Utiliza **Node 24**, **Java 17 (JDK)** y **Gradle Cache (`gradle/actions/setup-gradle@v4`)**.
-  - Compilación acelerada de arquitectura única para teléfonos físicos modernos: `-PreactNativeArchitectures=arm64-v8a`.
-  - Tiempo de compilación en GitHub Actions: **~3 a 5 minutos**.
-- **Artefactos**: El binario `.apk` compilado (`balance-mobile-sdk57-dev`) queda disponible en la solapa *Actions* de GitHub para instalar en el teléfono.
+### A. Development Build móvil (Expo EAS)
+
+La Development Build se distribuye exclusivamente mediante el perfil
+`development` de Expo EAS. Desde `apps/mobile`:
+
+```bash
+npx eas-cli@21.7.0 build --platform android --profile development
+```
+
+EAS publica el instalable interno en el proyecto `@shocker/balance`, canal
+`development`. El binario usa `com.balance.app.dev` e incluye
+`expo-dev-client` para conectarse al Metro temporal de la tarea activa.
 
 ### B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
 - **Evento**: Se activa al modificar `apps/server/**` o mediante `workflow_dispatch`.

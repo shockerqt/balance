@@ -46,7 +46,7 @@ OIDC_JWKS_URL=https://auth.shocker.cl/realms/balance/protocol/openid-connect/cer
 
 ```bash
 make dev        # dashboard (:3000) + server (:8080) en paralelo
-make mobile     # Metro para el móvil (:8081), con los logs en /tmp/metro.log
+make mobile     # Metro local/loopback (:8081), con los logs en /tmp/metro.log
 make build      # compila dashboard y server
 make check      # verificación rápida del server
 make test       # typecheck del dashboard y tests del server
@@ -74,6 +74,10 @@ LAN se debe solicitar explícitamente `SERVER_BIND_ADDR=0.0.0.0:8080`; ver
 [`apps/server/README.md`](apps/server/README.md). No se usa ese override en
 producción sin la revisión de exposición de red.
 Si cambias un puerto, cambia el otro.
+
+El Metro remoto para `Balance Dev` no se inicia desde el checkout principal ni
+abriendo puertos a mano. INF-006 administra una sesión temporal desde el
+worktree de la feature, con `start/status/renew/stop` y vencimiento automático.
 
 ## Gestor de paquetes
 

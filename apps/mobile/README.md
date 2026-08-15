@@ -9,11 +9,15 @@ npm run android        # o ios / web
 npx tsc --noEmit       # verificación de tipos (lenta: volcar a archivo antes de filtrar)
 ```
 
-`npm run start` fija la variante `development`: requiere la build interna
-`Balance Dev` (`com.balance.app.dev`) y conserva el callback OAuth
-`balance-dev://auth-callback`. El servidor Metro está pensado para revisión en
-una red privada o mediante un túnel autorizado, no para exposición pública
-permanente.
+`npm run start` fija la variante `development`, escucha únicamente en loopback
+y requiere la build interna `Balance Dev` (`com.balance.app.dev`), conservando
+el callback OAuth `balance-dev://auth-callback`.
+
+En el host OCI, el acceso remoto se administra mediante el lease gobernado por
+INF-006; no se debe cambiar este comando para codificar una IP pública ni abrir
+el firewall manualmente. El controlador inicia Metro con transporte LAN para
+el worktree explícito, abre temporalmente TCP 8081 y lo cierra al detenerse o
+vencer.
 
 ## Estructura
 

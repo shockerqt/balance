@@ -88,15 +88,15 @@ La exportación OTA normal debe ejecutarse en un runner con un compilador Hermes
 
 GitHub Actions valida los Pull Requests hacia `main` que cambian la app móvil mediante instalación reproducible, TypeScript y resolución de la configuración Daily. La OTA no se publica al hacer push: se inicia manualmente desde **Actions → Publish Balance Daily OTA → Run workflow**, seleccionando `main` e indicando la nota de versión. El workflow rechaza cualquier otra rama, vuelve a ejecutar las validaciones, publica sólo Android en el canal `daily`, entorno EAS `preview`, y termina mostrando a qué `runtimeVersion` quedó apuntando el canal.
 
-Los tres workflows del móvil:
+Los dos workflows del móvil:
 
 | Workflow | Cuándo corre | Qué hace |
 |---|---|---|
 | `mobile-check.yml` | PR hacia `main` que toca `apps/mobile` | `npm ci`, `tsc`, resolución de la config Daily |
 | `publish-daily-ota.yml` | Manual desde `main` | Valida y publica la OTA al canal `daily` |
-| `build-mobile.yml` | Manual | APK debug con prebuild + Gradle, variante `development` |
 
-`build-mobile.yml` es manual a propósito: hacía prebuild y Gradle completos en cada push a cualquier rama, y en un PR se solapaba con `mobile-check.yml`.
+Las Development Builds no se compilan en GitHub Actions. Se crean y
+distribuyen mediante el perfil `development` de Expo EAS.
 
 Antes del primer uso, crear el entorno protegido `preview` en GitHub y añadir allí el secreto `EXPO_TOKEN`, con un token de Expo que pueda publicar actualizaciones para `@shocker/balance`. No guardar ese token en el repositorio ni en variables `EXPO_PUBLIC_*`.
 
