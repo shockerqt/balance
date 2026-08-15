@@ -168,7 +168,12 @@ export interface MacroFactorDocumentPlan {
 }
 
 const cellText = (value: unknown): string => (value == null ? '' : String(value).trim());
-const headerText = (value: unknown): string => cellText(value).replace(/^\uFEFF/, '');
+const LEADING_BOM = /^(?:\uFEFF|\u00EF\u00BB\u00BF)/;
+
+function normalizeHeader(value: unknown): string {
+  const text = cellText(value).replace(LEADING_BOM, '');
+  return text === '"Date"' ? 'Date' : text;
+}
 
 function parseNumber(value: unknown, required: boolean, label: string): number | null {
   const text = cellText(value);
@@ -251,7 +256,7 @@ function rowFromCells(cells: unknown[], columns: Map<string, number>, rowIndex: 
 export function parseMacroFactorTable(table: unknown[][]): MacroFactorParseResult {
   if (!table.length) throw new Error('El archivo no contiene filas');
   const columns = new Map<string, number>();
-  table[0].forEach((value, index) => columns.set(headerText(value), index));
+  table[0].forEach((value, index) => columns.set(normalizeHeader(value), index));
   const missing = MACRO_FACTOR_HEADERS.filter((header) => !columns.has(header));
   if (missing.length) throw new Error(`Faltan columnas de MacroFactor: ${missing.join(', ')}`);
 
