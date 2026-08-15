@@ -3,6 +3,7 @@ import { TouchableOpacity, View } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { makeStyles } from '@/theme';
 import { Icon, Text } from '@/components/ui';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 /* ============================================================
    Asiento del libro.
@@ -29,12 +30,13 @@ export const LedgerFoodRow: React.FC<{
   };
 
   const detail = [food.time, food.portion].filter(Boolean).join(' · ');
+  const calories = formatCalories(food.calories);
 
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityState={{ selected: isSelectionMode ? isSelected : undefined }}
-      accessibilityLabel={`${food.name}, ${food.calories} kilocalorías`}
+      accessibilityLabel={`${food.name}, ${calories} kilocalorías`}
       style={[styles.row, isSelected && styles.rowSelected]}
       delayPressIn={0}
       activeOpacity={0.7}
@@ -51,7 +53,7 @@ export const LedgerFoodRow: React.FC<{
           <Text variant="bodyStrong" numberOfLines={1} style={styles.name}>
             {food.name}
           </Text>
-          <Text variant="number">{food.calories}</Text>
+          <Text variant="number">{calories}</Text>
         </View>
 
         <View style={styles.line}>
@@ -59,7 +61,8 @@ export const LedgerFoodRow: React.FC<{
             {detail}
           </Text>
           <Text variant="caption" tone="secondary" style={styles.macros}>
-            {food.protein} P · {food.carbs} C · {food.fat} G
+            {formatMacroGrams(food.protein)} P · {formatMacroGrams(food.carbs)} C ·{' '}
+            {formatMacroGrams(food.fat)} G
           </Text>
         </View>
       </View>

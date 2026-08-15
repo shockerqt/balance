@@ -5,6 +5,7 @@ import { DEFAULT_HOUR_RANGE, HourRange, buildHourRail, sumFoods } from '@/lib/ho
 import { makeStyles } from '@/theme';
 import { Text } from '@/components/ui';
 import { LedgerFoodRow } from './ledger-food-row';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 /* ============================================================
    Riel de horas.
@@ -127,9 +128,10 @@ export const HourRailFeed: React.FC<{
                       onPress={() => isSelectionMode && onToggleSelectGroup?.(ids)}
                       onLongPress={() => onLongPressGroup?.(ids)}>
                       <Text variant="caption" tone="secondary" style={styles.tabular}>
-                        {totals.protein} P · {totals.carbs} C · {totals.fat} G
+                        {formatMacroGrams(totals.protein)} P · {formatMacroGrams(totals.carbs)} C ·{' '}
+                        {formatMacroGrams(totals.fat)} G
                       </Text>
-                      <Text variant="number">{totals.calories}</Text>
+                      <Text variant="number">{formatCalories(totals.calories)}</Text>
                     </TouchableOpacity>
                   ) : null}
 

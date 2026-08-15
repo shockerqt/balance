@@ -49,6 +49,7 @@
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
     "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs",
     "test:macrofactor": "tsx --test tests/macro-factor-import.test.mjs",
+    "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
   },
   "private": true

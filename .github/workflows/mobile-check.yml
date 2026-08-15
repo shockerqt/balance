@@ -51,6 +51,10 @@ jobs:
         working-directory: apps/mobile
         run: npm run test:macrofactor
 
+      - name: Test nutrition scaling and presentation precision
+        working-directory: apps/mobile
+        run: npm run test:nutrition
+
       - name: Resolve Daily Expo configuration
         working-directory: apps/mobile
         run: APP_VARIANT=daily npx expo config --type public

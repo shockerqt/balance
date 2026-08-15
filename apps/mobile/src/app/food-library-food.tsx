@@ -6,6 +6,7 @@ import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
 import { CHILEAN_FOOD_SEALS } from '@/lib/chilean-food-seals';
 import { parseFoodPortion } from '@/lib/food-portions';
 import { makeStyles } from '@/theme';
+import { formatEditableNutrition } from '@/lib/nutrition';
 
 const EMPTY_FORM = {
   name: '',
@@ -23,17 +24,17 @@ const EMPTY_FORM = {
 
 type FormState = typeof EMPTY_FORM;
 
-const valueOf = (value: number | undefined) => (value === undefined ? '' : String(value));
+const valueOf = (value: number | undefined) => formatEditableNutrition(value);
 
 function formFromFood(food?: LibraryFoodItem): FormState {
   if (!food) return EMPTY_FORM;
   return {
     name: food.name,
     portion: food.portion,
-    calories: String(food.calories),
-    protein: String(food.protein),
-    carbs: String(food.carbs),
-    fat: String(food.fat),
+    calories: valueOf(food.calories),
+    protein: valueOf(food.protein),
+    carbs: valueOf(food.carbs),
+    fat: valueOf(food.fat),
     fiber: valueOf(food.fiber),
     sodiumMg: valueOf(food.sodiumMg),
     cholesterolMg: valueOf(food.cholesterolMg),
