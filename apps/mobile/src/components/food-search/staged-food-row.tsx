@@ -2,6 +2,7 @@ import React from 'react';
 import { TextInput, TouchableOpacity, View } from 'react-native';
 import { makeStyles } from '@/theme';
 import { Icon, Text } from '@/components/ui';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 /* Fila de la lista de preparacion. El calculo de macros escalados
    estaba inline dentro del map de la pantalla. */
@@ -30,10 +31,10 @@ export const StagedFoodRow: React.FC<{
 
   const quantity = parseFloat(item.quantityStr) || item.baseQty;
   const factor = item.baseQty > 0 ? quantity / item.baseQty : 1;
-  const kcal = Math.round(item.baseCalories * factor);
-  const protein = Math.round(item.baseProtein * factor);
-  const carbs = Math.round(item.baseCarbs * factor);
-  const fat = Math.round(item.baseFat * factor);
+  const kcal = item.baseCalories * factor;
+  const protein = item.baseProtein * factor;
+  const carbs = item.baseCarbs * factor;
+  const fat = item.baseFat * factor;
 
   return (
     <View style={styles.row}>
@@ -67,13 +68,14 @@ export const StagedFoodRow: React.FC<{
             ·
           </Text>
           <Text variant="caption" tone="accent">
-            {kcal} kcal
+            {formatCalories(kcal)} kcal
           </Text>
           <Text variant="caption" tone="muted">
             ·
           </Text>
           <Text variant="caption" tone="secondary">
-            P {protein}g C {carbs}g G {fat}g
+            P {formatMacroGrams(protein)}g C {formatMacroGrams(carbs)}g G{' '}
+            {formatMacroGrams(fat)}g
           </Text>
         </View>
       </View>

@@ -3,6 +3,7 @@ import { TouchableOpacity, View } from 'react-native';
 import type { LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { Icon, Text } from '@/components/ui';
 import { makeStyles } from '@/theme';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 interface FoodLibraryRowProps {
   food: LibraryFoodItem;
@@ -12,11 +13,12 @@ interface FoodLibraryRowProps {
 export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress }) => {
   const styles = useStyles();
   const isOfficial = food.isOfficial === true;
+  const calories = formatCalories(food.calories);
 
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`${food.name}, ${food.calories} kilocalorías, ${
+      accessibilityLabel={`${food.name}, ${calories} kilocalorías, ${
         isOfficial ? 'alimento oficial' : 'alimento personal editable'
       }`}
       activeOpacity={0.72}
@@ -40,17 +42,17 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
         </Text>
         <View style={styles.macros}>
           <Text variant="caption" tone="primary">
-            P {food.protein}g
+            P {formatMacroGrams(food.protein)}g
           </Text>
           <Text variant="caption" tone="secondary">
-            C {food.carbs}g
+            C {formatMacroGrams(food.carbs)}g
           </Text>
           <Text variant="caption" tone="muted">
-            G {food.fat}g
+            G {formatMacroGrams(food.fat)}g
           </Text>
           {food.fiber !== undefined ? (
             <Text variant="caption" tone="muted">
-              F {food.fiber}g
+              F {formatMacroGrams(food.fiber)}g
             </Text>
           ) : null}
         </View>
@@ -58,7 +60,7 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
 
       <View style={styles.energy}>
         <Text variant="number" selectable>
-          {food.calories}
+          {calories}
         </Text>
         <Text variant="caption" tone="muted">
           kcal

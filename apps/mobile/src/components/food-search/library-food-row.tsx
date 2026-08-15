@@ -3,6 +3,7 @@ import { TouchableOpacity, View } from 'react-native';
 import { makeStyles } from '@/theme';
 import { Text } from '@/components/ui';
 import { LibraryFoodItem } from '@/hooks/use-food-library-store';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 /* Fila de alimento de la libreria. Estaba escrita dos veces palabra
    por palabra dentro de food-search: una en "sugeridos" y otra en
@@ -13,11 +14,12 @@ export const LibraryFoodRow: React.FC<{
   onPick: (food: LibraryFoodItem) => void;
 }> = ({ food, onPick }) => {
   const styles = useStyles();
+  const calories = formatCalories(food.calories);
 
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`Agregar ${food.name}, ${food.calories} kilocalorías`}
+      accessibilityLabel={`Agregar ${food.name}, ${calories} kilocalorías`}
       style={styles.row}
       delayPressIn={0}
       activeOpacity={0.7}
@@ -28,13 +30,14 @@ export const LibraryFoodRow: React.FC<{
         </Text>
         <View style={styles.meta}>
           <Text variant="caption" tone="accent">
-            {food.calories} kcal
+            {calories} kcal
           </Text>
           <Text variant="caption" tone="muted">
             ·
           </Text>
           <Text variant="caption" tone="secondary">
-            P {food.protein}g C {food.carbs}g G {food.fat}g
+            P {formatMacroGrams(food.protein)}g C {formatMacroGrams(food.carbs)}g G{' '}
+            {formatMacroGrams(food.fat)}g
           </Text>
           <Text variant="caption" tone="muted">
             ·
