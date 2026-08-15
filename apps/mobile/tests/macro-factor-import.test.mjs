@@ -45,9 +45,27 @@ test('parses all expected headers, BOM, H:MM, optional blanks, and extended nutr
   assert.equal(result.extendedNutrientCount, 3);
 });
 
+test('accepts observed first header value literal ï»¿"Date" without broadly unquoting other headers', () => {
+  const headers = [...MACRO_FACTOR_HEADERS];
+  headers[0] = 'ï»¿"Date"';
+  const result = parseMacroFactorTable([headers, sourceRow()]);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].date, '2024-09-09');
+
+  const invalidHeaders = [...MACRO_FACTOR_HEADERS];
+  invalidHeaders[2] = '"Food Name"';
+  assert.throws(
+    () => parseMacroFactorTable([invalidHeaders, sourceRow()]),
+    /Faltan columnas de MacroFactor: Food Name/,
+  );
+});
+
 test('parses an actual XLSX byte buffer from its first worksheet', () => {
+  const headers = [...MACRO_FACTOR_HEADERS];
+  headers[0] = 'ï»¿"Date"';
   const workbook = utils.book_new();
-  utils.book_append_sheet(workbook, utils.aoa_to_sheet([MACRO_FACTOR_HEADERS, sourceRow()]), 'Food');
+  utils.book_append_sheet(workbook, utils.aoa_to_sheet([headers, sourceRow()]), 'Food');
   const bytes = write(workbook, { type: 'array', bookType: 'xlsx' });
   const result = parseMacroFactorWorkbook(bytes);
   assert.equal(result.rows.length, 1);
