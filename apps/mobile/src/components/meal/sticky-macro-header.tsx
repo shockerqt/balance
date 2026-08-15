@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { useTheme } from '@/theme';
+import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
 
 interface StickyMacroHeaderProps {
   foods: LoggedFoodItem[];
@@ -21,14 +22,10 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
   targetFiber = 30,
 }) => {
   const theme = useTheme();
-  const totalCal = foods.reduce((sum, f) => sum + (f.calories || 0), 0);
-  const totalP = foods.reduce((sum, f) => sum + (f.protein || 0), 0);
-  const totalC = foods.reduce((sum, f) => sum + (f.carbs || 0), 0);
-  const totalF = foods.reduce((sum, f) => sum + (f.fat || 0), 0);
-  const totalFib = foods.reduce((sum, f) => sum + (f.fiber || 0), 0);
+  const totals = sumNutrition(foods);
 
-  const calPercent = Math.min(Math.round((totalCal / targetCalories) * 100), 100);
-  const isOverCal = totalCal > targetCalories;
+  const calPercent = Math.min(Math.round((totals.calories / targetCalories) * 100), 100);
+  const isOverCal = totals.calories > targetCalories;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
@@ -36,25 +33,25 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
       <View style={styles.topRow}>
         <View style={styles.calBox}>
           <Text style={[styles.calMain, { color: theme.colors.text }, isOverCal && { color: theme.colors.danger }]}>
-            {totalCal} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {targetCalories} kcal</Text>
+            {formatCalories(totals.calories)} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {formatCalories(targetCalories)} kcal</Text>
           </Text>
         </View>
 
         <View style={styles.macrosRow}>
           <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            P <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalP}g</Text>
+            P <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.protein)}g</Text>
           </Text>
           <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
           <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            C <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalC}g</Text>
+            C <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.carbs)}g</Text>
           </Text>
           <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
           <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            G <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalF}g</Text>
+            G <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.fat)}g</Text>
           </Text>
           <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
           <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            F <Text style={[styles.macroVal, { color: theme.colors.text }]}>{totalFib}g</Text>
+            F <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.fiber)}g</Text>
           </Text>
         </View>
       </View>

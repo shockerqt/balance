@@ -1,4 +1,5 @@
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import { sumNutrition } from '@/lib/nutrition';
 
 /* ============================================================
    Agrupado por hora.
@@ -64,13 +65,5 @@ export function buildHourRail(
 }
 
 export function sumFoods(foods: LoggedFoodItem[]) {
-  return foods.reduce(
-    (acc, f) => ({
-      calories: acc.calories + (f.calories || 0),
-      protein: acc.protein + (f.protein || 0),
-      carbs: acc.carbs + (f.carbs || 0),
-      fat: acc.fat + (f.fat || 0),
-    }),
-    { calories: 0, protein: 0, carbs: 0, fat: 0 }
-  );
+  return sumNutrition(foods);
 }

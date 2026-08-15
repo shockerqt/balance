@@ -267,6 +267,7 @@ async fn call_tool(
                     add_nutrition(&mut total, &item.scaled_nutrition());
                     total
                 });
+            let totals = nutrition_output(&totals);
             Ok((
                 format!("Hay {} consumos registrados para {date}.", items.len()),
                 json!({
@@ -515,8 +516,34 @@ fn consumption_output(consumption: &Consumption) -> Value {
         "unit": consumption.snapshot.unit,
         "consumedAt": consumption.consumed_at,
         "updatedAt": consumption.updated_at,
-        "nutrition": consumption.scaled_nutrition()
+        "nutrition": nutrition_output(&consumption.scaled_nutrition())
     })
+}
+
+const PUBLIC_NUTRITION_DECIMAL_PLACES: i32 = 6;
+
+fn public_number(value: f64) -> f64 {
+    let factor = 10_f64.powi(PUBLIC_NUTRITION_DECIMAL_PLACES);
+    let rounded = (value * factor).round() / factor;
+    if rounded == 0.0 { 0.0 } else { rounded }
+}
+
+/// Stabilize numeric MCP output without reducing persisted or calculation precision.
+fn nutrition_output(value: &NutritionValues) -> NutritionValues {
+    NutritionValues {
+        calories: public_number(value.calories),
+        protein: public_number(value.protein),
+        carbs: public_number(value.carbs),
+        fat: public_number(value.fat),
+        fiber: public_number(value.fiber),
+        sodium_mg: value.sodium_mg.map(public_number),
+        cholesterol_mg: value.cholesterol_mg.map(public_number),
+        extended_nutrition: value
+            .extended_nutrition
+            .iter()
+            .map(|(name, amount)| (name.clone(), public_number(*amount)))
+            .collect(),
+    }
 }
 
 fn zero_nutrition() -> NutritionValues {
@@ -1075,6 +1102,28 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn public_nutrition_removes_float_artifacts_after_scaling_and_aggregation() {
+        let mut total = zero_nutrition();
+        let mut first = zero_nutrition();
+        first.fat = 12.219999999999;
+        first.protein = 0.1;
+        first.sodium_mg = Some(10.12345678);
+        first.extended_nutrition.insert("ironMg".into(), 0.00000049);
+        let mut second = zero_nutrition();
+        second.protein = 0.2;
+
+        let item = serde_json::to_value(nutrition_output(&first)).unwrap();
+        assert_eq!(item["fat"], json!(12.22));
+        assert_eq!(item["sodiumMg"], json!(10.123457));
+        assert_eq!(item["extendedNutrition"]["ironMg"], json!(0.0));
+
+        add_nutrition(&mut total, &first);
+        add_nutrition(&mut total, &second);
+        let totals = serde_json::to_value(nutrition_output(&total)).unwrap();
+        assert_eq!(totals["protein"], json!(0.3));
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { makeStyles } from '@/theme';
 import { Card, Text } from '@/components/ui';
 import { ScaledMacros } from '@/lib/portion';
+import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 /* Cuadro de macros recalculados. La celda estaba repetida cuatro
    veces con la unica diferencia del valor y la etiqueta. */
@@ -14,10 +15,10 @@ export const MacroSummary: React.FC<{ macros: ScaledMacros; title?: string }> = 
   const styles = useStyles();
 
   const cells = [
-    { value: `${macros.calories}`, label: 'kcal', accent: true },
-    { value: `${macros.protein}g`, label: 'Proteína' },
-    { value: `${macros.carbs}g`, label: 'Carbos' },
-    { value: `${macros.fat}g`, label: 'Grasas' },
+    { value: formatCalories(macros.calories), label: 'kcal', accent: true },
+    { value: `${formatMacroGrams(macros.protein)}g`, label: 'Proteína' },
+    { value: `${formatMacroGrams(macros.carbs)}g`, label: 'Carbos' },
+    { value: `${formatMacroGrams(macros.fat)}g`, label: 'Grasas' },
   ];
 
   return (

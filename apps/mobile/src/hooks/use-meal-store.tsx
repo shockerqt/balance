@@ -5,6 +5,7 @@ import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
 import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
 import { parsePortion } from '@/lib/portion';
+import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
 
 export interface LoggedFoodItem {
@@ -358,11 +359,5 @@ export const useMealStore = () => {
 };
 
 export function sumDay(foods: LoggedFoodItem[]) {
-  return foods.reduce((acc, food) => ({
-    calories: acc.calories + (food.calories || 0),
-    protein: acc.protein + (food.protein || 0),
-    carbs: acc.carbs + (food.carbs || 0),
-    fat: acc.fat + (food.fat || 0),
-    fiber: acc.fiber + (food.fiber || 0),
-  }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
+  return sumNutrition(foods);
 }

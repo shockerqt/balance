@@ -10,6 +10,7 @@ import { WeeklyChart } from '@/components/summary/weekly-chart';
 import { WeightTrendCard } from '@/components/weight/weight-trend-card';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
+import { formatCalories } from '@/lib/nutrition';
 
 /* Resumen del dia. No declara colores ni tamaños de fuente: todo
    sale del tema y de las primitivas. Su StyleSheet es solo layout. */
@@ -87,9 +88,9 @@ export default function SummaryScreen() {
                 CALORÍAS RESTANTES
               </Text>
               <View style={[styles.row, styles.baseline, { gap: theme.space.xs }]}>
-                <Text variant="numberLarge">{remaining}</Text>
+                <Text variant="numberLarge">{formatCalories(remaining)}</Text>
                 <Text variant="body" tone="secondary">
-                  / {currentDayLog.targetCalories} kcal
+                  / {formatCalories(currentDayLog.targetCalories)} kcal
                 </Text>
               </View>
             </View>

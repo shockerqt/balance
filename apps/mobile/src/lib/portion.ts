@@ -1,7 +1,7 @@
-import { LibraryFoodItem } from '@/hooks/use-food-library-store';
+import type { LibraryFoodItem } from '@/hooks/use-food-library-store';
 
-/* Escalado de porciones. Estaba resuelto con una regex y seis
-   Math.round sueltos dentro de la pantalla, sin poder probarse. */
+/* Escalado de porciones. Conserva la precision de calculo; la UI
+   aplica su politica de presentacion al renderizar. */
 
 export interface ParsedPortion {
   quantity: number;
@@ -39,10 +39,10 @@ export function scaleMacros(food: LibraryFoodItem, quantity: number): ScaledMacr
   const factor = base > 0 && Number.isFinite(quantity) ? quantity / base : 1;
 
   return {
-    calories: Math.round(food.calories * factor),
-    protein: Math.round(food.protein * factor),
-    carbs: Math.round(food.carbs * factor),
-    fat: Math.round(food.fat * factor),
-    fiber: Math.round((food.fiber ?? 0) * factor),
+    calories: food.calories * factor,
+    protein: food.protein * factor,
+    carbs: food.carbs * factor,
+    fat: food.fat * factor,
+    fiber: (food.fiber ?? 0) * factor,
   };
 }

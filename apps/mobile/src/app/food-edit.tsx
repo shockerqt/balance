@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LoggedFoodItem, useMealStore } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
+import { formatCalories, formatEditableNutrition } from '@/lib/nutrition';
 
 /* ============================================================
    Editar un registro.
@@ -32,23 +33,25 @@ export default function FoodEditScreen() {
   const [portion, setPortion] = useState(food?.portion ?? '');
   const [showMacros, setShowMacros] = useState(false);
 
-  const [calories, setCalories] = useState(String(food?.calories ?? ''));
-  const [protein, setProtein] = useState(String(food?.protein ?? ''));
-  const [carbs, setCarbs] = useState(String(food?.carbs ?? ''));
-  const [fat, setFat] = useState(String(food?.fat ?? ''));
-  const [fiber, setFiber] = useState(String(food?.fiber ?? ''));
+  const [calories, setCalories] = useState(formatEditableNutrition(food?.calories));
+  const [protein, setProtein] = useState(formatEditableNutrition(food?.protein));
+  const [carbs, setCarbs] = useState(formatEditableNutrition(food?.carbs));
+  const [fat, setFat] = useState(formatEditableNutrition(food?.fat));
+  const [fiber, setFiber] = useState(formatEditableNutrition(food?.fiber));
 
   if (!food) return null;
+
+  const parseNutrition = (value: string) => Number(value.trim().replace(',', '.')) || 0;
 
   const save = () => {
     updateFood(targetDate, food.id, {
       time: time.trim() || food.time,
       portion: portion.trim() || food.portion,
-      calories: Number(calories) || 0,
-      protein: Number(protein) || 0,
-      carbs: Number(carbs) || 0,
-      fat: Number(fat) || 0,
-      fiber: Number(fiber) || 0,
+      calories: parseNutrition(calories),
+      protein: parseNutrition(protein),
+      carbs: parseNutrition(carbs),
+      fat: parseNutrition(fat),
+      fiber: parseNutrition(fiber),
     });
     router.back();
   };
@@ -100,7 +103,7 @@ export default function FoodEditScreen() {
             </Text>
             <View style={styles.spacer} />
             <Text variant="number" tone="muted">
-              {calories || 0} kcal
+              {formatCalories(parseNutrition(calories))} kcal
             </Text>
           </TouchableOpacity>
 
