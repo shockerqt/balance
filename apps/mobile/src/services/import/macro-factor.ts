@@ -9,6 +9,7 @@ import {
   MealTemplateDoc,
   MealUnit,
   Nutrition,
+  NutritionSnapshot,
 } from '../sync/types';
 
 export const MACRO_FACTOR_HEADERS = [
@@ -368,7 +369,7 @@ function detailsForRow(row: MacroFactorRow, typicalTime: string): MealTemplateDe
 
 function snapshotForRow(row: MacroFactorRow): NutritionSnapshot {
   return {
-    schemaVersion: 1,
+    schemaVersion: 1 as const,
     baseAmount: 1,
     unit: mealUnit(row.servingLabel),
     servingLabel: row.servingLabel,
