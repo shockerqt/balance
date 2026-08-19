@@ -219,6 +219,15 @@ test('plans a 10,000-row export without collisions or dropped records', () => {
 });
 
 test('computes a valid 64-character lowercase sha256 hex fingerprint synchronously', () => {
+  // RFC 6234 known vectors
+  assert.equal(
+    sha256Hex(new Uint8Array(0)),
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  );
+  assert.equal(
+    sha256Hex(new TextEncoder().encode('abc')),
+    'ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469f492494af3d8f55e5',
+  );
   const bytes = new TextEncoder().encode('MacroFactor-Export-Test-Payload');
   const hash = sha256Hex(bytes);
   assert.equal(hash.length, 64);

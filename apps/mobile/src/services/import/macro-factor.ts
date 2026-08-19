@@ -299,7 +299,9 @@ export function parseMacroFactorTable(table: unknown[][]): MacroFactorParseResul
 
 export function parseMacroFactorWorkbook(input: ArrayBuffer | Uint8Array): MacroFactorParseResult {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  const isZip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+  const b0 = bytes[0] ?? 0;
+  const b1 = bytes[1] ?? 0;
+  const isZip = bytes.length >= 2 && b0 === 0x50 && b1 === 0x4b;
   const workbook = isZip
     ? read(bytes, { type: 'array', cellDates: false })
     : read(new TextDecoder('utf-8').decode(bytes), { type: 'string', cellDates: false });

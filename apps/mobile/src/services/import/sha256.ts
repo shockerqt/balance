@@ -1,4 +1,4 @@
-const SHA256_K = [
+const SHA256_K: readonly number[] = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -41,7 +41,7 @@ export function sha256Hex(bytes: Uint8Array): string {
     for (let t = 0; t < 64; t++) {
       const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
       const ch = (e & f) ^ ((~e) & g);
-      const temp1 = (h + s1 + ch + SHA256_K[t] + w[t]) | 0;
+      const temp1 = (h + s1 + ch + (SHA256_K[t] ?? 0) + (w[t] ?? 0)) | 0;
       const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
       const maj = (a & b) ^ (a & c) ^ (b & c);
       const temp2 = (s0 + maj) | 0;
