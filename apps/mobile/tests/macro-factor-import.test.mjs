@@ -53,6 +53,13 @@ test('accepts observed first header value literal ï»¿"Date" without broadly u
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].date, '2024-09-09');
 
+  const doubleMojibakeHeaders = [...MACRO_FACTOR_HEADERS];
+  doubleMojibakeHeaders[0] = 'Ã¯Â»Â¿"Date"';
+  const doubleResult = parseMacroFactorTable([doubleMojibakeHeaders, sourceRow()]);
+  assert.equal(doubleResult.errors.length, 0);
+  assert.equal(doubleResult.rows.length, 1);
+  assert.equal(doubleResult.rows[0].date, '2024-09-09');
+
   const invalidHeaders = [...MACRO_FACTOR_HEADERS];
   invalidHeaders[2] = '"Food Name"';
   assert.throws(
@@ -71,6 +78,24 @@ test('parses an actual XLSX byte buffer from its first worksheet', () => {
   assert.equal(result.rows.length, 1);
   assert.equal(result.dateStart, '2024-09-09');
   assert.equal(result.dateEnd, '2024-09-09');
+});
+
+test('parses an actual CSV byte buffer with mojibake header and quoted cells', () => {
+  const headers = MACRO_FACTOR_HEADERS.map((h, i) => {
+    if (i === 0) return '"ï»¿""Date"""';
+    return h.includes(',') ? `"${h}"` : h;
+  }).join(',');
+  const row = sourceRow().map((val, i) => {
+    const str = String(val);
+    return str.includes(',') ? `"${str}"` : str;
+  }).join(',');
+  const csvText = `${headers}\n${row}\n`;
+  const bytes = new TextEncoder().encode(csvText);
+  const result = parseMacroFactorWorkbook(bytes);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].date, '2024-09-09');
+  assert.equal(result.rows[0].foodName, 'Almonds, dry roasted, unsalted');
 });
 
 test('normalizes a multi-slice row to one serving and keeps exact historical totals', () => {
