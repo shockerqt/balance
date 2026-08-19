@@ -4,7 +4,7 @@ import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
-import { buildDateWindow, currentTimeString } from '@/lib/dates';
+import { buildDateWindow, currentTimeString, todayId } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
@@ -15,13 +15,12 @@ import { makeStyles } from '@/theme';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
-import { todayId } from '@/hooks/use-meal-store';
 
-/* Registros del dia. La pantalla compone: la ventana de fechas vive
-   en lib/dates, la seleccion multiple en use-food-selection, y la
-   barra de lote y el boton flotante son componentes propios. */
+/* Registros del día. La pantalla compone: la ventana de fechas vive
+   en lib/dates, la selección múltiple en use-food-selection, y la
+   barra de lote y el botón flotante son componentes propios. */
 
-/** Solo se montan los dias vecinos al activo: el resto son paginas vacias. */
+/** Solo se montan los días vecinos al activo: el resto son páginas vacías. */
 const PRELOAD_RADIUS = 2;
 
 export default function LogsScreen() {
@@ -41,19 +40,31 @@ export default function LogsScreen() {
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
-  // La ventana se reconstruye solo cuando el dia sale de ella.
+  // Ventana de 7 semanas (3 antes, actual, 3 después = 49 días) centrada en el ancla.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
-  const dateWindow = useMemo(() => buildDateWindow(windowAnchor), [windowAnchor]);
+  const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 3, 3), [windowAnchor]);
 
   const activeIndex = dateWindow.indexOf(selectedDateId);
   useEffect(() => {
-    if (activeIndex === -1) setWindowAnchor(selectedDateId);
+    if (activeIndex === -1) {
+      setWindowAnchor(selectedDateId);
+    }
   }, [activeIndex, selectedDateId]);
+
+  // Guardas de sincronización para evitar bucles entre el gesto del usuario y React state
+  const isProgrammaticScrollRef = useRef(false);
+  const currentFeedIndexRef = useRef(activeIndex !== -1 ? activeIndex : 0);
 
   useEffect(() => {
     selection.clear();
-    if (activeIndex !== -1) pagerRef.current?.setPage(activeIndex);
-    // `selection` cambia de identidad al seleccionar; solo interesa el dia.
+    if (activeIndex !== -1) {
+      // Solo sincronizar programáticamente si la página difiere (ej. selección externa)
+      if (currentFeedIndexRef.current !== activeIndex) {
+        currentFeedIndexRef.current = activeIndex;
+        isProgrammaticScrollRef.current = true;
+        pagerRef.current?.setPage(activeIndex);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateId, activeIndex]);
 
@@ -88,24 +99,34 @@ export default function LogsScreen() {
   const openBatchMove = useCallback(() => {
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
-    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
+    router.push({
+      pathname: '/batch-move',
+      params: { dateId: selectedDateId, ids: ids.join(',') },
+    });
     selection.clear();
   }, [router, selectedDateId, selection]);
 
   const onPageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const target = dateWindow[e.nativeEvent.position];
-    if (target && target !== selectedDateId) setSelectedDateId(target);
+    const newIndex = e.nativeEvent.position;
+    currentFeedIndexRef.current = newIndex;
+
+    // Si el cambio fue ordenado programáticamente, descartar el evento para evitar rebotes
+    if (isProgrammaticScrollRef.current) {
+      isProgrammaticScrollRef.current = false;
+      return;
+    }
+
+    const target = dateWindow[newIndex];
+    if (target && target !== selectedDateId) {
+      setSelectedDateId(target);
+    }
   };
 
   return (
     <Screen>
       <DateStripHeader
         selectedDateId={selectedDateId}
-        onSelectDate={(dateId) => {
-          setSelectedDateId(dateId);
-          const index = dateWindow.indexOf(dateId);
-          if (index !== -1) pagerRef.current?.setPage(index);
-        }}
+        onSelectDate={setSelectedDateId}
       />
 
       {preferencesReady && weightTrackingEnabled ? (
@@ -113,7 +134,10 @@ export default function LogsScreen() {
           measurement={weightsByDate[selectedDateId]}
           disabled={selectedDateId > todayId()}
           onPress={() =>
-            router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } })
+            router.push({
+              pathname: '/weight-entry',
+              params: { dateId: selectedDateId },
+            })
           }
         />
       ) : null}
@@ -168,8 +192,6 @@ export default function LogsScreen() {
       ) : (
         <FloatingAddButton onPress={() => openFoodSearch()} />
       )}
-
-
     </Screen>
   );
 }
