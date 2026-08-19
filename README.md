@@ -9,7 +9,7 @@ sí, cada una se instala y se ejecuta por su cuenta.
 ```
 apps/
   mobile/      App Expo 57 / React Native 0.86 con expo-router
-  dashboard/   SPA React 19 + Vite 8 + TanStack Router/Query + Tailwind v4
+  dashboard/   Panel web (pendiente de inicialización con plantilla oficial de Vite)
   server/      API Axum (Rust 2024) con SQLx/Postgres, OIDC/Keycloak y Gemini
 ```
 
@@ -26,7 +26,6 @@ Cada aplicación instala sus dependencias por separado:
 
 ```bash
 npm install                        # utilidades de la raíz (concurrently, prettier)
-npm --prefix apps/dashboard install
 npm --prefix apps/mobile install
 ```
 
@@ -45,29 +44,26 @@ OIDC_JWKS_URL=https://auth.shocker.cl/realms/balance/protocol/openid-connect/cer
 ## Desarrollo
 
 ```bash
-make dev        # dashboard (:3000) + server (:8080) en paralelo
+make dev        # server (:8080)
 make mobile     # Metro local/loopback (:8081), con los logs en /tmp/metro.log
-make build      # compila dashboard y server
+make build      # compila server
 make check      # verificación rápida del server
-make test       # typecheck del dashboard y tests del server
+make test       # tests del server
 ```
 
 O directamente:
 
 ```bash
-npm run dev:dashboard
 npm run dev:server
 npm --prefix apps/mobile run start
 ```
 
 | Servicio | URL |
 |---|---|
-| Dashboard | http://localhost:3000 |
+| Dashboard | (pendiente de inicialización) |
 | API | http://localhost:8080 |
 | Swagger | http://localhost:8080/docs |
 | MCP HTTP | http://localhost:8080/mcp |
-
-El dashboard asume el server en `:8080` y el server permite CORS desde `:3000`.
 
 El servidor usa `127.0.0.1:8080` de forma predeterminada. Para desarrollo en
 LAN se debe solicitar explícitamente `SERVER_BIND_ADDR=0.0.0.0:8080`; ver

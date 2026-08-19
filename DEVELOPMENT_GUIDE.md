@@ -9,8 +9,7 @@ Esta guía contiene la documentación técnica completa del monorepo **Balance**
 El proyecto está estructurado como un monorepo modular:
 
 - **`apps/mobile`**: Aplicación móvil nativa en **React Native + Expo SDK 57** (con React 19, React Native 0.86, Expo Router v6 y `expo-dev-client@57.0.10`).
-- **`apps/dashboard`**: Panel Web administrativo en **React 19 + Vite 8 + Tailwind CSS v4 + Base UI** preset Shadcn `b6YqzcHxSM`. Compilado y sirviéndose en vivo en:
-  `http://144.22.47.0:8080/mockups/`
+- **`apps/dashboard`**: Panel Web administrativo (pendiente de inicialización desde plantilla oficial de Vite).
 - **`apps/server`**: API REST backend en **Rust (Axum) + PostgreSQL (SQLx)**. Ejecutándose como servicio del sistema en `/opt/balance-server` (`balance-server.service`).
 - **Identidad**: Keycloak en `https://auth.shocker.cl/realms/balance`; Google se usa como proveedor federado. La API valida los JWT mediante JWKS, no emite JWT propios.
 

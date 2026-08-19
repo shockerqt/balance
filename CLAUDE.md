@@ -32,7 +32,7 @@ workspace ni paquetes compartidos — ver el porqué en `README.md`.
 
 ```
 apps/mobile/      Expo 57 · React Native 0.86 · React 19 · expo-router
-apps/dashboard/   React 19 · Vite 8 · TanStack Router/Query · Tailwind v4
+apps/dashboard/   Pendiente de inicialización con plantilla oficial de Vite
 apps/server/      Rust 2024 · Axum · SQLx/Postgres
 ```
 
@@ -127,17 +127,7 @@ de Expo.
 
 ## Dashboard (`apps/dashboard`)
 
-- Vite + React 19 + TypeScript estricto. Entrada en `src/main.tsx`.
-- **TanStack Router** en modo *file-based*: las rutas viven en `src/routes/` y
-  `src/routeTree.gen.ts` se genera solo. **No editarlo a mano.**
-- **TanStack Query** para datos. Cada feature expone `queries.ts` y
-  `mutations.ts` (ver `src/features/foods`).
-- Componentes shadcn en `src/components/ui`. Agregar con
-  `npx shadcn@latest add <componente>`.
-- Aliases: `@/*` → `src/*`, `@features/*` → `src/features/*`.
-- Estructura por feature: `src/features/<feature>/{components,queries.ts,...}`.
-  La UI específica de una feature se queda dentro de su carpeta.
-- ESLint propio en `eslint.config.js`.
+El frontend del dashboard se encuentra limpio y a la espera de inicialización desde una plantilla oficial de Vite (`npm create vite@latest`).
 
 ---
 
@@ -171,7 +161,6 @@ Luego apuntar `DATABASE_URL` a `localhost:5433`.
 
 ## Qué no tocar sin razón
 
-- `apps/dashboard/src/routeTree.gen.ts` — autogenerado.
 - `apps/server/.env` — no se commitea.
 - El flujo de navegación del móvil: las rutas y los sheets funcionan y
   reestructurar no debería moverlos.

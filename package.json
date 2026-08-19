@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "concurrently \"npm run dev:dashboard\" \"npm run dev:server\"",
-    "dev:dashboard": "npm --prefix apps/dashboard run dev",
+    "dev": "npm run dev:server",
     "dev:mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
     "dev:server": "cargo watch -x run -p server",
     "mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
-    "build": "npm --prefix apps/dashboard run build && cargo build -p server",
+    "build": "cargo build -p server",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

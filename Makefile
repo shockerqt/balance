@@ -13,7 +13,7 @@ check:
 	cargo check -p server
 
 build:
-	npm --prefix apps/dashboard run build && cargo build -p server
+	cargo build -p server
 
 test:
-	npm --prefix apps/dashboard run typecheck && cargo test -p server
+	cargo test -p server
