@@ -226,7 +226,7 @@ test('computes a valid 64-character lowercase sha256 hex fingerprint synchronous
   );
   assert.equal(
     sha256Hex(new TextEncoder().encode('abc')),
-    'ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469f492494af3d8f55e5',
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
   );
   const bytes = new TextEncoder().encode('MacroFactor-Export-Test-Payload');
   const hash = sha256Hex(bytes);
