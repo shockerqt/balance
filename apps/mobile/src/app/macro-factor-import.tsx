@@ -49,7 +49,14 @@ export default function MacroFactorImportScreen() {
     setError(null);
     setSummary(null);
     const result = await DocumentPicker.getDocumentAsync({
-      type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+      type: [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'text/csv',
+        'text/comma-separated-values',
+        'application/csv',
+        'text/plain',
+      ],
       copyToCacheDirectory: true,
       multiple: false,
       base64: false,
@@ -157,7 +164,7 @@ export default function MacroFactorImportScreen() {
         <View style={styles.intro}>
           <Text variant="title">Trae tu historial, sin duplicarlo</Text>
           <Text variant="body" tone="secondary">
-            Selecciona la exportación XLSX de MacroFactor. Balance previsualiza los cambios y conserva intactos los
+            Selecciona la exportación XLSX o CSV de MacroFactor. Balance previsualiza los cambios y conserva intactos los
             registros creados manualmente.
           </Text>
         </View>
@@ -168,7 +175,7 @@ export default function MacroFactorImportScreen() {
               {selection?.name ?? 'Archivo de MacroFactor'}
             </Text>
             <Text variant="caption" tone="muted">
-              {selection ? `${selection.parsed.rows.length} filas válidas` : 'Formato .xlsx · primera hoja'}
+              {selection ? `${selection.parsed.rows.length} filas válidas` : 'Formato .xlsx o .csv · primera hoja'}
             </Text>
           </View>
           <Button

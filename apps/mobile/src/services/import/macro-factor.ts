@@ -168,11 +168,11 @@ export interface MacroFactorDocumentPlan {
 }
 
 const cellText = (value: unknown): string => (value == null ? '' : String(value).trim());
-const LEADING_BOM = /^(?:\uFEFF|\u00EF\u00BB\u00BF)/;
+const LEADING_BOM = /^(?:\uFEFF|\u00EF\u00BB\u00BF|\u00C3\u00AF\u00C2\u00BB\u00C2\u00BF|\uFFFD)+/;
 
 function normalizeHeader(value: unknown): string {
   const text = cellText(value).replace(LEADING_BOM, '');
-  return text === '"Date"' ? 'Date' : text;
+  return text === '"Date"' || text === '""Date""' ? 'Date' : text;
 }
 
 function parseNumber(value: unknown, required: boolean, label: string): number | null {
