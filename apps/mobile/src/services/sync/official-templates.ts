@@ -5,7 +5,7 @@ export type OfficialTemplate = MealTemplateDoc;
 
 export async function fetchOfficialTemplates(): Promise<OfficialTemplate[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/templates/official`, {
+    const response = await fetch(`${API_BASE_URL}/templates/official`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });

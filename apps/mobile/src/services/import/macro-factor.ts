@@ -9,6 +9,7 @@ import {
   MealTemplateDoc,
   MealUnit,
   Nutrition,
+  NutritionSnapshot,
 } from '../sync/types';
 
 export const MACRO_FACTOR_HEADERS = [
@@ -167,7 +168,17 @@ export interface MacroFactorDocumentPlan {
   logSummary: ImportChangeSummary;
 }
 
-const cellText = (value: unknown): string => (value == null ? '' : String(value).trim());
+function fixMojibake(text: string): string {
+  if (!text || !/[ÃÂ]/.test(text)) return text;
+  try {
+    const bytes = Uint8Array.from(Array.from(text, (c) => c.charCodeAt(0) & 0xff));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return text;
+  }
+}
+
+const cellText = (value: unknown): string => fixMojibake(value == null ? '' : String(value).trim());
 const LEADING_BOM = /^(?:\uFEFF|\u00EF\u00BB\u00BF|\u00C3\u00AF\u00C2\u00BB\u00C2\u00BF|\uFFFD)+/;
 
 function normalizeHeader(value: unknown): string {
@@ -286,8 +297,14 @@ export function parseMacroFactorTable(table: unknown[][]): MacroFactorParseResul
   };
 }
 
-export function parseMacroFactorWorkbook(bytes: ArrayBuffer | Uint8Array): MacroFactorParseResult {
-  const workbook = read(bytes, { type: 'array', cellDates: false });
+export function parseMacroFactorWorkbook(input: ArrayBuffer | Uint8Array): MacroFactorParseResult {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const b0 = bytes[0] ?? 0;
+  const b1 = bytes[1] ?? 0;
+  const isZip = bytes.length >= 2 && b0 === 0x50 && b1 === 0x4b;
+  const workbook = isZip
+    ? read(bytes, { type: 'array', cellDates: false })
+    : read(new TextDecoder('utf-8').decode(bytes), { type: 'string', cellDates: false });
   const firstSheet = workbook.SheetNames[0];
   if (!firstSheet) throw new Error('El archivo no contiene hojas');
   const table = utils.sheet_to_json<unknown[]>(workbook.Sheets[firstSheet], {
@@ -349,6 +366,17 @@ function detailsForRow(row: MacroFactorRow, typicalTime: string): MealTemplateDe
     ...(row.gramsPerUnit === null ? {} : { gramsPerUnit: row.gramsPerUnit }),
     nutrition: scaleNutrition(row.nutrition, row.servingQuantity),
     typicalTime,
+  };
+}
+
+function snapshotForRow(row: MacroFactorRow): NutritionSnapshot {
+  return {
+    schemaVersion: 1 as const,
+    baseAmount: 1,
+    unit: mealUnit(row.servingLabel),
+    servingLabel: row.servingLabel,
+    ...(row.gramsPerUnit === null ? {} : { gramsPerUnit: row.gramsPerUnit }),
+    nutrition: scaleNutrition(row.nutrition, row.servingQuantity),
   };
 }
 
@@ -506,7 +534,7 @@ export function buildMacroFactorDocumentPlan(
       id: documentId('log', namespace, externalId),
       templateId: templateExternal ? documentId('template', namespace, templateExternal) : null,
       nameSnapshot: row.foodName,
-      nutritionSnapshot: detailsForRow(row, row.time),
+      nutritionSnapshot: snapshotForRow(row),
       quantity: row.servingQuantity,
       consumedAt,
       provenance: provenance(externalId),

@@ -7,6 +7,7 @@ import {
   parseMacroFactorTable,
   parseMacroFactorWorkbook,
 } from '../src/services/import/macro-factor.ts';
+import { sha256Hex } from '../src/services/import/sha256.ts';
 
 function sourceRow(overrides = {}) {
   const values = Object.fromEntries(MACRO_FACTOR_HEADERS.map((header) => [header, '']));
@@ -216,3 +217,40 @@ test('plans a 10,000-row export without collisions or dropped records', () => {
   assert.equal(new Set(plan.logs.map((log) => log.id)).size, 10_000);
   assert.equal(plan.templates.length, 25);
 });
+
+test('computes a valid 64-character lowercase sha256 hex fingerprint synchronously', () => {
+  // RFC 6234 known vectors
+  assert.equal(
+    sha256Hex(new Uint8Array(0)),
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  );
+  assert.equal(
+    sha256Hex(new TextEncoder().encode('abc')),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+  );
+  const bytes = new TextEncoder().encode('MacroFactor-Export-Test-Payload');
+  const hash = sha256Hex(bytes);
+  assert.equal(hash.length, 64);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+});
+
+test('repairs double UTF-8 mojibake accented characters in food names', () => {
+  const table = [
+    MACRO_FACTOR_HEADERS,
+    sourceRow({
+      'Date': '2026-08-16',
+      'Time': '17:00',
+      'Food Name': 'AtÃºn Desmenuzado en Agua',
+      'Serving Size': 'portion',
+      'Serving Qty': '1',
+      'Serving Weight (g)': '104',
+      'Calories (kcal)': '82',
+      'Fat (g)': '1',
+      'Carbs (g)': '1',
+      'Protein (g)': '18',
+    }),
+  ];
+  const parsed = parseMacroFactorTable(table);
+  assert.equal(parsed.rows[0].foodName, 'Atún Desmenuzado en Agua');
+});
+
