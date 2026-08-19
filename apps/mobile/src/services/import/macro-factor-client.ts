@@ -1,5 +1,6 @@
-import { CryptoDigestAlgorithm, digest, randomUUID } from 'expo-crypto';
+import { randomUUID } from 'expo-crypto';
 import { MacroFactorDocumentPlan, MacroFactorRow } from './macro-factor';
+import { sha256Hex } from './sha256';
 
 type AuthorizedFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -37,12 +38,8 @@ async function jsonRequest<T>(authorizedFetch: AuthorizedFetch, path: string, in
   return payload.data;
 }
 
-const toHex = (buffer: ArrayBuffer): string =>
-  Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, '0')).join('');
-
 export async function macroFactorFingerprint(bytes: Uint8Array): Promise<string> {
-  const input = new Uint8Array(bytes).buffer;
-  return toHex(await digest(CryptoDigestAlgorithm.SHA256, input));
+  return sha256Hex(bytes);
 }
 
 export async function uploadMacroFactorImport(
