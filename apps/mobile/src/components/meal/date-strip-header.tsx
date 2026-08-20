@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
 import { useRouter } from 'expo-router';
@@ -6,6 +6,7 @@ import { useTheme } from '@/theme';
 import { Icon } from '@/components/ui';
 import {
   DAY_NAMES,
+  DateItem,
   MONTH_NAMES,
   generateWeeksWindow,
   parseDateId,
@@ -21,7 +22,67 @@ interface DateStripHeaderProps {
   weekStartsOn?: WeekStartDay;
 }
 
-export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
+const DayPill: React.FC<{
+  item: DateItem;
+  isSelected: boolean;
+  onSelectDate: (dateId: string) => void;
+}> = React.memo(({ item, isSelected, onSelectDate }) => {
+  const theme = useTheme();
+
+  return (
+    <TouchableOpacity
+      key={item.dateId}
+      style={[
+        styles.dayPill,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+        },
+        isSelected && {
+          backgroundColor: theme.colors.primary,
+          borderColor: theme.colors.primary,
+        },
+        item.isToday &&
+          !isSelected && {
+            borderColor: theme.colors.primary,
+          },
+      ]}
+      delayPressIn={0}
+      activeOpacity={0.7}
+      onPress={() => onSelectDate(item.dateId)}>
+      <Text
+        style={[
+          styles.dayNameText,
+          { color: theme.colors.textMuted },
+          isSelected && {
+            color: theme.colors.onPrimary,
+            fontWeight: '700',
+          },
+          item.isToday &&
+            !isSelected && {
+              color: theme.colors.primary,
+            },
+        ]}>
+        {item.dayName}
+      </Text>
+
+      <Text
+        style={[
+          styles.dayNumberText,
+          { color: theme.colors.text },
+          isSelected && { color: theme.colors.onPrimary },
+          item.isToday &&
+            !isSelected && {
+              color: theme.colors.primary,
+            },
+        ]}>
+        {item.dayNumber}
+      </Text>
+    </TouchableOpacity>
+  );
+});
+
+export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
   selectedDateId,
   onSelectDate,
 }) => {
@@ -32,10 +93,10 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
 
   const todayDateId = useRef<string>(todayId()).current;
 
-  // Ancla para generar ventana deslizante de 5 semanas (-2..+2)
+  // Ventana compacta de 3 semanas (-1..+1) centrada en el ancla.
   const [anchorDateId, setAnchorDateId] = useState(selectedDateId);
   const weeksList = useMemo(
-    () => generateWeeksWindow(anchorDateId, 2, 2, todayDateId),
+    () => generateWeeksWindow(anchorDateId, 1, 1, todayDateId),
     [anchorDateId, todayDateId]
   );
 
@@ -43,7 +104,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     w.days.some((d) => d.dateId === selectedDateId)
   );
 
-  // Si la fecha seleccionada se sale de la ventana de 5 semanas, re-anclamos
+  // Si la fecha seleccionada se sale de la ventana de 3 semanas, re-anclamos al instante
   useEffect(() => {
     if (activeWeekIndex === -1) {
       setAnchorDateId(selectedDateId);
@@ -53,7 +114,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   // Guardas de sincronización para evitar bucles de retroalimentación
   const isUserDraggingRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
-  const currentWeekIndexRef = useRef(activeWeekIndex !== -1 ? activeWeekIndex : 2);
+  const currentWeekIndexRef = useRef(activeWeekIndex !== -1 ? activeWeekIndex : 1);
 
   useEffect(() => {
     if (activeWeekIndex !== -1 && currentWeekIndexRef.current !== activeWeekIndex) {
@@ -63,50 +124,54 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     }
   }, [activeWeekIndex, selectedDateId]);
 
-  const handlePageScrollStateChanged = (e: {
-    nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' };
-  }) => {
-    // Solo es interacción manual si el usuario está físicamente arrastrando la pantalla (dragging)
-    isUserDraggingRef.current = e.nativeEvent.pageScrollState === 'dragging';
-  };
+  const handlePageScrollStateChanged = useCallback(
+    (e: { nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' } }) => {
+      // Solo es interacción manual si el usuario está físicamente arrastrando la pantalla (dragging)
+      isUserDraggingRef.current = e.nativeEvent.pageScrollState === 'dragging';
+    },
+    []
+  );
 
-  const handlePageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const pagePos = e.nativeEvent.position;
-    currentWeekIndexRef.current = pagePos;
+  const handlePageSelected = useCallback(
+    (e: PagerViewOnPageSelectedEvent) => {
+      const pagePos = e.nativeEvent.position;
+      currentWeekIndexRef.current = pagePos;
 
-    // Si el cambio fue programático (por cambio externo de fecha o botón), ignorar
-    if (isProgrammaticScrollRef.current) {
-      isProgrammaticScrollRef.current = false;
-      return;
-    }
+      // Si el cambio fue programático (por cambio externo de fecha o botón), ignorar
+      if (isProgrammaticScrollRef.current) {
+        isProgrammaticScrollRef.current = false;
+        return;
+      }
 
-    // Solo reaccionar si el usuario arrastró físicamente con su dedo el pager de semanas
-    if (!isUserDraggingRef.current) {
-      return;
-    }
+      // Solo reaccionar si el usuario arrastró físicamente con su dedo el pager de semanas
+      if (!isUserDraggingRef.current) {
+        return;
+      }
 
-    const targetWeek = weeksList[pagePos];
-    if (targetWeek) {
-      const stillInWeek = targetWeek.days.some((d) => d.dateId === selectedDateId);
-      if (!stillInWeek) {
-        // Mantener el mismo día de la semana (Lunes=0..Domingo=6)
-        const base = parseDateId(selectedDateId);
-        const dayOfWeekIndex = (base.getUTCDay() + 6) % 7;
-        const targetDay = targetWeek.days[dayOfWeekIndex] ?? targetWeek.days[0];
-        if (targetDay) {
-          onSelectDate(targetDay.dateId);
+      const targetWeek = weeksList[pagePos];
+      if (targetWeek) {
+        const stillInWeek = targetWeek.days.some((d) => d.dateId === selectedDateId);
+        if (!stillInWeek) {
+          // Mantener el mismo día de la semana (Lunes=0..Domingo=6)
+          const base = parseDateId(selectedDateId);
+          const dayOfWeekIndex = (base.getUTCDay() + 6) % 7;
+          const targetDay = targetWeek.days[dayOfWeekIndex] ?? targetWeek.days[0];
+          if (targetDay) {
+            onSelectDate(targetDay.dateId);
+          }
         }
       }
-    }
-  };
+    },
+    [weeksList, selectedDateId, onSelectDate]
+  );
 
-  const handlePrevDay = () => {
+  const handlePrevDay = useCallback(() => {
     onSelectDate(shiftDateId(selectedDateId, -1));
-  };
+  }, [selectedDateId, onSelectDate]);
 
-  const handleNextDay = () => {
+  const handleNextDay = useCallback(() => {
     onSelectDate(shiftDateId(selectedDateId, 1));
-  };
+  }, [selectedDateId, onSelectDate]);
 
   const selDateObj = parseDateId(selectedDateId);
   const dayNameFull = DAY_NAMES[selDateObj.getUTCDay()];
@@ -186,74 +251,27 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
-        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 2}
+        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 1}
         onPageScrollStateChanged={handlePageScrollStateChanged}
         onPageSelected={handlePageSelected}>
         {weeksList.map((week) => (
           <View key={week.weekIndex} style={[styles.weekPage, { width: windowWidth }]}>
             <View style={styles.daysRow}>
-              {week.days.map((item) => {
-                const isSelected = item.dateId === selectedDateId;
-
-                return (
-                  <TouchableOpacity
-                    key={item.dateId}
-                    style={[
-                      styles.dayPill,
-                      {
-                        backgroundColor: theme.colors.surface,
-                        borderColor: theme.colors.border,
-                      },
-                      isSelected && {
-                        backgroundColor: theme.colors.primary,
-                        borderColor: theme.colors.primary,
-                      },
-                      item.isToday &&
-                        !isSelected && {
-                          borderColor: theme.colors.primary,
-                        },
-                    ]}
-                    delayPressIn={0}
-                    activeOpacity={0.7}
-                    onPress={() => onSelectDate(item.dateId)}>
-                    <Text
-                      style={[
-                        styles.dayNameText,
-                        { color: theme.colors.textMuted },
-                        isSelected && {
-                          color: theme.colors.onPrimary,
-                          fontWeight: '700',
-                        },
-                        item.isToday &&
-                          !isSelected && {
-                            color: theme.colors.primary,
-                          },
-                      ]}>
-                      {item.dayName}
-                    </Text>
-
-                    <Text
-                      style={[
-                        styles.dayNumberText,
-                        { color: theme.colors.text },
-                        isSelected && { color: theme.colors.onPrimary },
-                        item.isToday &&
-                          !isSelected && {
-                            color: theme.colors.primary,
-                          },
-                      ]}>
-                      {item.dayNumber}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {week.days.map((item) => (
+                <DayPill
+                  key={item.dateId}
+                  item={item}
+                  isSelected={item.dateId === selectedDateId}
+                  onSelectDate={onSelectDate}
+                />
+              ))}
             </View>
           </View>
         ))}
       </PagerView>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

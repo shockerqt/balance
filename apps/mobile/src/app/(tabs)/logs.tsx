@@ -20,8 +20,58 @@ import { useWeightStore } from '@/hooks/use-weight-store';
    en lib/dates, la selección múltiple en use-food-selection, y la
    barra de lote y el botón flotante son componentes propios. */
 
-/** Solo se montan los días vecinos al activo: el resto son páginas vacías. */
-const PRELOAD_RADIUS = 2;
+/** Radio de precarga ágil: día activo y sus 2 vecinos inmediatos (ayer y mañana). */
+const PRELOAD_RADIUS = 1;
+
+interface DayPageProps {
+  dateId: string;
+  isNearby: boolean;
+  foods: LoggedFoodItem[];
+  openEdit: (food: LoggedFoodItem) => void;
+  openFoodSearch: (hour?: string) => void;
+  isSelectionMode: boolean;
+  selectedFoodIds: ReadonlySet<string>;
+  onLongPressFood: (food: LoggedFoodItem) => void;
+  onLongPressGroup: (foodIds: string[]) => void;
+  onToggleSelectFood: (foodId: string) => void;
+  onToggleSelectGroup: (foodIds: string[]) => void;
+}
+
+const DayPage: React.FC<DayPageProps> = React.memo(({
+  dateId,
+  isNearby,
+  foods,
+  openEdit,
+  openFoodSearch,
+  isSelectionMode,
+  selectedFoodIds,
+  onLongPressFood,
+  onLongPressGroup,
+  onToggleSelectFood,
+  onToggleSelectGroup,
+}) => {
+  const styles = useStyles();
+
+  if (!isNearby) {
+    return <View key={dateId} style={styles.page} />;
+  }
+
+  return (
+    <View key={dateId} style={styles.page}>
+      <HourRailFeed
+        foods={foods}
+        onSelectFood={openEdit}
+        onAddAtHour={openFoodSearch}
+        isSelectionMode={isSelectionMode}
+        selectedFoodIds={selectedFoodIds}
+        onLongPressFood={onLongPressFood}
+        onLongPressGroup={onLongPressGroup}
+        onToggleSelectFood={onToggleSelectFood}
+        onToggleSelectGroup={onToggleSelectGroup}
+      />
+    </View>
+  );
+});
 
 export default function LogsScreen() {
   const styles = useStyles();
@@ -40,9 +90,9 @@ export default function LogsScreen() {
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
-  // Ventana de 7 semanas (3 antes, actual, 3 después = 49 días) centrada en el ancla.
+  // Ventana compacta de 3 semanas (1 antes, actual, 1 después = 21 días) centrada en el ancla.
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
-  const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 3, 3), [windowAnchor]);
+  const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 1, 1), [windowAnchor]);
 
   const activeIndex = dateWindow.indexOf(selectedDateId);
   useEffect(() => {
@@ -107,21 +157,24 @@ export default function LogsScreen() {
     selection.clear();
   }, [router, selectedDateId, selection]);
 
-  const onPageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const newIndex = e.nativeEvent.position;
-    currentFeedIndexRef.current = newIndex;
+  const onPageSelected = useCallback(
+    (e: PagerViewOnPageSelectedEvent) => {
+      const newIndex = e.nativeEvent.position;
+      currentFeedIndexRef.current = newIndex;
 
-    // Si el cambio fue ordenado programáticamente, descartar el evento para evitar rebotes
-    if (isProgrammaticScrollRef.current) {
-      isProgrammaticScrollRef.current = false;
-      return;
-    }
+      // Si el cambio fue ordenado programáticamente, descartar el evento para evitar rebotes
+      if (isProgrammaticScrollRef.current) {
+        isProgrammaticScrollRef.current = false;
+        return;
+      }
 
-    const target = dateWindow[newIndex];
-    if (target && target !== selectedDateId) {
-      setSelectedDateId(target);
-    }
-  };
+      const target = dateWindow[newIndex];
+      if (target && target !== selectedDateId) {
+        setSelectedDateId(target);
+      }
+    },
+    [dateWindow, selectedDateId, setSelectedDateId]
+  );
 
   return (
     <Screen>
@@ -161,24 +214,23 @@ export default function LogsScreen() {
         onPageSelected={onPageSelected}>
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
-          const log = dayLogs[dateId] ?? emptyDayLog(dateId);
+          const foods = dayLogs[dateId]?.foods ?? emptyDayLog(dateId).foods;
 
           return (
-            <View key={dateId} style={styles.page}>
-              {isNearby ? (
-                <HourRailFeed
-                  foods={log.foods}
-                  onSelectFood={openEdit}
-                  onAddAtHour={openFoodSearch}
-                  isSelectionMode={selection.isSelectionMode}
-                  selectedFoodIds={selection.selectedIds}
-                  onLongPressFood={selection.startFromFood}
-                  onLongPressGroup={selection.startFromGroup}
-                  onToggleSelectFood={selection.toggleFood}
-                  onToggleSelectGroup={selection.toggleGroup}
-                />
-              ) : null}
-            </View>
+            <DayPage
+              key={dateId}
+              dateId={dateId}
+              isNearby={isNearby}
+              foods={foods}
+              openEdit={openEdit}
+              openFoodSearch={openFoodSearch}
+              isSelectionMode={selection.isSelectionMode}
+              selectedFoodIds={selection.selectedIds}
+              onLongPressFood={selection.startFromFood}
+              onLongPressGroup={selection.startFromGroup}
+              onToggleSelectFood={selection.toggleFood}
+              onToggleSelectGroup={selection.toggleGroup}
+            />
           );
         })}
       </PagerView>

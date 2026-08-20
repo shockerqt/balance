@@ -32,7 +32,7 @@ const NODE_CENTER = NODE_TOP + DOT / 2;
  */
 const AXIS = RAIL_W - PAD_RIGHT - DOT / 2;
 
-const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }> = ({
+const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }> = React.memo(({
   hour,
   filled,
   onPress,
@@ -58,7 +58,7 @@ const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }>
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 export const HourRailFeed: React.FC<{
   foods: LoggedFoodItem[];
@@ -72,7 +72,7 @@ export const HourRailFeed: React.FC<{
   onLongPressGroup?: (foodIds: string[]) => void;
   onToggleSelectFood?: (foodId: string) => void;
   onToggleSelectGroup?: (foodIds: string[]) => void;
-}> = ({
+}> = React.memo(({
   foods,
   onSelectFood,
   onAddAtHour,
@@ -154,7 +154,7 @@ export const HourRailFeed: React.FC<{
       })}
     </ScrollView>
   );
-};
+});
 
 const useStyles = makeStyles((t) => ({
   content: { paddingBottom: 120 },
