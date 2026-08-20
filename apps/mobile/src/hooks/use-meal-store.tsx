@@ -7,6 +7,8 @@ import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } f
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
+import { chileDateParts, toDateId, todayId, displayDateFor } from '@/lib/dates';
+export { toDateId, todayId, displayDateFor };
 
 export interface LoggedFoodItem {
   id: string;
@@ -44,51 +46,12 @@ export const DEFAULT_TARGETS: DayTargets = {
   targetFiber: 30,
 };
 
-const CHILE_TIME_ZONE = 'America/Santiago';
-
 function uuid(): string {
   const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function chileDateParts(epochMs: number): { year: number; month: number; day: number; hour: number; minute: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: CHILE_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(epochMs));
-  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
-  return { year: values.year, month: values.month, day: values.day, hour: values.hour, minute: values.minute };
-}
-
-/** All user-facing day boundaries use Chile, independent of device timezone. */
-export function toDateId(date: Date): string {
-  const p = chileDateParts(date.getTime());
-  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
-}
-
-export function todayId(): string {
-  return toDateId(new Date());
-}
-
-const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-export function displayDateFor(dateId: string): string {
-  const [year, month, day] = dateId.split('-').map(Number);
-  if (!year || !month || !day) return dateId;
-  // Noon UTC avoids the Chile midnight transition for display-only dates.
-  const date = new Date(Date.UTC(year, month - 1, day, 12));
-  const chile = chileDateParts(date.getTime());
-  const weekday = new Date(Date.UTC(chile.year, chile.month - 1, chile.day, 12)).getUTCDay();
-  return `${dateId === todayId() ? 'Hoy, ' : ''}${DAY_NAMES[weekday]} ${day} de ${MONTH_NAMES[month - 1]}`;
 }
 
 export function emptyDayLog(dateId: string): DayLog {
@@ -159,10 +122,7 @@ function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: strin
 }
 
 interface MealStoreContextType {
-  selectedDateId: string;
-  setSelectedDateId: (dateId: string) => void;
   dayLogs: Record<string, DayLog>;
-  currentDayLog: DayLog;
   mealDocuments: MealLogDoc[];
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
@@ -178,7 +138,6 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const namespace = user ? `user:${user.id}` : 'guest';
-  const [selectedDateId, setSelectedDateId] = useState(todayId);
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
 
   useEffect(() => {
@@ -331,15 +290,11 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return grouped;
   }, [logs]);
 
-  const currentDayLog = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
     setLogs(documents);
   }, []);
   const value = useMemo<MealStoreContextType>(() => ({
-    selectedDateId,
-    setSelectedDateId,
     dayLogs,
-    currentDayLog,
     mealDocuments: logs,
     addFood,
     addMultipleFoods,
@@ -348,7 +303,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteMultipleFoods,
     moveMultipleFoodsTime,
     replaceMealDocuments,
-  }), [selectedDateId, dayLogs, currentDayLog, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  }), [dayLogs, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 

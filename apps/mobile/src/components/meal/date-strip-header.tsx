@@ -1,208 +1,311 @@
-import React, { useRef, useEffect } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { StyleSheet, View, Text, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import Animated, { SharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme';
-import { Icon } from '@/components/ui';
+import { Icon, PressScale } from '@/components/ui';
+import {
+  DAY_NAMES,
+  DateItem,
+  MONTH_NAMES,
+  generateWeeksWindow,
+  parseDateId,
+  shiftDateId,
+  todayId,
+} from '@/lib/dates';
 
 export type WeekStartDay = 'monday' | 'sunday';
 
-interface DateItem {
-  dateId: string;
-  dayName: string;
-  dayNumber: number;
-  isToday: boolean;
-}
-
-interface WeekGroup {
-  weekIndex: number;
-  startDateId: string;
-  days: DateItem[];
-}
+/* Cuánto acompaña el bloque de título al dedo, en píxeles, y con qué fuerza se
+   apaga al cruzar de día. El texto no se puede interpolar en el hilo de UI: lo
+   que se interpola es su desplazamiento y su opacidad, y el contenido conmuta
+   en el punto más apagado del recorrido. */
+const TITLE_DRIFT = 26;
+const TITLE_FADE = 1.5;
 
 interface DateStripHeaderProps {
+  /** Día confirmado. Es el que usan las flechas para no perder pulsaciones. */
   selectedDateId: string;
+  /** Día que la cabecera pinta. Conmuta a mitad del gesto, no al final. */
+  visualDateId: string;
+  /** Día absoluto fraccionario del pager de registros. Vive en el hilo de UI. */
+  dayProgress: SharedValue<number>;
   onSelectDate: (dateId: string) => void;
   weekStartsOn?: WeekStartDay;
 }
 
-const MONTH_NAMES_ES = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-];
+/* La píldora se dibuja en dos capas apiladas —la normal abajo, la seleccionada
+   completa encima— y lo único animado es la opacidad de la de arriba. Sale más
+   barato que interpolar cinco colores por píldora, no reflúa el texto al
+   cambiar de grosor, y el resaltado hace crossfade siguiendo al dedo. */
+const DayPill: React.FC<{
+  item: DateItem;
+  dayProgress: SharedValue<number>;
+  onSelectDate: (dateId: string) => void;
+}> = React.memo(({ item, dayProgress, onSelectDate }) => {
+  const theme = useTheme();
+  const { epochDay } = item;
 
-const DAY_NAMES_FULL_ES = [
-  'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'
-];
+  const selectedLayerStyle = useAnimatedStyle(() => {
+    const distance = Math.abs(dayProgress.value - epochDay);
+    return { opacity: distance >= 1 ? 0 : 1 - distance };
+  });
 
-const parseDateId = (dateId: string): Date => {
-  const parts = dateId.split('-');
-  if (parts.length === 3) {
-    const y = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) - 1;
-    const d = parseInt(parts[2], 10);
-    return new Date(y, m, d);
-  }
-  return new Date();
-};
+  const handlePress = useCallback(() => onSelectDate(item.dateId), [item.dateId, onSelectDate]);
 
-const formatDateId = (d: Date): string => {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+  return (
+    <PressScale
+      style={[
+        styles.dayPill,
+        {
+          backgroundColor: theme.colors.surface,
+          borderColor: item.isToday ? theme.colors.primary : theme.colors.border,
+        },
+      ]}
+      scaleTo={0.9}
+      opacityTo={0.75}
+      accessibilityLabel={`Ir al día ${item.dayNumber}`}
+      onPress={handlePress}>
+      <Text
+        style={[
+          styles.dayNameText,
+          { color: item.isToday ? theme.colors.primary : theme.colors.textMuted },
+        ]}>
+        {item.dayName}
+      </Text>
 
-export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
+      <Text
+        style={[
+          styles.dayNumberText,
+          { color: item.isToday ? theme.colors.primary : theme.colors.text },
+        ]}>
+        {item.dayNumber}
+      </Text>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.selectedLayer,
+          {
+            backgroundColor: theme.colors.primary,
+            borderColor: theme.colors.primary,
+          },
+          selectedLayerStyle,
+        ]}>
+        <Text
+          style={[styles.dayNameText, styles.dayNameSelected, { color: theme.colors.onPrimary }]}>
+          {item.dayName}
+        </Text>
+        <Text style={[styles.dayNumberText, { color: theme.colors.onPrimary }]}>
+          {item.dayNumber}
+        </Text>
+      </Animated.View>
+    </PressScale>
+  );
+});
+
+export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
   selectedDateId,
+  visualDateId,
+  dayProgress,
   onSelectDate,
-  weekStartsOn = 'monday',
 }) => {
   const theme = useTheme();
   const router = useRouter();
   const { width: windowWidth } = useWindowDimensions();
   const pagerRef = useRef<PagerView>(null);
 
-  const todayDateId = useRef<string>(formatDateId(new Date())).current;
+  /* Se recalcula en cada render, no se congela al montar: `todayId()` está
+     memoizado por minuto, así que es barato y la app deja de mostrar el día
+     anterior como "Hoy" si queda abierta cruzando la medianoche. */
+  const todayDateId = todayId();
 
-  const buildWeekDays = (baseDate: Date): DateItem[] => {
-    const dayOfWeek = baseDate.getDay();
-    let startOffset = 0;
-    if (weekStartsOn === 'monday') {
-      startOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    } else {
-      startOffset = -dayOfWeek;
+  /* Ventana compacta de 3 semanas (-1..+1). Se ancla en el día visible, no en
+     el confirmado: así la banda cambia de semana en el mismo instante en que el
+     resaltado llega al borde, a mitad del gesto. */
+  const [anchorDateId, setAnchorDateId] = useState(visualDateId);
+  const weeksList = useMemo(
+    () => generateWeeksWindow(anchorDateId, 1, 1, todayDateId),
+    [anchorDateId, todayDateId]
+  );
+
+  const activeWeekIndex = weeksList.findIndex((w) =>
+    w.days.some((d) => d.dateId === visualDateId)
+  );
+
+  // Si el día visible se sale de la ventana de 3 semanas, re-anclamos al instante
+  useEffect(() => {
+    if (activeWeekIndex === -1) {
+      setAnchorDateId(visualDateId);
     }
+  }, [activeWeekIndex, visualDateId]);
 
-    const startOfWeek = new Date(baseDate);
-    startOfWeek.setDate(baseDate.getDate() + startOffset);
+  /* Guardas de sincronización para evitar bucles de retroalimentación.
 
-    const labelsMon = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-    const labelsSun = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-    const labels = weekStartsOn === 'monday' ? labelsMon : labelsSun;
+     Las dos son pestillos, no lecturas del estado vivo: el pager emite
+     `settling` *antes* de `onPageSelected`, así que preguntar en ese momento si
+     el usuario "está arrastrando" siempre daba no, y el gesto sobre la banda de
+     semanas quedaba descartado. `userInitiatedRef` se levanta al empezar el
+     arrastre y lo consume `onPageSelected`, funcione el pager en un orden o en
+     el otro.
 
-    const days: DateItem[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startOfWeek);
-      d.setDate(startOfWeek.getDate() + i);
-
-      const dId = formatDateId(d);
-      days.push({
-        dateId: dId,
-        dayName: labels[i],
-        dayNumber: d.getDate(),
-        isToday: dId === todayDateId,
-      });
-    }
-    return days;
-  };
-
-  const generateFiveWeeks = (centerDateId: string): WeekGroup[] => {
-    const centerDate = parseDateId(centerDateId);
-    const weeks: WeekGroup[] = [];
-
-    for (let offset = -2; offset <= 2; offset++) {
-      const wDate = new Date(centerDate);
-      wDate.setDate(centerDate.getDate() + offset * 7);
-
-      const days = buildWeekDays(wDate);
-      weeks.push({
-        weekIndex: offset + 2,
-        startDateId: days[0].dateId,
-        days,
-      });
-    }
-    return weeks;
-  };
-
-  const weeksList = useRef<WeekGroup[]>(generateFiveWeeks(selectedDateId)).current;
-
-  const findActiveWeekIndex = (dateId: string): number => {
-    const idx = weeksList.findIndex((w) => w.days.some((d) => d.dateId === dateId));
-    return idx !== -1 ? idx : 2;
-  };
-
-  const activeWeekIndex = findActiveWeekIndex(selectedDateId);
+     Del salto programático se guarda el índice destino, no un booleano: si el
+     salto no llegara a emitir evento, un booleano se quedaría armado y se
+     comería el siguiente gesto real del usuario. */
+  const userInitiatedRef = useRef(false);
+  const programmaticTargetRef = useRef<number | null>(null);
+  const currentWeekIndexRef = useRef(activeWeekIndex !== -1 ? activeWeekIndex : 1);
 
   useEffect(() => {
-    if (pagerRef.current && activeWeekIndex !== -1) {
-      pagerRef.current.setPage(activeWeekIndex);
+    if (activeWeekIndex !== -1 && currentWeekIndexRef.current !== activeWeekIndex) {
+      currentWeekIndexRef.current = activeWeekIndex;
+      programmaticTargetRef.current = activeWeekIndex;
+      pagerRef.current?.setPageWithoutAnimation(activeWeekIndex);
     }
-  }, [selectedDateId, activeWeekIndex]);
+  }, [activeWeekIndex, visualDateId]);
 
-  const handlePageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const pagePos = e.nativeEvent.position;
-    const targetWeek = weeksList[pagePos];
-    if (targetWeek) {
-      const stillInWeek = targetWeek.days.some((d) => d.dateId === selectedDateId);
-      if (!stillInWeek) {
-        onSelectDate(targetWeek.days[0].dateId);
+  const handlePageScrollStateChanged = useCallback(
+    (e: { nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' } }) => {
+      if (e.nativeEvent.pageScrollState === 'dragging') {
+        userInitiatedRef.current = true;
       }
-    }
-  };
+    },
+    []
+  );
 
-  const handlePrevDay = () => {
-    const curr = parseDateId(selectedDateId);
-    curr.setDate(curr.getDate() - 1);
-    onSelectDate(formatDateId(curr));
-  };
+  const handlePageSelected = useCallback(
+    (e: PagerViewOnPageSelectedEvent) => {
+      const pagePos = e.nativeEvent.position;
+      currentWeekIndexRef.current = pagePos;
 
-  const handleNextDay = () => {
-    const curr = parseDateId(selectedDateId);
-    curr.setDate(curr.getDate() + 1);
-    onSelectDate(formatDateId(curr));
-  };
+      /* Si el cambio fue programático (fecha externa o botón), ignorar. La
+         guarda es de un solo uso: la consume el evento que calza y la borra
+         cualquier otro, para no dejarla armada contra un gesto futuro. */
+      const programmaticTarget = programmaticTargetRef.current;
+      programmaticTargetRef.current = null;
+      if (programmaticTarget === pagePos) {
+        return;
+      }
 
-  const selDateObj = parseDateId(selectedDateId);
-  const dayNameFull = DAY_NAMES_FULL_ES[selDateObj.getDay()];
-  const dayNum = selDateObj.getDate();
-  const monthNameFull = MONTH_NAMES_ES[selDateObj.getMonth()];
-  const yearNum = selDateObj.getFullYear();
-  const isSelectedToday = selectedDateId === todayDateId;
+      // Solo reaccionar al gesto del usuario sobre la banda de semanas
+      if (!userInitiatedRef.current) {
+        return;
+      }
+      userInitiatedRef.current = false;
 
-  const line1Text = isSelectedToday ? 'Hoy' : `${dayNameFull} ${dayNum}`;
-  const line2Text = isSelectedToday ? `${dayNum} de ${monthNameFull}` : `${monthNameFull}, ${yearNum}`;
+      const targetWeek = weeksList[pagePos];
+      if (targetWeek) {
+        const stillInWeek = targetWeek.days.some((d) => d.dateId === selectedDateId);
+        if (!stillInWeek) {
+          // Mantener el mismo día de la semana (Lunes=0..Domingo=6)
+          const base = parseDateId(selectedDateId);
+          const dayOfWeekIndex = (base.getUTCDay() + 6) % 7;
+          const targetDay = targetWeek.days[dayOfWeekIndex] ?? targetWeek.days[0];
+          if (targetDay) {
+            onSelectDate(targetDay.dateId);
+          }
+        }
+      }
+    },
+    [weeksList, selectedDateId, onSelectDate]
+  );
+
+  const handlePrevDay = useCallback(() => {
+    onSelectDate(shiftDateId(selectedDateId, -1));
+  }, [selectedDateId, onSelectDate]);
+
+  const handleNextDay = useCallback(() => {
+    onSelectDate(shiftDateId(selectedDateId, 1));
+  }, [selectedDateId, onSelectDate]);
+
+  const openDatePicker = useCallback(() => router.push('/date-picker'), [router]);
+  const goToToday = useCallback(() => onSelectDate(todayDateId), [onSelectDate, todayDateId]);
+
+  /* El bloque de título viaja con el dedo y se apaga en el cruce. El texto de
+     abajo ya corresponde al día al que se va, porque `visualDateId` conmuta en
+     la mitad del gesto: el cambio ocurre justo donde menos se ve. */
+  const titleSwipeStyle = useAnimatedStyle(() => {
+    const fraction = dayProgress.value - Math.round(dayProgress.value);
+    return {
+      opacity: Math.max(1 - Math.abs(fraction) * TITLE_FADE, 0.25),
+      transform: [{ translateX: -fraction * TITLE_DRIFT }],
+    };
+  });
+
+  const visualDateObj = parseDateId(visualDateId);
+  const dayNameFull = DAY_NAMES[visualDateObj.getUTCDay()];
+  const dayNum = visualDateObj.getUTCDate();
+  const monthNameFull = MONTH_NAMES[visualDateObj.getUTCMonth()];
+  const yearNum = visualDateObj.getUTCFullYear();
+  const isVisualToday = visualDateId === todayDateId;
+
+  const line1Text = isVisualToday ? 'Hoy' : `${dayNameFull} ${dayNum}`;
+  const line2Text = isVisualToday
+    ? `${dayNum} de ${monthNameFull}`
+    : `${monthNameFull}, ${yearNum}`;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: theme.colors.background,
+          borderBottomColor: theme.colors.border,
+        },
+      ]}>
       {/* 1. Header Row */}
       <View style={styles.topHeaderRow}>
         <View style={styles.fixedDateNavBox}>
-          <TouchableOpacity
+          <PressScale
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Ir al día anterior"
             onPress={handlePrevDay}>
             <Icon name="chevron-left" size={20} tone="accent" />
-          </TouchableOpacity>
+          </PressScale>
 
-          <TouchableOpacity
-            style={styles.dateTitleBox}
-            delayPressIn={0}
-            activeOpacity={0.7}
-            onPress={() => router.push('/date-picker')}>
-            <Text style={[styles.headlineTitle, { color: theme.colors.text }]}>{line1Text}</Text>
-            <Text style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>{line2Text}</Text>
-          </TouchableOpacity>
+          <Animated.View style={[styles.dateTitleBox, titleSwipeStyle]}>
+            <PressScale
+              style={styles.dateTitleTouch}
+              scaleTo={0.97}
+              accessibilityLabel="Elegir fecha"
+              onPress={openDatePicker}>
+              <Text
+                numberOfLines={1}
+                style={[styles.headlineTitle, { color: theme.colors.text }]}>
+                {line1Text}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>
+                {line2Text}
+              </Text>
+            </PressScale>
+          </Animated.View>
 
-          <TouchableOpacity
+          <PressScale
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Ir al día siguiente"
             onPress={handleNextDay}>
             <Icon name="chevron-right" size={20} tone="accent" />
-          </TouchableOpacity>
+          </PressScale>
         </View>
 
-        {!isSelectedToday && (
-          <TouchableOpacity
-            style={[styles.todayPillBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]}
-            delayPressIn={0}
-            onPress={() => onSelectDate(todayDateId)}>
-            <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>Hoy</Text>
-          </TouchableOpacity>
+        {!isVisualToday && (
+          <PressScale
+            style={[
+              styles.todayPillBtn,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.primary,
+              },
+            ]}
+            accessibilityLabel="Volver a hoy"
+            onPress={goToToday}>
+            <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>
+              Hoy
+            </Text>
+          </PressScale>
         )}
       </View>
 
@@ -210,55 +313,27 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
       <PagerView
         ref={pagerRef}
         style={styles.pagerView}
-        initialPage={2}
+        initialPage={activeWeekIndex !== -1 ? activeWeekIndex : 1}
+        onPageScrollStateChanged={handlePageScrollStateChanged}
         onPageSelected={handlePageSelected}>
         {weeksList.map((week) => (
           <View key={week.weekIndex} style={[styles.weekPage, { width: windowWidth }]}>
             <View style={styles.daysRow}>
-              {week.days.map((item) => {
-                const isSelected = item.dateId === selectedDateId;
-
-                return (
-                  <TouchableOpacity
-                    key={item.dateId}
-                    style={[
-                      styles.dayPill,
-                      { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-                      isSelected && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-                      item.isToday && !isSelected && { borderColor: theme.colors.primary },
-                    ]}
-                    delayPressIn={0}
-                    activeOpacity={0.7}
-                    onPress={() => onSelectDate(item.dateId)}>
-                    <Text
-                      style={[
-                        styles.dayNameText,
-                        { color: theme.colors.textMuted },
-                        isSelected && { color: theme.colors.onPrimary, fontWeight: '700' },
-                        item.isToday && !isSelected && { color: theme.colors.primary },
-                      ]}>
-                      {item.dayName}
-                    </Text>
-
-                    <Text
-                      style={[
-                        styles.dayNumberText,
-                        { color: theme.colors.text },
-                        isSelected && { color: theme.colors.onPrimary },
-                        item.isToday && !isSelected && { color: theme.colors.primary },
-                      ]}>
-                      {item.dayNumber}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {week.days.map((item) => (
+                <DayPill
+                  key={item.dateId}
+                  item={item}
+                  dayProgress={dayProgress}
+                  onSelectDate={onSelectDate}
+                />
+              ))}
             </View>
           </View>
         ))}
       </PagerView>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -287,7 +362,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /* Ocupa todo el espacio libre entre las flechas. Antes se ajustaba al texto y
+     las flechas se movían al cambiar de día; ahora que el título conmuta a
+     mitad del gesto, ese salto se vería en cada cruce. */
   dateTitleBox: {
+    flex: 1,
+  },
+  dateTitleTouch: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
@@ -338,10 +419,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 6,
   },
+  /* Los -1 compensan el borde de la capa de abajo: así las dos cajas de
+     contenido coinciden y el texto no se corre un píxel al aparecer. */
+  selectedLayer: {
+    position: 'absolute',
+    top: -1,
+    left: -1,
+    right: -1,
+    bottom: -1,
+    borderRadius: 12,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
   dayNameText: {
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 2,
+  },
+  dayNameSelected: {
+    fontWeight: '700',
   },
   dayNumberText: {
     fontSize: 15,

@@ -28,9 +28,12 @@ export function useFoodSelection(): FoodSelection {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  /* Idempotente a proposito. La pantalla de registros la llama en cada cambio
+     de dia; devolver un Set nuevo cuando ya estaba vacio cambiaba la identidad
+     de la seleccion y forzaba un segundo render completo del pager por toque. */
   const clear = useCallback(() => {
     setIsSelectionMode(false);
-    setSelectedIds(new Set());
+    setSelectedIds((prev) => (prev.size === 0 ? prev : new Set()));
   }, []);
 
   const startFromFood = useCallback((food: LoggedFoodItem) => {

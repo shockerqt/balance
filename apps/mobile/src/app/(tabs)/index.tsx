@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { sumDay, useMealStore } from '@/hooks/use-meal-store';
+import { emptyDayLog, sumDay, useMealStore } from '@/hooks/use-meal-store';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/theme';
 import { Button, Card, ProgressBar, Screen, Text } from '@/components/ui';
@@ -11,8 +11,9 @@ import { WeightTrendCard } from '@/components/weight/weight-trend-card';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
 import { formatCalories } from '@/lib/nutrition';
+import { todayId } from '@/lib/dates';
 
-/* Resumen del dia. No declara colores ni tamaños de fuente: todo
+/* Resumen del dia de hoy. No declara colores ni tamaños de fuente: todo
    sale del tema y de las primitivas. Su StyleSheet es solo layout. */
 
 const initialsOf = (name?: string) =>
@@ -26,10 +27,16 @@ const initialsOf = (name?: string) =>
 export default function SummaryScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { currentDayLog, dayLogs } = useMealStore();
+  const { dayLogs } = useMealStore();
   const { user, isGuest } = useAuth();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
+
+  const todayDateId = todayId();
+  const currentDayLog = useMemo(
+    () => dayLogs[todayDateId] ?? emptyDayLog(todayDateId),
+    [dayLogs, todayDateId]
+  );
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
 
@@ -58,20 +65,22 @@ export default function SummaryScreen() {
               style={[
                 styles.avatar,
                 {
-                  backgroundColor: theme.colors.surface,
+                  backgroundColor: theme.colors.surfaceRaised,
                   borderColor: theme.colors.border,
-                  borderWidth: theme.border.hairline,
                 },
               ]}>
-              <Text variant="heading">{initialsOf(user?.name)}</Text>
+              <Text variant="bodyStrong" tone="secondary">
+                {initialsOf(user?.name)}
+              </Text>
             </View>
             <View>
+              <Text variant="title">{greeting}</Text>
               <Text variant="caption" tone="secondary">
-                {greeting}
+                Balance nutricional diario
               </Text>
-              <Text variant="title">Resumen diario</Text>
             </View>
           </View>
+
           <Button
             title="Configuración"
             variant="ghost"
@@ -144,6 +153,11 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  heroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
 });

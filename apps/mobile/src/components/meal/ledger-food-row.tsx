@@ -21,7 +21,7 @@ export const LedgerFoodRow: React.FC<{
   isSelectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (foodId: string) => void;
-}> = ({ food, onPress, onLongPress, isSelectionMode = false, isSelected = false, onToggleSelect }) => {
+}> = React.memo(({ food, onPress, onLongPress, isSelectionMode = false, isSelected = false, onToggleSelect }) => {
   const styles = useStyles();
 
   const handlePress = () => {
@@ -68,7 +68,7 @@ export const LedgerFoodRow: React.FC<{
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 const useStyles = makeStyles((t) => ({
   row: {
