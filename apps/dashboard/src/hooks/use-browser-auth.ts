@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   OIDC_SSO_MARKER_KEY,
   OIDC_TRANSACTION_KEY,
@@ -52,13 +52,14 @@ async function readTokenResponse(response: Response): Promise<TokenResponse> {
 }
 
 export function useBrowserAuth(): BrowserAuthState {
-  const config = getDashboardServiceConfig();
+  const config = useMemo(() => getDashboardServiceConfig(), []);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef<BrowserSession | null>(null);
   const bootstrappedRef = useRef(false);
+  const mountedRef = useRef(true);
   const refreshPromiseRef = useRef<Promise<BrowserSession | null> | null>(null);
 
   const clearState = useCallback((clearMarker: boolean) => {
@@ -149,9 +150,13 @@ export function useBrowserAuth(): BrowserAuthState {
   }, [clearState, config.apiBaseUrl]);
 
   useEffect(() => {
-    if (bootstrappedRef.current) return;
+    mountedRef.current = true;
+    if (bootstrappedRef.current) {
+      return () => {
+        mountedRef.current = false;
+      };
+    }
     bootstrappedRef.current = true;
-    let cancelled = false;
 
     void (async () => {
       const stored = parseStoredTransaction(window.sessionStorage.getItem(OIDC_TRANSACTION_KEY));
@@ -162,7 +167,7 @@ export function useBrowserAuth(): BrowserAuthState {
           await beginAuthorization('none');
           return;
         }
-        if (!cancelled) setIsLoading(false);
+        if (mountedRef.current) setIsLoading(false);
         return;
       }
 
@@ -174,7 +179,7 @@ export function useBrowserAuth(): BrowserAuthState {
 
       if (callback.type === 'invalid') {
         clearState(true);
-        if (!cancelled) {
+        if (mountedRef.current) {
           setError(`Invalid OIDC callback: ${callback.reason}`);
           setIsLoading(false);
         }
@@ -182,14 +187,9 @@ export function useBrowserAuth(): BrowserAuthState {
       }
 
       if (callback.type === 'error') {
-        if (callback.transaction?.prompt === 'none') {
-          clearState(true);
-          if (!cancelled) setIsLoading(false);
-          return;
-        }
         clearState(true);
-        if (!cancelled) {
-          setError(callback.description ?? callback.error);
+        if (mountedRef.current) {
+          if (callback.transaction?.prompt !== 'none') setError(callback.description ?? callback.error);
           setIsLoading(false);
         }
         return;
@@ -203,20 +203,20 @@ export function useBrowserAuth(): BrowserAuthState {
         });
         const session = sessionFromTokens(await readTokenResponse(response));
         if (!session) throw new Error('OIDC token response did not contain an access token');
-        if (cancelled) return;
+        if (!mountedRef.current) return;
         await adoptVerifiedSession(session);
       } catch (callbackError) {
-        if (!cancelled) {
+        if (mountedRef.current) {
           clearState(true);
           setError(callbackError instanceof Error ? callbackError.message : 'Authentication failed');
         }
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (mountedRef.current) setIsLoading(false);
       }
     })();
 
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
   }, [adoptVerifiedSession, beginAuthorization, clearState, config]);
 
