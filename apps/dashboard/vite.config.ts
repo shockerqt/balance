@@ -10,6 +10,11 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  css: {
+    modules: {
+      localsConvention: "camelCaseOnly",
+    },
+  },
   server: {
     port: 3000,
   },

@@ -127,11 +127,47 @@ de Expo.
 
 ## Dashboard (`apps/dashboard`)
 
-El frontend del dashboard está inicializado con **Vite**, **React 19**, **TypeScript 7** y **Base UI** (`@base-ui/react`).
+Frontend administrativo con **Vite**, **React 19**, **TypeScript 7**, **Base UI** (`@base-ui/react`) y **CSS Modules**.
 
-- Para desarrollo: `npm run dev:dashboard` o `make dashboard` (inicia en puerto `:3000`).
-- Para compilar / verificar tipos: `npm run build:dashboard`.
-- Estructura limpia y sin estilos preestablecidos para diseño personalizado posterior.
+- **Desarrollo**: `npm run dev:dashboard` o `make dashboard` (puerto `:3000`).
+- **Build y Typecheck**: `npm run build:dashboard`.
+
+### Convenciones de desarrollo
+
+1. **Nomenclatura estricta en kebab-case:**
+   - **Directorios:** Siempre en `kebab-case` (`components/ui/button/`, `features/nutrition-stats/`, `hooks/`, `services/`).
+   - **Archivos:** Siempre en `kebab-case` (`button.tsx`, `button.module.css`, `use-theme.ts`, `api-client.ts`, `user-profile.ts`).
+   - **Componentes en código:** Declarados y exportados en `PascalCase` (`export function Button(...) {}`).
+
+2. **CSS Modules (`*.module.css`):**
+   - Hoja de estilos colocada junto al componente (`button/button.tsx` con `button/button.module.css`).
+   - Nombres de clases CSS en **`camelCase`** (`.buttonContainer`, `.primaryAction`) para acceso directo con dot notation en TypeScript (`styles.buttonContainer`).
+   - Configurado con `localsConvention: 'camelCaseOnly'` en `vite.config.ts`.
+   - Tokens globales (colores, espaciado, radios) en `src/styles/tokens.css` mediante variables CSS (`--color-surface`, `--radius-md`).
+
+3. **Estructura de carpetas:**
+   ```text
+   src/
+   ├── styles/                  # Tokens globales (tokens.css) y resets
+   ├── components/
+   │   └── ui/                  # Primitivas reutilizables sobre Base UI (button/, dialog/, input/)
+   │       └── button/
+   │           ├── button.tsx
+   │           ├── button.module.css
+   │           └── index.ts
+   ├── features/                # Vistas y lógica por dominio de negocio (overview/, foods/)
+   ├── hooks/                   # Custom hooks compartidos (use-auth.ts)
+   ├── services/                # Clientes HTTP y llamadas a API (api-client.ts)
+   ├── types/                   # Tipos e interfaces globales
+   ├── app.tsx                  # Componente raíz
+   ├── main.tsx                 # Entry point de React
+   └── vite-env.d.ts
+   ```
+
+4. **React 19 & TypeScript 7:**
+   - Funciones con nombre e interfaces explícitas para props (evitar `React.FC`).
+   - `import type { ... }` para tipos e imports limpios con alias `@/`.
+   - Componentes headless de `@base-ui/react` envueltos en `src/components/ui/`.
 
 ---
 
