@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildDateWindow,
+  dateIdToEpochDay,
   displayDateFor,
+  epochDayToDateId,
   generateWeeksWindow,
   getMondayDateId,
   parseDateId,
@@ -132,5 +134,49 @@ test('todayId memoizado devuelve siempre el mismo dateId dentro del mismo minuto
   assert.match(first, /^\d{4}-\d{2}-\d{2}$/);
   for (let i = 0; i < 100; i++) {
     assert.equal(todayId(), first);
+  }
+});
+
+/* El dia absoluto es la unidad que comparten el hilo de JS y el de UI: la
+   cabecera interpola entre enteros mientras el pager avanza. Si dejara de ser
+   una biyeccion con el dateId, el resaltado apuntaria al dia equivocado. */
+
+test('dateIdToEpochDay avanza de uno en uno y es reversible', () => {
+  let dateId = '2026-01-01';
+  let expected = dateIdToEpochDay(dateId);
+  for (let i = 0; i < 400; i++) {
+    const epochDay = dateIdToEpochDay(dateId);
+    assert.equal(epochDay, expected, `desfase en ${dateId}`);
+    assert.equal(epochDayToDateId(epochDay), dateId);
+    dateId = shiftDateId(dateId, 1);
+    expected += 1;
+  }
+});
+
+test('dateIdToEpochDay cruza mes, ano y los cambios de hora de Chile sin saltos', () => {
+  assert.equal(dateIdToEpochDay('2026-09-01') - dateIdToEpochDay('2026-08-31'), 1);
+  assert.equal(dateIdToEpochDay('2027-01-01') - dateIdToEpochDay('2026-12-31'), 1);
+  // Chile adelanta el reloj el primer domingo de septiembre y lo atrasa en abril.
+  assert.equal(dateIdToEpochDay('2026-09-07') - dateIdToEpochDay('2026-09-06'), 1);
+  assert.equal(dateIdToEpochDay('2026-04-06') - dateIdToEpochDay('2026-04-05'), 1);
+  // Una semana son siete dias, tambien atravesando el cambio de hora.
+  assert.equal(dateIdToEpochDay('2026-09-13') - dateIdToEpochDay('2026-09-06'), 7);
+});
+
+test('epochDayToDateId reconstruye el dateId desde un entero suelto', () => {
+  assert.equal(epochDayToDateId(dateIdToEpochDay('2026-08-19')), '2026-08-19');
+  assert.equal(epochDayToDateId(dateIdToEpochDay('1970-01-01')), '1970-01-01');
+  assert.equal(epochDayToDateId(dateIdToEpochDay('1969-12-31')), '1969-12-31');
+});
+
+test('generateWeeksWindow entrega el dia absoluto de cada pildora', () => {
+  const weeks = generateWeeksWindow('2026-08-19', 1, 1, '2026-08-19');
+  const flat = weeks.flatMap((week) => week.days);
+  for (const day of flat) {
+    assert.equal(day.epochDay, dateIdToEpochDay(day.dateId), `desfase en ${day.dateId}`);
+  }
+  // Contiguos: la animacion de la banda depende de que la distancia sea el dia.
+  for (let i = 1; i < flat.length; i++) {
+    assert.equal(flat[i].epochDay - flat[i - 1].epochDay, 1);
   }
 });

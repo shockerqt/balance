@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, ViewStyle } from 'react-native';
+import Animated, { AnimatedStyle } from 'react-native-reanimated';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { useTheme } from '@/theme';
 import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
@@ -11,6 +12,11 @@ interface StickyMacroHeaderProps {
   targetCarbs?: number;
   targetFat?: number;
   targetFiber?: number;
+  /* Estilo animado para la fila de cifras. La pantalla de registros lo usa para
+     que el resumen acompane el swipe entre dias. Se aplica al contenido y no al
+     contenedor a proposito: desplazar la superficie dejaria ver el fondo por el
+     canto, y el borde inferior se despegaria del ancho de la pantalla. */
+  contentStyle?: AnimatedStyle<ViewStyle>;
 }
 
 export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
@@ -20,6 +26,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   targetCarbs = 220,
   targetFat = 65,
   targetFiber = 30,
+  contentStyle,
 }) => {
   const theme = useTheme();
   const totals = sumNutrition(foods);
@@ -30,7 +37,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
       {/* Primary Metrics Row */}
-      <View style={styles.topRow}>
+      <Animated.View style={[styles.topRow, contentStyle]}>
         <View style={styles.calBox}>
           <Text style={[styles.calMain, { color: theme.colors.text }, isOverCal && { color: theme.colors.danger }]}>
             {formatCalories(totals.calories)} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {formatCalories(targetCalories)} kcal</Text>
@@ -54,7 +61,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
             F <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.fiber)}g</Text>
           </Text>
         </View>
-      </View>
+      </Animated.View>
 
       {/* Thin progress bar */}
       <View style={[styles.barBg, { backgroundColor: theme.colors.border }]}>

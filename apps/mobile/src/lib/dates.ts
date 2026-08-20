@@ -70,6 +70,28 @@ function utcNoonDateId(year: number, month: number, day: number): string {
   return formatDateId(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
+const MS_PER_DAY = 86_400_000;
+/* Mediodia UTC dentro del dia, en milisegundos. Es el mismo ancla que usa el
+   resto del modulo para no pisar los bordes de horario de verano. */
+const UTC_NOON_MS = MS_PER_DAY / 2;
+
+/**
+ * Dia absoluto de un dateId: un entero contable en el que sumar uno es sumar un
+ * dia. Es la unidad que compartimos con el hilo de UI, porque un worklet no
+ * puede partir cadenas ni construir `Date`s: interpolar entre dos enteros si.
+ */
+export function dateIdToEpochDay(dateId: string): number {
+  const [y, m, d] = dateId.split('-').map(Number);
+  if (!y || !m || !d) return 0;
+  return Math.floor(Date.UTC(y, m - 1, d, 12, 0, 0) / MS_PER_DAY);
+}
+
+/** Inversa exacta de `dateIdToEpochDay`. */
+export function epochDayToDateId(epochDay: number): string {
+  const date = new Date(epochDay * MS_PER_DAY + UTC_NOON_MS);
+  return formatDateId(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
 /* `todayId()` se consulta en listas y en cada render. La respuesta solo puede
    cambiar al cruzar la medianoche, así que se memoiza por minuto. */
 let todayCache: { minute: number; dateId: string } | null = null;
@@ -156,6 +178,9 @@ export interface DateItem {
   dayName: string;
   dayNumber: number;
   isToday: boolean;
+  /* Dia absoluto. Lo precalcula la ventana para que la animacion de la banda
+     no tenga que derivarlo por pildora en cada frame. */
+  epochDay: number;
 }
 
 export interface WeekGroup {
@@ -179,6 +204,7 @@ export function buildWeekGroup(mondayDateId: string, weekIndex: number, todayIdS
       dayName: LABELS_MON[i] ?? '',
       dayNumber: dayNum,
       isToday: dId === todayIdStr,
+      epochDay: Math.floor(day.getTime() / MS_PER_DAY),
     });
   }
   return {

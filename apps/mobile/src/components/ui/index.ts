@@ -8,6 +8,8 @@ export { Icon } from './Icon';
 export type { IconProps } from './Icon';
 export { Input } from './Input';
 export type { InputProps } from './Input';
+export { PressScale } from './PressScale';
+export type { PressScaleProps } from './PressScale';
 export { ProgressBar } from './ProgressBar';
 export type { ProgressBarProps } from './ProgressBar';
 export { Screen } from './Screen';

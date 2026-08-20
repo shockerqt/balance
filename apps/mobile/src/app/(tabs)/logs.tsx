@@ -1,11 +1,30 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
-import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import PagerView, {
+  PagerViewOnPageScrollEvent,
+  PagerViewOnPageScrollEventData,
+  PagerViewOnPageSelectedEvent,
+} from 'react-native-pager-view';
+import Animated, {
+  SharedValue,
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useEvent,
+  useHandler,
+  useSharedValue,
+} from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
 import { useLogsSelectedDate } from '@/hooks/use-logs-date';
-import { buildDateWindow, currentTimeString, todayId } from '@/lib/dates';
+import {
+  buildDateWindow,
+  currentTimeString,
+  dateIdToEpochDay,
+  epochDayToDateId,
+  todayId,
+} from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
@@ -19,7 +38,20 @@ import { useWeightStore } from '@/hooks/use-weight-store';
 
 /* Registros del día. La pantalla compone: la ventana de fechas vive
    en lib/dates, la selección múltiple en use-food-selection, y la
-   barra de lote y el botón flotante son componentes propios. */
+   barra de lote y el botón flotante son componentes propios.
+
+   Hay dos nociones de "día actual", y son distintas a propósito:
+
+   - `selectedDateId` es el día confirmado. Manda en lo que se escribe, se borra
+     y se mueve, y sólo cambia cuando la página ya está decidida.
+   - `visualDateId` es el día que la cabecera y el resumen pintan. Conmuta a
+     mitad del gesto, donde el ojo espera el cambio.
+
+   Antes había una sola, atada a `onPageSelected`, que el pager nativo emite
+   cuando la página terminó de asentarse: de ahí que la cabecera y el resumen
+   llegaran siempre un beat tarde. */
+
+const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 
 /* Radio de páginas montadas alrededor de la activa. Deslizar a un día vecino
    no monta nada, así que se siente instantáneo; un salto más largo monta una
@@ -28,11 +60,57 @@ import { useWeightStore } from '@/hooks/use-weight-store';
    residentes. */
 const PRELOAD_RADIUS = 2;
 
+/* Un día de distancia se desliza; más de uno se teletransporta. La animación
+   nativa recorre las páginas intermedias, así que llegar a un día de otro mes
+   sería un borrón de medio segundo donde lo único que importa es el destino. */
+const ANIMATED_JUMP_MAX_DISTANCE = 1;
+
+/* Cuánto acompaña el resumen al dedo y con qué fuerza se apaga en el cruce. Se
+   mueve sólo el contenido, no la superficie: desplazar la tarjeta entera
+   dejaría ver el fondo por el canto. */
+const SUMMARY_DRIFT = 20;
+const SUMMARY_FADE = 1.3;
+
 /* Un día sin registros comparte este arreglo. Antes se llamaba a
    `emptyDayLog(dateId)` dentro del map del pager: devolvía un arreglo nuevo por
    día y por render, así que `React.memo` no reconocía ninguna página y las 21
    se volvían a renderizar en cada toque. */
 const EMPTY_FOODS: LoggedFoodItem[] = [];
+
+/**
+ * Publica el progreso del pager como día absoluto fraccionario en un valor
+ * compartido.
+ *
+ * `onPageScroll` es el único evento que reporta el avance del gesto, y llega
+ * sesenta veces por segundo: atenderlo en JS es exactamente la tara que se
+ * quiere evitar. Este handler corre en el hilo de UI, así que la cabecera puede
+ * seguir el dedo sin pasar por un render de React.
+ *
+ * La unidad es el día absoluto y no el índice de página a propósito: el índice
+ * pierde sentido cada vez que la ventana se re-ancla, el día no.
+ */
+function usePagerDayProgress(dayProgress: SharedValue<number>, windowStartEpochDay: number) {
+  const handlers = {
+    onPageScroll: (event: PagerViewOnPageScrollEventData) => {
+      'worklet';
+      dayProgress.value = windowStartEpochDay + event.position + event.offset;
+    },
+  };
+  const { doDependenciesDiffer } = useHandler(handlers, [windowStartEpochDay]);
+
+  const handler = useEvent<PagerViewOnPageScrollEventData>(
+    (event) => {
+      'worklet';
+      if (event.eventName.endsWith('onPageScroll')) {
+        handlers.onPageScroll(event);
+      }
+    },
+    ['onPageScroll'],
+    doDependenciesDiffer
+  );
+
+  return handler as unknown as (event: PagerViewOnPageScrollEvent) => void;
+}
 
 interface DayPageProps {
   dateId: string;
@@ -107,11 +185,6 @@ export default function LogsScreen() {
   const [selectedDateId, setSelectedDateId] = useLogsSelectedDate();
   const { dayLogs, deleteMultipleFoods } = useMealStore();
 
-  const currentDayLog = useMemo(
-    () => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId),
-    [dayLogs, selectedDateId]
-  );
-
   const selection = useFoodSelection();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
@@ -122,45 +195,111 @@ export default function LogsScreen() {
      que sí es caro: reconstruye la lista completa de páginas. */
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
   const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 2, 2), [windowAnchor]);
+  const windowStartEpochDay = useMemo(
+    () => dateIdToEpochDay(dateWindow[0] ?? windowAnchor),
+    [dateWindow, windowAnchor]
+  );
 
   const activeIndex = dateWindow.indexOf(selectedDateId);
-  useEffect(() => {
-    if (activeIndex === -1) {
-      setWindowAnchor(selectedDateId);
-    }
-  }, [activeIndex, selectedDateId]);
 
-  /* Guarda de sincronización entre el gesto del usuario y el estado de React.
-     Se guarda el índice destino del salto programático, no un booleano: así, si
-     el salto no llega a emitir evento, no queda una guarda armada que se coma
-     el siguiente gesto real. */
+  /* Guardas de sincronización entre el pager nativo y el estado de React.
+
+     `currentFeedIndexRef` es la página que el pager tiene de verdad, y -1
+     significa "desconocida". Se inicializa con la página real de montaje: si
+     dijera 0 cuando el pager arranca en otra, el efecto de más abajo armaría en
+     el montaje una guarda que después se comería un gesto legítimo.
+
+     De la guarda programática se guarda el índice destino y no un booleano: si
+     el salto no llegara a emitir evento, un booleano se quedaría armado y se
+     comería el siguiente gesto real del usuario. */
   const programmaticTargetRef = useRef<number | null>(null);
   const currentFeedIndexRef = useRef(activeIndex !== -1 ? activeIndex : 0);
 
-  // Cambio de fecha sincrónico e instantáneo para botones de cabecera y picker
+  useEffect(() => {
+    if (activeIndex === -1) {
+      setWindowAnchor(selectedDateId);
+      /* Un índice de la ventana vieja no significa nada en la nueva, y si por
+         coincidencia calzara con el índice del día pedido —de un domingo a otro
+         domingo, digamos— el salto de más abajo se daría por hecho y el pager se
+         quedaría mostrando otro día. */
+      currentFeedIndexRef.current = -1;
+    }
+  }, [activeIndex, selectedDateId]);
+
+  /* Progreso del pager en días absolutos, con decimales durante el gesto. Es el
+     único origen de verdad de todo lo que se anima: cabecera, píldoras y
+     resumen leen de aquí, en el hilo de UI. */
+  const dayProgress = useSharedValue(dateIdToEpochDay(selectedDateId));
+  const onPageScroll = usePagerDayProgress(dayProgress, windowStartEpochDay);
+
+  const [visualDateId, setVisualDateId] = useState(selectedDateId);
+  const visualDayLog = useMemo(
+    () => dayLogs[visualDateId] ?? emptyDayLog(visualDateId),
+    [dayLogs, visualDateId]
+  );
+
+  /* El día visible conmuta al cruzar la mitad del recorrido, no al soltar. Es
+     el único punto donde el progreso continuo se convierte en estado de React,
+     y por eso el resto del gesto no cuesta ningún render. */
+  const commitVisualDay = useCallback((epochDay: number) => {
+    setVisualDateId(epochDayToDateId(epochDay));
+  }, []);
+
+  useAnimatedReaction(
+    () => Math.round(dayProgress.value),
+    (epochDay, previous) => {
+      'worklet';
+      if (previous !== null && epochDay !== previous) {
+        runOnJS(commitVisualDay)(epochDay);
+      }
+    },
+    [commitVisualDay]
+  );
+
+  /* Salta al día pedido por la cabecera, las píldoras o el selector de fecha.
+     Un día de distancia se desliza —y la cabecera viaja con la página, porque
+     el pager emite `onPageScroll` durante toda la animación—; más lejos se
+     teletransporta, y entonces hay que mover a mano el progreso y el día
+     visible, en el mismo frame del toque, porque no habrá eventos intermedios
+     que los muevan. */
   const handleSelectDate = useCallback(
     (targetDateId: string) => {
       const targetIndex = dateWindow.indexOf(targetDateId);
-      if (targetIndex !== -1 && currentFeedIndexRef.current !== targetIndex) {
+
+      if (targetIndex === -1) {
+        // Fuera de la ventana: el re-anclaje reconstruye las páginas y salta.
+        dayProgress.value = dateIdToEpochDay(targetDateId);
+        setVisualDateId(targetDateId);
+      } else if (currentFeedIndexRef.current !== targetIndex) {
+        const distance = Math.abs(targetIndex - currentFeedIndexRef.current);
         currentFeedIndexRef.current = targetIndex;
         programmaticTargetRef.current = targetIndex;
-        // Salto nativo inmediato sin esperar el ciclo de renderizado de React
-        pagerRef.current?.setPageWithoutAnimation(targetIndex);
+
+        if (distance <= ANIMATED_JUMP_MAX_DISTANCE) {
+          pagerRef.current?.setPage(targetIndex);
+        } else {
+          pagerRef.current?.setPageWithoutAnimation(targetIndex);
+          dayProgress.value = dateIdToEpochDay(targetDateId);
+          setVisualDateId(targetDateId);
+        }
       }
+
       setSelectedDateId(targetDateId);
     },
-    [dateWindow, setSelectedDateId]
+    [dateWindow, dayProgress, setSelectedDateId]
   );
 
+  /* Cambios de fecha que no pasaron por `handleSelectDate`: el selector de
+     fecha, mover en lote, volver de otra pantalla. Aquí el salto siempre es
+     instantáneo porque no hay gesto que acompañar. */
   useEffect(() => {
     selection.clear();
-    if (activeIndex !== -1) {
-      if (currentFeedIndexRef.current !== activeIndex) {
-        currentFeedIndexRef.current = activeIndex;
-        programmaticTargetRef.current = activeIndex;
-        pagerRef.current?.setPageWithoutAnimation(activeIndex);
-      }
-    }
+    if (activeIndex === -1 || currentFeedIndexRef.current === activeIndex) return;
+    currentFeedIndexRef.current = activeIndex;
+    programmaticTargetRef.current = activeIndex;
+    pagerRef.current?.setPageWithoutAnimation(activeIndex);
+    dayProgress.value = dateIdToEpochDay(selectedDateId);
+    setVisualDateId(selectedDateId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateId, activeIndex]);
 
@@ -186,7 +325,7 @@ export default function LogsScreen() {
     [router]
   );
 
-  // El botón flotante siempre anota en el día visible.
+  // El botón flotante siempre anota en el día confirmado.
   const openFoodSearchToday = useCallback(
     () => openFoodSearchFor(selectedDateId),
     [openFoodSearchFor, selectedDateId]
@@ -209,14 +348,23 @@ export default function LogsScreen() {
     selection.clear();
   }, [router, selectedDateId, selection]);
 
+  const openWeightEntry = useCallback(() => {
+    router.push({ pathname: '/weight-entry', params: { dateId: visualDateId } });
+  }, [router, visualDateId]);
+
   const onPageSelected = useCallback(
     (e: PagerViewOnPageSelectedEvent) => {
       const newIndex = e.nativeEvent.position;
       currentFeedIndexRef.current = newIndex;
 
-      // Si el cambio fue ordenado programáticamente, descartar el evento para evitar rebotes
-      if (programmaticTargetRef.current === newIndex) {
-        programmaticTargetRef.current = null;
+      /* Si el cambio fue ordenado programáticamente, descartar el evento para
+         evitar rebotes. La guarda es de un solo uso en los dos sentidos: la
+         consume el evento que calza, y también la borra cualquier otro, porque
+         un evento distinto ya la dejó obsoleta y una guarda vieja se come un
+         gesto real más tarde. */
+      const programmaticTarget = programmaticTargetRef.current;
+      programmaticTargetRef.current = null;
+      if (programmaticTarget === newIndex) {
         return;
       }
 
@@ -228,41 +376,48 @@ export default function LogsScreen() {
     [dateWindow, selectedDateId, setSelectedDateId]
   );
 
+  const summarySwipeStyle = useAnimatedStyle(() => {
+    const fraction = dayProgress.value - Math.round(dayProgress.value);
+    return {
+      opacity: Math.max(1 - Math.abs(fraction) * SUMMARY_FADE, 0.35),
+      transform: [{ translateX: -fraction * SUMMARY_DRIFT }],
+    };
+  });
+
   return (
     <Screen>
       <DateStripHeader
         selectedDateId={selectedDateId}
+        visualDateId={visualDateId}
+        dayProgress={dayProgress}
         onSelectDate={handleSelectDate}
       />
 
       {preferencesReady && weightTrackingEnabled ? (
         <DailyWeightRow
-          measurement={weightsByDate[selectedDateId]}
-          disabled={selectedDateId > todayId()}
-          onPress={() =>
-            router.push({
-              pathname: '/weight-entry',
-              params: { dateId: selectedDateId },
-            })
-          }
+          measurement={weightsByDate[visualDateId]}
+          disabled={visualDateId > todayId()}
+          onPress={openWeightEntry}
         />
       ) : null}
       {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
 
       <StickyMacroHeader
-        foods={currentDayLog.foods}
-        targetCalories={currentDayLog.targetCalories}
-        targetProtein={currentDayLog.targetProtein}
-        targetCarbs={currentDayLog.targetCarbs}
-        targetFat={currentDayLog.targetFat}
-        targetFiber={currentDayLog.targetFiber}
+        foods={visualDayLog.foods}
+        targetCalories={visualDayLog.targetCalories}
+        targetProtein={visualDayLog.targetProtein}
+        targetCarbs={visualDayLog.targetCarbs}
+        targetFat={visualDayLog.targetFat}
+        targetFiber={visualDayLog.targetFiber}
+        contentStyle={summarySwipeStyle}
       />
 
-      <PagerView
+      <AnimatedPagerView
         ref={pagerRef}
         style={styles.pager}
         scrollEnabled={!selection.isSelectionMode}
         initialPage={activeIndex !== -1 ? activeIndex : 0}
+        onPageScroll={onPageScroll}
         onPageSelected={onPageSelected}>
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
@@ -285,7 +440,7 @@ export default function LogsScreen() {
             />
           );
         })}
-      </PagerView>
+      </AnimatedPagerView>
 
       {selection.isSelectionMode ? (
         <BatchActionBar

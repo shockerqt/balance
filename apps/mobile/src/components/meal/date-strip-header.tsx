@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, Text, useWindowDimensions } from 'react-native';
 import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import Animated, { SharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme';
-import { Icon } from '@/components/ui';
+import { Icon, PressScale } from '@/components/ui';
 import {
   DAY_NAMES,
   DateItem,
@@ -16,52 +17,60 @@ import {
 
 export type WeekStartDay = 'monday' | 'sunday';
 
+/* Cuánto acompaña el bloque de título al dedo, en píxeles, y con qué fuerza se
+   apaga al cruzar de día. El texto no se puede interpolar en el hilo de UI: lo
+   que se interpola es su desplazamiento y su opacidad, y el contenido conmuta
+   en el punto más apagado del recorrido. */
+const TITLE_DRIFT = 26;
+const TITLE_FADE = 1.5;
+
 interface DateStripHeaderProps {
+  /** Día confirmado. Es el que usan las flechas para no perder pulsaciones. */
   selectedDateId: string;
+  /** Día que la cabecera pinta. Conmuta a mitad del gesto, no al final. */
+  visualDateId: string;
+  /** Día absoluto fraccionario del pager de registros. Vive en el hilo de UI. */
+  dayProgress: SharedValue<number>;
   onSelectDate: (dateId: string) => void;
   weekStartsOn?: WeekStartDay;
 }
 
+/* La píldora se dibuja en dos capas apiladas —la normal abajo, la seleccionada
+   completa encima— y lo único animado es la opacidad de la de arriba. Sale más
+   barato que interpolar cinco colores por píldora, no reflúa el texto al
+   cambiar de grosor, y el resaltado hace crossfade siguiendo al dedo. */
 const DayPill: React.FC<{
   item: DateItem;
-  isSelected: boolean;
+  dayProgress: SharedValue<number>;
   onSelectDate: (dateId: string) => void;
-}> = React.memo(({ item, isSelected, onSelectDate }) => {
+}> = React.memo(({ item, dayProgress, onSelectDate }) => {
   const theme = useTheme();
+  const { epochDay } = item;
+
+  const selectedLayerStyle = useAnimatedStyle(() => {
+    const distance = Math.abs(dayProgress.value - epochDay);
+    return { opacity: distance >= 1 ? 0 : 1 - distance };
+  });
+
+  const handlePress = useCallback(() => onSelectDate(item.dateId), [item.dateId, onSelectDate]);
 
   return (
-    <TouchableOpacity
-      key={item.dateId}
+    <PressScale
       style={[
         styles.dayPill,
         {
           backgroundColor: theme.colors.surface,
-          borderColor: theme.colors.border,
+          borderColor: item.isToday ? theme.colors.primary : theme.colors.border,
         },
-        isSelected && {
-          backgroundColor: theme.colors.primary,
-          borderColor: theme.colors.primary,
-        },
-        item.isToday &&
-          !isSelected && {
-            borderColor: theme.colors.primary,
-          },
       ]}
-      delayPressIn={0}
-      activeOpacity={0.7}
-      onPress={() => onSelectDate(item.dateId)}>
+      scaleTo={0.9}
+      opacityTo={0.75}
+      accessibilityLabel={`Ir al día ${item.dayNumber}`}
+      onPress={handlePress}>
       <Text
         style={[
           styles.dayNameText,
-          { color: theme.colors.textMuted },
-          isSelected && {
-            color: theme.colors.onPrimary,
-            fontWeight: '700',
-          },
-          item.isToday &&
-            !isSelected && {
-              color: theme.colors.primary,
-            },
+          { color: item.isToday ? theme.colors.primary : theme.colors.textMuted },
         ]}>
         {item.dayName}
       </Text>
@@ -69,21 +78,37 @@ const DayPill: React.FC<{
       <Text
         style={[
           styles.dayNumberText,
-          { color: theme.colors.text },
-          isSelected && { color: theme.colors.onPrimary },
-          item.isToday &&
-            !isSelected && {
-              color: theme.colors.primary,
-            },
+          { color: item.isToday ? theme.colors.primary : theme.colors.text },
         ]}>
         {item.dayNumber}
       </Text>
-    </TouchableOpacity>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.selectedLayer,
+          {
+            backgroundColor: theme.colors.primary,
+            borderColor: theme.colors.primary,
+          },
+          selectedLayerStyle,
+        ]}>
+        <Text
+          style={[styles.dayNameText, styles.dayNameSelected, { color: theme.colors.onPrimary }]}>
+          {item.dayName}
+        </Text>
+        <Text style={[styles.dayNumberText, { color: theme.colors.onPrimary }]}>
+          {item.dayNumber}
+        </Text>
+      </Animated.View>
+    </PressScale>
   );
 });
 
 export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
   selectedDateId,
+  visualDateId,
+  dayProgress,
   onSelectDate,
 }) => {
   const theme = useTheme();
@@ -96,23 +121,25 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
      anterior como "Hoy" si queda abierta cruzando la medianoche. */
   const todayDateId = todayId();
 
-  // Ventana compacta de 3 semanas (-1..+1) centrada en el ancla.
-  const [anchorDateId, setAnchorDateId] = useState(selectedDateId);
+  /* Ventana compacta de 3 semanas (-1..+1). Se ancla en el día visible, no en
+     el confirmado: así la banda cambia de semana en el mismo instante en que el
+     resaltado llega al borde, a mitad del gesto. */
+  const [anchorDateId, setAnchorDateId] = useState(visualDateId);
   const weeksList = useMemo(
     () => generateWeeksWindow(anchorDateId, 1, 1, todayDateId),
     [anchorDateId, todayDateId]
   );
 
   const activeWeekIndex = weeksList.findIndex((w) =>
-    w.days.some((d) => d.dateId === selectedDateId)
+    w.days.some((d) => d.dateId === visualDateId)
   );
 
-  // Si la fecha seleccionada se sale de la ventana de 3 semanas, re-anclamos al instante
+  // Si el día visible se sale de la ventana de 3 semanas, re-anclamos al instante
   useEffect(() => {
     if (activeWeekIndex === -1) {
-      setAnchorDateId(selectedDateId);
+      setAnchorDateId(visualDateId);
     }
-  }, [activeWeekIndex, selectedDateId]);
+  }, [activeWeekIndex, visualDateId]);
 
   /* Guardas de sincronización para evitar bucles de retroalimentación.
 
@@ -136,7 +163,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
       programmaticTargetRef.current = activeWeekIndex;
       pagerRef.current?.setPageWithoutAnimation(activeWeekIndex);
     }
-  }, [activeWeekIndex, selectedDateId]);
+  }, [activeWeekIndex, visualDateId]);
 
   const handlePageScrollStateChanged = useCallback(
     (e: { nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' } }) => {
@@ -152,9 +179,12 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
       const pagePos = e.nativeEvent.position;
       currentWeekIndexRef.current = pagePos;
 
-      // Si el cambio fue programático (fecha externa o botón), ignorar
-      if (programmaticTargetRef.current === pagePos) {
-        programmaticTargetRef.current = null;
+      /* Si el cambio fue programático (fecha externa o botón), ignorar. La
+         guarda es de un solo uso: la consume el evento que calza y la borra
+         cualquier otro, para no dejarla armada contra un gesto futuro. */
+      const programmaticTarget = programmaticTargetRef.current;
+      programmaticTargetRef.current = null;
+      if (programmaticTarget === pagePos) {
         return;
       }
 
@@ -189,15 +219,29 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
     onSelectDate(shiftDateId(selectedDateId, 1));
   }, [selectedDateId, onSelectDate]);
 
-  const selDateObj = parseDateId(selectedDateId);
-  const dayNameFull = DAY_NAMES[selDateObj.getUTCDay()];
-  const dayNum = selDateObj.getUTCDate();
-  const monthNameFull = MONTH_NAMES[selDateObj.getUTCMonth()];
-  const yearNum = selDateObj.getUTCFullYear();
-  const isSelectedToday = selectedDateId === todayDateId;
+  const openDatePicker = useCallback(() => router.push('/date-picker'), [router]);
+  const goToToday = useCallback(() => onSelectDate(todayDateId), [onSelectDate, todayDateId]);
 
-  const line1Text = isSelectedToday ? 'Hoy' : `${dayNameFull} ${dayNum}`;
-  const line2Text = isSelectedToday
+  /* El bloque de título viaja con el dedo y se apaga en el cruce. El texto de
+     abajo ya corresponde al día al que se va, porque `visualDateId` conmuta en
+     la mitad del gesto: el cambio ocurre justo donde menos se ve. */
+  const titleSwipeStyle = useAnimatedStyle(() => {
+    const fraction = dayProgress.value - Math.round(dayProgress.value);
+    return {
+      opacity: Math.max(1 - Math.abs(fraction) * TITLE_FADE, 0.25),
+      transform: [{ translateX: -fraction * TITLE_DRIFT }],
+    };
+  });
+
+  const visualDateObj = parseDateId(visualDateId);
+  const dayNameFull = DAY_NAMES[visualDateObj.getUTCDay()];
+  const dayNum = visualDateObj.getUTCDate();
+  const monthNameFull = MONTH_NAMES[visualDateObj.getUTCMonth()];
+  const yearNum = visualDateObj.getUTCFullYear();
+  const isVisualToday = visualDateId === todayDateId;
+
+  const line1Text = isVisualToday ? 'Hoy' : `${dayNameFull} ${dayNum}`;
+  const line2Text = isVisualToday
     ? `${dayNum} de ${monthNameFull}`
     : `${monthNameFull}, ${yearNum}`;
 
@@ -213,40 +257,42 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
       {/* 1. Header Row */}
       <View style={styles.topHeaderRow}>
         <View style={styles.fixedDateNavBox}>
-          <TouchableOpacity
+          <PressScale
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Ir al día anterior"
             onPress={handlePrevDay}>
             <Icon name="chevron-left" size={20} tone="accent" />
-          </TouchableOpacity>
+          </PressScale>
 
-          <TouchableOpacity
-            style={styles.dateTitleBox}
-            delayPressIn={0}
-            activeOpacity={0.7}
-            onPress={() => router.push('/date-picker')}>
-            <Text style={[styles.headlineTitle, { color: theme.colors.text }]}>
-              {line1Text}
-            </Text>
-            <Text style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>
-              {line2Text}
-            </Text>
-          </TouchableOpacity>
+          <Animated.View style={[styles.dateTitleBox, titleSwipeStyle]}>
+            <PressScale
+              style={styles.dateTitleTouch}
+              scaleTo={0.97}
+              accessibilityLabel="Elegir fecha"
+              onPress={openDatePicker}>
+              <Text
+                numberOfLines={1}
+                style={[styles.headlineTitle, { color: theme.colors.text }]}>
+                {line1Text}
+              </Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>
+                {line2Text}
+              </Text>
+            </PressScale>
+          </Animated.View>
 
-          <TouchableOpacity
+          <PressScale
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
             accessibilityLabel="Ir al día siguiente"
             onPress={handleNextDay}>
             <Icon name="chevron-right" size={20} tone="accent" />
-          </TouchableOpacity>
+          </PressScale>
         </View>
 
-        {!isSelectedToday && (
-          <TouchableOpacity
+        {!isVisualToday && (
+          <PressScale
             style={[
               styles.todayPillBtn,
               {
@@ -254,12 +300,12 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
                 borderColor: theme.colors.primary,
               },
             ]}
-            delayPressIn={0}
-            onPress={() => onSelectDate(todayDateId)}>
+            accessibilityLabel="Volver a hoy"
+            onPress={goToToday}>
             <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>
               Hoy
             </Text>
-          </TouchableOpacity>
+          </PressScale>
         )}
       </View>
 
@@ -277,7 +323,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
                 <DayPill
                   key={item.dateId}
                   item={item}
-                  isSelected={item.dateId === selectedDateId}
+                  dayProgress={dayProgress}
                   onSelectDate={onSelectDate}
                 />
               ))}
@@ -316,7 +362,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /* Ocupa todo el espacio libre entre las flechas. Antes se ajustaba al texto y
+     las flechas se movían al cambiar de día; ahora que el título conmuta a
+     mitad del gesto, ese salto se vería en cada cruce. */
   dateTitleBox: {
+    flex: 1,
+  },
+  dateTitleTouch: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
@@ -367,10 +419,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 6,
   },
+  /* Los -1 compensan el borde de la capa de abajo: así las dos cajas de
+     contenido coinciden y el texto no se corre un píxel al aparecer. */
+  selectedLayer: {
+    position: 'absolute',
+    top: -1,
+    left: -1,
+    right: -1,
+    bottom: -1,
+    borderRadius: 12,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
   dayNameText: {
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 2,
+  },
+  dayNameSelected: {
+    fontWeight: '700',
   },
   dayNumberText: {
     fontSize: 15,
