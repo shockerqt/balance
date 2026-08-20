@@ -5,6 +5,7 @@ import { LoggedFoodItem, useMealStore } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
 import { formatCalories, formatEditableNutrition } from '@/lib/nutrition';
+import { todayId } from '@/lib/dates';
 
 /* ============================================================
    Editar un registro.
@@ -21,8 +22,8 @@ export default function FoodEditScreen() {
   const router = useRouter();
   const { dateId, foodId } = useLocalSearchParams<{ dateId?: string; foodId?: string }>();
 
-  const { dayLogs, selectedDateId, updateFood, deleteFood } = useMealStore();
-  const targetDate = dateId || selectedDateId;
+  const { dayLogs, updateFood, deleteFood } = useMealStore();
+  const targetDate = dateId || todayId();
 
   const food = useMemo<LoggedFoodItem | undefined>(
     () => dayLogs[targetDate]?.foods.find((f) => f.id === foodId),

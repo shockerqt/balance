@@ -4,6 +4,7 @@ import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
+import { useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { buildDateWindow, currentTimeString, todayId } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
@@ -78,13 +79,13 @@ export default function LogsScreen() {
   const router = useRouter();
   const pagerRef = useRef<PagerView>(null);
 
-  const {
-    selectedDateId,
-    setSelectedDateId,
-    currentDayLog,
-    dayLogs,
-    deleteMultipleFoods,
-  } = useMealStore();
+  const [selectedDateId, setSelectedDateId] = useLogsSelectedDate();
+  const { dayLogs, deleteMultipleFoods } = useMealStore();
+
+  const currentDayLog = useMemo(
+    () => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId),
+    [dayLogs, selectedDateId]
+  );
 
   const selection = useFoodSelection();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();

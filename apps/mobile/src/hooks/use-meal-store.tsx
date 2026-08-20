@@ -122,10 +122,7 @@ function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: strin
 }
 
 interface MealStoreContextType {
-  selectedDateId: string;
-  setSelectedDateId: (dateId: string) => void;
   dayLogs: Record<string, DayLog>;
-  currentDayLog: DayLog;
   mealDocuments: MealLogDoc[];
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
@@ -141,7 +138,6 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const namespace = user ? `user:${user.id}` : 'guest';
-  const [selectedDateId, setSelectedDateId] = useState(todayId);
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
 
   useEffect(() => {
@@ -294,15 +290,11 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return grouped;
   }, [logs]);
 
-  const currentDayLog = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
     setLogs(documents);
   }, []);
   const value = useMemo<MealStoreContextType>(() => ({
-    selectedDateId,
-    setSelectedDateId,
     dayLogs,
-    currentDayLog,
     mealDocuments: logs,
     addFood,
     addMultipleFoods,
@@ -311,7 +303,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteMultipleFoods,
     moveMultipleFoodsTime,
     replaceMealDocuments,
-  }), [selectedDateId, dayLogs, currentDayLog, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  }), [dayLogs, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useMealStore } from '@/hooks/use-meal-store';
+import { useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { makeStyles } from '@/theme';
 
 export default function DatePickerScreen() {
   const styles = useStyles();
   const router = useRouter();
-  const { selectedDateId, setSelectedDateId } = useMealStore();
+  const [selectedDateId, setSelectedDateId] = useLogsSelectedDate();
 
   const parseDate = (dStr: string) => {
     const parts = dStr.split('-');
