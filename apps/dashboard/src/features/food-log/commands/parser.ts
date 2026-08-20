@@ -87,6 +87,14 @@ function completePendingOperator(
 }
 
 export function feedKey(current: ParserState, key: string, mode: FoodLogMode): ParserOutput {
+  if (current.visualObjectPrefix) {
+    if (mode === 'visual' && (key === 'w' || key === 'b')) {
+      return reset({ type: 'select-hour-block' });
+    }
+    if (key === 'Escape') return reset(null);
+    return reset(null);
+  }
+
   if (current.pendingOperator) {
     const pending = current.pendingOperator;
     if (key === 'Escape') return reset(null);
@@ -130,6 +138,12 @@ export function feedKey(current: ParserState, key: string, mode: FoodLogMode): P
   if (key === 'Escape') return reset({ type: 'cancel-mode' });
   if (key === ' ' || key === 'v') return reset({ type: 'toggle-visual' });
   if (key === 'V') return reset({ type: 'select-hour-block' });
+  if (mode === 'visual' && (key === 'i' || key === 'a')) {
+    return withState({
+      ...emptyParserState(),
+      visualObjectPrefix: key === 'i' ? 'inner' : 'around',
+    });
+  }
 
   if (key === 'h' || key === 'l' || key === 'H' || key === 'L') {
     const direction = key === 'h' || key === 'H' ? -1 : 1;

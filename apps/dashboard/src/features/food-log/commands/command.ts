@@ -1,5 +1,4 @@
 import type { MealTemplateDoc, MealUnit } from '../../../types/meal-log.ts';
-import type { FoodLogMode } from '../domain/food-log-state.ts';
 
 export type Operator = 'delete' | 'yank' | 'normalize';
 
@@ -56,6 +55,7 @@ export interface ParserState {
   count: string;
   pendingOperator: PendingOperator | null;
   pendingG: boolean;
+  visualObjectPrefix: 'inner' | 'around' | null;
 }
 
 export interface ParserOutput {
@@ -65,7 +65,7 @@ export interface ParserOutput {
 }
 
 export function emptyParserState(): ParserState {
-  return { count: '', pendingOperator: null, pendingG: false };
+  return { count: '', pendingOperator: null, pendingG: false, visualObjectPrefix: null };
 }
 
 export function pendingKeys(state: ParserState): string {
@@ -83,5 +83,6 @@ export function pendingKeys(state: ParserState): string {
     return `${operator}${state.pendingOperator.motionCount}${prefix}${state.pendingOperator.awaitingG ? 'g' : ''}_`;
   }
   if (state.pendingG) return 'g_';
+  if (state.visualObjectPrefix) return `${state.visualObjectPrefix === 'inner' ? 'i' : 'a'}_`;
   return state.count ? `${state.count}_` : '';
 }

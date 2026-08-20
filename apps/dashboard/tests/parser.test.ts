@@ -74,3 +74,8 @@ test('numeric prefix on add is treated as a time literal', () => {
     timeLiteral: '1330',
   });
 });
+
+test('visual text objects select the current hour block', () => {
+  assert.deepEqual(parse('iw', 'visual').command, { type: 'select-hour-block' });
+  assert.deepEqual(parse('ab', 'visual').command, { type: 'select-hour-block' });
+});
