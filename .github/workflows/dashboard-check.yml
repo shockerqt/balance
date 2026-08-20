@@ -1,0 +1,42 @@
+name: Verify Balance Dashboard
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/dashboard/**"
+      - ".github/workflows/dashboard-check.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/dashboard/**"
+      - ".github/workflows/dashboard-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-dashboard:
+    name: Typecheck and build Dashboard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        run: npm ci --prefix apps/dashboard
+
+      - name: Typecheck and build dashboard
+        working-directory: apps/dashboard
+        run: npm run build
