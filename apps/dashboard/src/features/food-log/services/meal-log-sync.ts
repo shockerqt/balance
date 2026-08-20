@@ -3,6 +3,7 @@ import type { MealLogDoc, MealTemplateDoc } from '../../../types/meal-log.ts';
 export interface MealLogPersistenceChangeSet {
   documents: MealLogDoc[];
   pushDocuments: MealLogDoc[];
+  replacedIds: Record<string, string>;
 }
 
 function withoutUpdatedAt(document: MealLogDoc): Omit<MealLogDoc, 'updatedAt'> {
@@ -39,16 +40,22 @@ export function mergeMealTemplates(previous: MealTemplateDoc[], incoming: MealTe
  * document from the command snapshot entirely. The remote sync protocol is LWW,
  * so the adapter must re-stamp semantic changes and turn removals into canonical
  * tombstones before they cross the persistence boundary.
+ *
+ * The server deliberately does not mutate `templateId` on an existing meal log.
+ * A terminal food replacement is therefore materialized as a tombstone for the
+ * old log plus a fresh log identity for the newly selected template.
  */
 export function materializeMealLogChanges(
   before: MealLogDoc[],
   after: MealLogDoc[],
   now = Date.now(),
+  createId = () => crypto.randomUUID(),
 ): MealLogPersistenceChangeSet {
   const beforeById = new Map(before.map((document) => [document.id, document]));
   const afterIds = new Set(after.map((document) => document.id));
   const documents: MealLogDoc[] = [];
   const pushDocuments: MealLogDoc[] = [];
+  const replacedIds: Record<string, string> = {};
   let clock = now;
 
   const freshTimestamp = (...minimums: number[]) => {
@@ -61,6 +68,23 @@ export function materializeMealLogChanges(
     const previous = beforeById.get(candidate.id);
     if (previous && sameDocumentContent(previous, candidate)) {
       documents.push({ ...candidate, updatedAt: previous.updatedAt });
+      continue;
+    }
+
+    if (previous && previous.templateId !== candidate.templateId && !candidate._deleted) {
+      const tombstone: MealLogDoc = {
+        ...previous,
+        _deleted: true,
+        updatedAt: freshTimestamp(previous.updatedAt + 1, candidate.updatedAt),
+      };
+      const replacement: MealLogDoc = {
+        ...candidate,
+        id: createId(),
+        updatedAt: freshTimestamp(candidate.updatedAt),
+      };
+      replacedIds[candidate.id] = replacement.id;
+      documents.push(tombstone, replacement);
+      pushDocuments.push(tombstone, replacement);
       continue;
     }
 
@@ -85,5 +109,5 @@ export function materializeMealLogChanges(
     pushDocuments.push(tombstone);
   }
 
-  return { documents, pushDocuments };
+  return { documents, pushDocuments, replacedIds };
 }
