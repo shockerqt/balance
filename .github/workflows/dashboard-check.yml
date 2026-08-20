@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   verify-dashboard:
-    name: Typecheck and build Dashboard
+    name: Test, typecheck and build Dashboard
     runs-on: ubuntu-latest
 
     steps:
@@ -36,6 +36,10 @@ jobs:
 
       - name: Install dashboard dependencies
         run: npm ci --prefix apps/dashboard
+
+      - name: Run dashboard command tests
+        working-directory: apps/dashboard
+        run: npm test
 
       - name: Typecheck and build dashboard
         working-directory: apps/dashboard
