@@ -1,9 +1,7 @@
+import { FoodLog } from './features/food-log/components/food-log/food-log.tsx';
+
 export function App() {
-  return (
-    <main>
-      <h1>Balance Dashboard</h1>
-    </main>
-  );
+  return <FoodLog />;
 }
 
 export default App;

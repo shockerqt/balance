@@ -1,6 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './app';
+import { App } from './app.tsx';
+import './styles/tokens.css';
+import './styles/reset.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

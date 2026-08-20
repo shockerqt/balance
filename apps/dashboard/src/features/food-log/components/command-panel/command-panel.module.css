@@ -1,0 +1,136 @@
+.panel {
+  border-top: 1px solid var(--color-border);
+  background: rgba(7, 11, 17, 0.96);
+}
+
+.commandLine {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  color: var(--color-accent);
+  font-size: 12px;
+}
+
+.commandLine input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.commandLine input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.commandLine strong {
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hint {
+  padding: 0 12px 8px;
+  color: var(--color-text-faint);
+  font-size: 9px;
+}
+
+.results {
+  padding: 0 6px 8px;
+}
+
+.result,
+.resultActive {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 90px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.resultActive {
+  background: var(--color-row-hover);
+  color: var(--color-text);
+}
+
+.result span:first-child,
+.resultActive span:first-child {
+  color: var(--color-accent);
+}
+
+.result span:nth-child(3),
+.result span:nth-child(4),
+.resultActive span:nth-child(3),
+.resultActive span:nth-child(4) {
+  text-align: right;
+}
+
+.helpHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--color-accent);
+  font-size: 11px;
+}
+
+.helpHeader button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.helpGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 12px 14px;
+}
+
+.helpGroup {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.helpGroup strong {
+  margin-bottom: 2px;
+  color: var(--color-text);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+@media (max-width: 720px) {
+  .helpGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result,
+  .resultActive {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+
+  .result span:last-child,
+  .resultActive span:last-child {
+    display: none;
+  }
+}
