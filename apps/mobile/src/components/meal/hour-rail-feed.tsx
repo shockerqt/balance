@@ -32,12 +32,17 @@ const NODE_CENTER = NODE_TOP + DOT / 2;
  */
 const AXIS = RAIL_W - PAD_RIGHT - DOT / 2;
 
-const HourNode: React.FC<{ hour: string; filled: boolean; onPress: () => void }> = React.memo(({
+const HourNode: React.FC<{
+  hour: string;
+  filled: boolean;
+  onPress: () => void;
+  styles: ReturnType<typeof useStyles>;
+}> = React.memo(({
   hour,
   filled,
   onPress,
+  styles,
 }) => {
-  const styles = useStyles();
   const label = filled ? `Agregar otro a las ${hour}` : `Registrar a las ${hour}`;
 
   return (
@@ -111,7 +116,7 @@ export const HourRailFeed: React.FC<{
               <View style={styles.lineTop} />
               {!isLast ? <View style={styles.lineBottom} /> : null}
               <View style={styles.nodeBox}>
-                <HourNode hour={hour} filled={filled} onPress={() => onAddAtHour(hour)} />
+                <HourNode hour={hour} filled={filled} onPress={() => onAddAtHour(hour)} styles={styles} />
               </View>
             </View>
 

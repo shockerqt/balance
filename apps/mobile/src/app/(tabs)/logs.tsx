@@ -20,8 +20,8 @@ import { useWeightStore } from '@/hooks/use-weight-store';
    en lib/dates, la selección múltiple en use-food-selection, y la
    barra de lote y el botón flotante son componentes propios. */
 
-/** Radio de precarga ágil: día activo y sus 2 vecinos inmediatos (ayer y mañana). */
-const PRELOAD_RADIUS = 1;
+/** Radio que mantiene montada la semana activa completa para cambios a 0ms sin demora de montaje. */
+const PRELOAD_RADIUS = 4;
 
 interface DayPageProps {
   dateId: string;
@@ -105,14 +105,27 @@ export default function LogsScreen() {
   const isProgrammaticScrollRef = useRef(false);
   const currentFeedIndexRef = useRef(activeIndex !== -1 ? activeIndex : 0);
 
+  // Cambio de fecha sincrónico e instantáneo para botones de cabecera y picker
+  const handleSelectDate = useCallback(
+    (targetDateId: string) => {
+      const targetIndex = dateWindow.indexOf(targetDateId);
+      if (targetIndex !== -1 && currentFeedIndexRef.current !== targetIndex) {
+        currentFeedIndexRef.current = targetIndex;
+        isProgrammaticScrollRef.current = true;
+        // Salto nativo inmediato sin esperar el ciclo de renderizado de React
+        pagerRef.current?.setPageWithoutAnimation(targetIndex);
+      }
+      setSelectedDateId(targetDateId);
+    },
+    [dateWindow, setSelectedDateId]
+  );
+
   useEffect(() => {
     selection.clear();
     if (activeIndex !== -1) {
-      // Solo sincronizar programáticamente si la página difiere (ej. selección externa por botón o picker)
       if (currentFeedIndexRef.current !== activeIndex) {
         currentFeedIndexRef.current = activeIndex;
         isProgrammaticScrollRef.current = true;
-        // Salto inmediato sin animación para evitar latencia perceptiva y colisiones nativas
         pagerRef.current?.setPageWithoutAnimation(activeIndex);
       }
     }
@@ -180,7 +193,7 @@ export default function LogsScreen() {
     <Screen>
       <DateStripHeader
         selectedDateId={selectedDateId}
-        onSelectDate={setSelectedDateId}
+        onSelectDate={handleSelectDate}
       />
 
       {preferencesReady && weightTrackingEnabled ? (
