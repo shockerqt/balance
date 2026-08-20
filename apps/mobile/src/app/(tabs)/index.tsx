@@ -82,9 +82,9 @@ export default function SummaryScreen() {
           </View>
 
           <Button
+            title="Configuración"
             variant="ghost"
-            icon="settings"
-            tone="secondary"
+            size="md"
             onPress={() => router.push('/settings')}
             accessibilityLabel="Abrir Configuración"
           />
