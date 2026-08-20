@@ -1,0 +1,31 @@
+.account {
+  position: fixed;
+  z-index: 20;
+  top: 8px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--color-text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.account button {
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.account button:hover,
+.account button:focus-visible {
+  color: var(--color-accent);
+  outline: 0;
+}
+
+@media (max-width: 720px) {
+  .account span { display: none; }
+}
