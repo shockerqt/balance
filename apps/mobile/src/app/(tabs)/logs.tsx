@@ -58,11 +58,12 @@ export default function LogsScreen() {
   useEffect(() => {
     selection.clear();
     if (activeIndex !== -1) {
-      // Solo sincronizar programáticamente si la página difiere (ej. selección externa)
+      // Solo sincronizar programáticamente si la página difiere (ej. selección externa por botón o picker)
       if (currentFeedIndexRef.current !== activeIndex) {
         currentFeedIndexRef.current = activeIndex;
         isProgrammaticScrollRef.current = true;
-        pagerRef.current?.setPage(activeIndex);
+        // Salto inmediato sin animación para evitar latencia perceptiva y colisiones nativas
+        pagerRef.current?.setPageWithoutAnimation(activeIndex);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

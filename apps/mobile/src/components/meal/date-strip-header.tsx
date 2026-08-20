@@ -51,7 +51,7 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
   }, [activeWeekIndex, selectedDateId]);
 
   // Guardas de sincronización para evitar bucles de retroalimentación
-  const isUserInteractingRef = useRef(false);
+  const isUserDraggingRef = useRef(false);
   const isProgrammaticScrollRef = useRef(false);
   const currentWeekIndexRef = useRef(activeWeekIndex !== -1 ? activeWeekIndex : 2);
 
@@ -59,30 +59,29 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
     if (activeWeekIndex !== -1 && currentWeekIndexRef.current !== activeWeekIndex) {
       currentWeekIndexRef.current = activeWeekIndex;
       isProgrammaticScrollRef.current = true;
-      pagerRef.current?.setPage(activeWeekIndex);
+      pagerRef.current?.setPageWithoutAnimation(activeWeekIndex);
     }
   }, [activeWeekIndex, selectedDateId]);
 
   const handlePageScrollStateChanged = (e: {
     nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' };
   }) => {
-    isUserInteractingRef.current =
-      e.nativeEvent.pageScrollState === 'dragging' ||
-      e.nativeEvent.pageScrollState === 'settling';
+    // Solo es interacción manual si el usuario está físicamente arrastrando la pantalla (dragging)
+    isUserDraggingRef.current = e.nativeEvent.pageScrollState === 'dragging';
   };
 
   const handlePageSelected = (e: PagerViewOnPageSelectedEvent) => {
     const pagePos = e.nativeEvent.position;
     currentWeekIndexRef.current = pagePos;
 
-    // Si el cambio fue programático (por cambio externo de fecha), ignorar
+    // Si el cambio fue programático (por cambio externo de fecha o botón), ignorar
     if (isProgrammaticScrollRef.current) {
       isProgrammaticScrollRef.current = false;
       return;
     }
 
-    // Solo reaccionar si el usuario arrastró físicamente el pager de semanas
-    if (!isUserInteractingRef.current) {
+    // Solo reaccionar si el usuario arrastró físicamente con su dedo el pager de semanas
+    if (!isUserDraggingRef.current) {
       return;
     }
 
