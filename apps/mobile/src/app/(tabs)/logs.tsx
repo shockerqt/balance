@@ -21,15 +21,27 @@ import { useWeightStore } from '@/hooks/use-weight-store';
    en lib/dates, la selección múltiple en use-food-selection, y la
    barra de lote y el botón flotante son componentes propios. */
 
-/** Radio que mantiene montada la semana activa completa para cambios a 0ms sin demora de montaje. */
-const PRELOAD_RADIUS = 4;
+/* Radio de páginas montadas alrededor de la activa. Deslizar a un día vecino
+   no monta nada, así que se siente instantáneo; un salto más largo monta una
+   sola página. Subirlo no abarata el cambio de día —entre y salga una página
+   del radio, el costo incremental es el mismo— y sí deja más vistas nativas
+   residentes. */
+const PRELOAD_RADIUS = 2;
+
+/* Un día sin registros comparte este arreglo. Antes se llamaba a
+   `emptyDayLog(dateId)` dentro del map del pager: devolvía un arreglo nuevo por
+   día y por render, así que `React.memo` no reconocía ninguna página y las 21
+   se volvían a renderizar en cada toque. */
+const EMPTY_FOODS: LoggedFoodItem[] = [];
 
 interface DayPageProps {
   dateId: string;
   isNearby: boolean;
   foods: LoggedFoodItem[];
-  openEdit: (food: LoggedFoodItem) => void;
-  openFoodSearch: (hour?: string) => void;
+  /* Reciben el dateId como argumento en vez de capturarlo: así las funciones
+     que llegan desde la pantalla no cambian de identidad al cambiar de día. */
+  onOpenEdit: (dateId: string, food: LoggedFoodItem) => void;
+  onAddAtHour: (dateId: string, hour?: string) => void;
   isSelectionMode: boolean;
   selectedFoodIds: ReadonlySet<string>;
   onLongPressFood: (food: LoggedFoodItem) => void;
@@ -42,8 +54,8 @@ const DayPage: React.FC<DayPageProps> = React.memo(({
   dateId,
   isNearby,
   foods,
-  openEdit,
-  openFoodSearch,
+  onOpenEdit,
+  onAddAtHour,
   isSelectionMode,
   selectedFoodIds,
   onLongPressFood,
@@ -53,6 +65,19 @@ const DayPage: React.FC<DayPageProps> = React.memo(({
 }) => {
   const styles = useStyles();
 
+  const handleSelectFood = useCallback(
+    (food: LoggedFoodItem) => {
+      if (isSelectionMode) return;
+      onOpenEdit(dateId, food);
+    },
+    [dateId, isSelectionMode, onOpenEdit]
+  );
+
+  const handleAddAtHour = useCallback(
+    (hour: string) => onAddAtHour(dateId, hour),
+    [dateId, onAddAtHour]
+  );
+
   if (!isNearby) {
     return <View key={dateId} style={styles.page} />;
   }
@@ -61,8 +86,8 @@ const DayPage: React.FC<DayPageProps> = React.memo(({
     <View key={dateId} style={styles.page}>
       <HourRailFeed
         foods={foods}
-        onSelectFood={openEdit}
-        onAddAtHour={openFoodSearch}
+        onSelectFood={handleSelectFood}
+        onAddAtHour={handleAddAtHour}
         isSelectionMode={isSelectionMode}
         selectedFoodIds={selectedFoodIds}
         onLongPressFood={onLongPressFood}
@@ -91,9 +116,12 @@ export default function LogsScreen() {
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
-  // Ventana compacta de 3 semanas (1 antes, actual, 1 después = 21 días) centrada en el ancla.
+  /* Ventana de 5 semanas (2 antes, actual, 2 después = 35 días) centrada en el
+     ancla. Las páginas fuera del radio de precarga son un View vacío, así que
+     ensanchar la ventana casi no cuesta y en cambio vuelve raro el re-anclaje,
+     que sí es caro: reconstruye la lista completa de páginas. */
   const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
-  const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 1, 1), [windowAnchor]);
+  const dateWindow = useMemo(() => buildDateWindow(windowAnchor, 2, 2), [windowAnchor]);
 
   const activeIndex = dateWindow.indexOf(selectedDateId);
   useEffect(() => {
@@ -102,8 +130,11 @@ export default function LogsScreen() {
     }
   }, [activeIndex, selectedDateId]);
 
-  // Guardas de sincronización para evitar bucles entre el gesto del usuario y React state
-  const isProgrammaticScrollRef = useRef(false);
+  /* Guarda de sincronización entre el gesto del usuario y el estado de React.
+     Se guarda el índice destino del salto programático, no un booleano: así, si
+     el salto no llega a emitir evento, no queda una guarda armada que se coma
+     el siguiente gesto real. */
+  const programmaticTargetRef = useRef<number | null>(null);
   const currentFeedIndexRef = useRef(activeIndex !== -1 ? activeIndex : 0);
 
   // Cambio de fecha sincrónico e instantáneo para botones de cabecera y picker
@@ -112,7 +143,7 @@ export default function LogsScreen() {
       const targetIndex = dateWindow.indexOf(targetDateId);
       if (targetIndex !== -1 && currentFeedIndexRef.current !== targetIndex) {
         currentFeedIndexRef.current = targetIndex;
-        isProgrammaticScrollRef.current = true;
+        programmaticTargetRef.current = targetIndex;
         // Salto nativo inmediato sin esperar el ciclo de renderizado de React
         pagerRef.current?.setPageWithoutAnimation(targetIndex);
       }
@@ -126,32 +157,39 @@ export default function LogsScreen() {
     if (activeIndex !== -1) {
       if (currentFeedIndexRef.current !== activeIndex) {
         currentFeedIndexRef.current = activeIndex;
-        isProgrammaticScrollRef.current = true;
+        programmaticTargetRef.current = activeIndex;
         pagerRef.current?.setPageWithoutAnimation(activeIndex);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateId, activeIndex]);
 
-  const openFoodSearch = useCallback(
-    (time?: string) => {
+  /* Estas dos reciben el dateId y no lo capturan, así que sobreviven al cambio
+     de día sin cambiar de identidad y las páginas memoizadas no se invalidan. */
+  const openFoodSearchFor = useCallback(
+    (dateId: string, time?: string) => {
       router.push({
         pathname: '/food-search',
-        params: { dateId: selectedDateId, time: time ?? currentTimeString() },
+        params: { dateId, time: time ?? currentTimeString() },
       });
     },
-    [router, selectedDateId]
+    [router]
   );
 
-  const openEdit = useCallback(
-    (food: LoggedFoodItem) => {
-      if (selection.isSelectionMode) return;
+  const openEditFor = useCallback(
+    (dateId: string, food: LoggedFoodItem) => {
       router.push({
         pathname: '/food-edit',
-        params: { dateId: selectedDateId, foodId: food.id },
+        params: { dateId, foodId: food.id },
       });
     },
-    [router, selectedDateId, selection.isSelectionMode]
+    [router]
+  );
+
+  // El botón flotante siempre anota en el día visible.
+  const openFoodSearchToday = useCallback(
+    () => openFoodSearchFor(selectedDateId),
+    [openFoodSearchFor, selectedDateId]
   );
 
   const batchDelete = useCallback(() => {
@@ -177,8 +215,8 @@ export default function LogsScreen() {
       currentFeedIndexRef.current = newIndex;
 
       // Si el cambio fue ordenado programáticamente, descartar el evento para evitar rebotes
-      if (isProgrammaticScrollRef.current) {
-        isProgrammaticScrollRef.current = false;
+      if (programmaticTargetRef.current === newIndex) {
+        programmaticTargetRef.current = null;
         return;
       }
 
@@ -228,7 +266,7 @@ export default function LogsScreen() {
         onPageSelected={onPageSelected}>
         {dateWindow.map((dateId, index) => {
           const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
-          const foods = dayLogs[dateId]?.foods ?? emptyDayLog(dateId).foods;
+          const foods = dayLogs[dateId]?.foods ?? EMPTY_FOODS;
 
           return (
             <DayPage
@@ -236,8 +274,8 @@ export default function LogsScreen() {
               dateId={dateId}
               isNearby={isNearby}
               foods={foods}
-              openEdit={openEdit}
-              openFoodSearch={openFoodSearch}
+              onOpenEdit={openEditFor}
+              onAddAtHour={openFoodSearchFor}
               isSelectionMode={selection.isSelectionMode}
               selectedFoodIds={selection.selectedIds}
               onLongPressFood={selection.startFromFood}
@@ -257,7 +295,7 @@ export default function LogsScreen() {
           onDelete={batchDelete}
         />
       ) : (
-        <FloatingAddButton onPress={() => openFoodSearch()} />
+        <FloatingAddButton onPress={openFoodSearchToday} />
       )}
     </Screen>
   );

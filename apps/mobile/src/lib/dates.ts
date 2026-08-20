@@ -1,7 +1,34 @@
 /* Utilidades de fecha deterministas y seguras frente a zonas horarias.
-   Centralizan el cálculo de ventanas de días y semanas para PagerView. */
+   Centralizan el cálculo de ventanas de días y semanas para PagerView.
+
+   Dos caminos distintos, y la diferencia importa para el rendimiento:
+
+   - Pasar de un instante real a día calendario chileno necesita la zona
+     horaria, o sea `Intl`. Ese formateador se construye una sola vez y se
+     reutiliza: crearlo en cada llamada costaba unas treinta veces más y se
+     hacía decenas de veces por render.
+   - Mover, alinear o enumerar dateIds no necesita zona horaria. Se hace con
+     aritmética sobre mediodía UTC, sin tocar `Intl`. Chile va de UTC-4 a
+     UTC-3, así que el mediodía UTC cae entre las 08:00 y las 09:00 del mismo
+     día calendario, siempre. */
 
 const CHILE_TIME_ZONE = 'America/Santiago';
+
+/** Único formateador del módulo. Perezoso, para no pagarlo al importar. */
+let chileFormatter: Intl.DateTimeFormat | null = null;
+
+function getChileFormatter(): Intl.DateTimeFormat {
+  chileFormatter ??= new Intl.DateTimeFormat('en-US', {
+    timeZone: CHILE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  return chileFormatter;
+}
 
 export function chileDateParts(epochMs: number): {
   year: number;
@@ -10,15 +37,7 @@ export function chileDateParts(epochMs: number): {
   hour: number;
   minute: number;
 } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: CHILE_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(epochMs));
+  const parts = getChileFormatter().formatToParts(new Date(epochMs));
   const values = Object.fromEntries(
     parts.filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)])
   );
@@ -31,14 +50,37 @@ export function chileDateParts(epochMs: number): {
   };
 }
 
+/** Formatea un año/mes/día ya resuelto como dateId. */
+function formatDateId(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 /** All user-facing day boundaries use Chile, independent of device timezone. */
 export function toDateId(date: Date): string {
   const p = chileDateParts(date.getTime());
-  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+  return formatDateId(p.year, p.month, p.day);
 }
 
+/**
+ * dateId de una fecha construida a mediodía UTC. Aritmética pura: el día
+ * calendario chileno del mediodía UTC es el mismo día UTC.
+ */
+function utcNoonDateId(year: number, month: number, day: number): string {
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  return formatDateId(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+/* `todayId()` se consulta en listas y en cada render. La respuesta solo puede
+   cambiar al cruzar la medianoche, así que se memoiza por minuto. */
+let todayCache: { minute: number; dateId: string } | null = null;
+
 export function todayId(): string {
-  return toDateId(new Date());
+  const now = Date.now();
+  const minute = Math.floor(now / 60_000);
+  if (todayCache?.minute !== minute) {
+    todayCache = { minute, dateId: toDateId(new Date(now)) };
+  }
+  return todayCache.dateId;
 }
 
 export const DAY_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -60,17 +102,19 @@ export const MONTH_NAMES = [
 export function displayDateFor(dateId: string): string {
   const [year, month, day] = dateId.split('-').map(Number);
   if (!year || !month || !day) return dateId;
-  // Noon UTC avoids the Chile midnight transition for display-only dates.
-  const date = new Date(Date.UTC(year, month - 1, day, 12));
-  const chile = chileDateParts(date.getTime());
-  const weekday = new Date(Date.UTC(chile.year, chile.month - 1, chile.day, 12)).getUTCDay();
+  // Mediodía UTC: mismo día calendario en Chile, sin pasar por Intl.
+  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
   return `${dateId === todayId() ? 'Hoy, ' : ''}${DAY_NAMES[weekday]} ${day} de ${MONTH_NAMES[month - 1]}`;
 }
 
 /** Convierte "YYYY-MM-DD" a Date en hora UTC Noon (evita bordes DST). */
 export function parseDateId(dateId: string): Date {
   const [y, m, d] = dateId.split('-').map(Number);
-  if (!y || !m || !d) return new Date();
+  if (!y || !m || !d) {
+    // Respaldo con la misma convención que el camino normal: mediodía UTC.
+    const p = chileDateParts(Date.now());
+    return new Date(Date.UTC(p.year, p.month - 1, p.day, 12, 0, 0));
+  }
   return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
 }
 
@@ -78,19 +122,16 @@ export function parseDateId(dateId: string): Date {
 export function shiftDateId(dateId: string, days: number): string {
   const [y, m, d] = dateId.split('-').map(Number);
   if (!y || !m || !d) return dateId;
-  const date = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
-  return toDateId(date);
+  return utcNoonDateId(y, m, d + days);
 }
 
 /** Obtiene el dateId del lunes de la semana que contiene `dateId`. */
 export function getMondayDateId(dateId: string): string {
   const [y, m, d] = dateId.split('-').map(Number);
   if (!y || !m || !d) return dateId;
-  const base = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  const dayOfWeek = base.getUTCDay(); // 0 = Domingo, 1 = Lunes, ...
+  const dayOfWeek = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay(); // 0 = Domingo
   const offsetToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(Date.UTC(y, m - 1, d + offsetToMonday, 12, 0, 0));
-  return toDateId(monday);
+  return utcNoonDateId(y, m, d + offsetToMonday);
 }
 
 const DAYS_PER_WEEK = 7;
@@ -103,15 +144,11 @@ const DAYS_PER_WEEK = 7;
 export function buildDateWindow(dateId: string, weeksBefore = 3, weeksAfter = 3): string[] {
   const mondayId = getMondayDateId(dateId);
   const [y, m, d] = mondayId.split('-').map(Number);
-  const startMonday = new Date(Date.UTC(y, m - 1, d - weeksBefore * DAYS_PER_WEEK, 12, 0, 0));
+  if (!y || !m || !d) return [];
+  const firstDay = d - weeksBefore * DAYS_PER_WEEK;
   const total = (weeksBefore + 1 + weeksAfter) * DAYS_PER_WEEK;
 
-  return Array.from({ length: total }, (_, i) => {
-    const day = new Date(
-      Date.UTC(startMonday.getUTCFullYear(), startMonday.getUTCMonth(), startMonday.getUTCDate() + i, 12, 0, 0)
-    );
-    return toDateId(day);
-  });
+  return Array.from({ length: total }, (_, i) => utcNoonDateId(y, m, firstDay + i));
 }
 
 export interface DateItem {
@@ -135,12 +172,12 @@ export function buildWeekGroup(mondayDateId: string, weekIndex: number, todayIdS
   const days: DateItem[] = [];
   for (let i = 0; i < 7; i++) {
     const day = new Date(Date.UTC(y, m - 1, d + i, 12, 0, 0));
-    const dId = toDateId(day);
-    const [, , dayNum] = dId.split('-').map(Number);
+    const dayNum = day.getUTCDate();
+    const dId = utcNoonDateId(day.getUTCFullYear(), day.getUTCMonth() + 1, dayNum);
     days.push({
       dateId: dId,
       dayName: LABELS_MON[i] ?? '',
-      dayNumber: dayNum ?? day.getUTCDate(),
+      dayNumber: dayNum,
       isToday: dId === todayIdStr,
     });
   }
@@ -164,8 +201,8 @@ export function generateWeeksWindow(
 
   for (let i = 0; i < total; i++) {
     const offset = i - weeksBefore;
-    const weekMonday = new Date(Date.UTC(y, m - 1, d + offset * DAYS_PER_WEEK, 12, 0, 0));
-    weeks.push(buildWeekGroup(toDateId(weekMonday), i, todayIdStr));
+    const weekMonday = utcNoonDateId(y, m, d + offset * DAYS_PER_WEEK);
+    weeks.push(buildWeekGroup(weekMonday, i, todayIdStr));
   }
   return weeks;
 }

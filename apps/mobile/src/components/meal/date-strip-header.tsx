@@ -91,7 +91,10 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
   const { width: windowWidth } = useWindowDimensions();
   const pagerRef = useRef<PagerView>(null);
 
-  const todayDateId = useRef<string>(todayId()).current;
+  /* Se recalcula en cada render, no se congela al montar: `todayId()` está
+     memoizado por minuto, así que es barato y la app deja de mostrar el día
+     anterior como "Hoy" si queda abierta cruzando la medianoche. */
+  const todayDateId = todayId();
 
   // Ventana compacta de 3 semanas (-1..+1) centrada en el ancla.
   const [anchorDateId, setAnchorDateId] = useState(selectedDateId);
@@ -111,23 +114,35 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
     }
   }, [activeWeekIndex, selectedDateId]);
 
-  // Guardas de sincronización para evitar bucles de retroalimentación
-  const isUserDraggingRef = useRef(false);
-  const isProgrammaticScrollRef = useRef(false);
+  /* Guardas de sincronización para evitar bucles de retroalimentación.
+
+     Las dos son pestillos, no lecturas del estado vivo: el pager emite
+     `settling` *antes* de `onPageSelected`, así que preguntar en ese momento si
+     el usuario "está arrastrando" siempre daba no, y el gesto sobre la banda de
+     semanas quedaba descartado. `userInitiatedRef` se levanta al empezar el
+     arrastre y lo consume `onPageSelected`, funcione el pager en un orden o en
+     el otro.
+
+     Del salto programático se guarda el índice destino, no un booleano: si el
+     salto no llegara a emitir evento, un booleano se quedaría armado y se
+     comería el siguiente gesto real del usuario. */
+  const userInitiatedRef = useRef(false);
+  const programmaticTargetRef = useRef<number | null>(null);
   const currentWeekIndexRef = useRef(activeWeekIndex !== -1 ? activeWeekIndex : 1);
 
   useEffect(() => {
     if (activeWeekIndex !== -1 && currentWeekIndexRef.current !== activeWeekIndex) {
       currentWeekIndexRef.current = activeWeekIndex;
-      isProgrammaticScrollRef.current = true;
+      programmaticTargetRef.current = activeWeekIndex;
       pagerRef.current?.setPageWithoutAnimation(activeWeekIndex);
     }
   }, [activeWeekIndex, selectedDateId]);
 
   const handlePageScrollStateChanged = useCallback(
     (e: { nativeEvent: { pageScrollState: 'idle' | 'dragging' | 'settling' } }) => {
-      // Solo es interacción manual si el usuario está físicamente arrastrando la pantalla (dragging)
-      isUserDraggingRef.current = e.nativeEvent.pageScrollState === 'dragging';
+      if (e.nativeEvent.pageScrollState === 'dragging') {
+        userInitiatedRef.current = true;
+      }
     },
     []
   );
@@ -137,16 +152,17 @@ export const DateStripHeader: React.FC<DateStripHeaderProps> = React.memo(({
       const pagePos = e.nativeEvent.position;
       currentWeekIndexRef.current = pagePos;
 
-      // Si el cambio fue programático (por cambio externo de fecha o botón), ignorar
-      if (isProgrammaticScrollRef.current) {
-        isProgrammaticScrollRef.current = false;
+      // Si el cambio fue programático (fecha externa o botón), ignorar
+      if (programmaticTargetRef.current === pagePos) {
+        programmaticTargetRef.current = null;
         return;
       }
 
-      // Solo reaccionar si el usuario arrastró físicamente con su dedo el pager de semanas
-      if (!isUserDraggingRef.current) {
+      // Solo reaccionar al gesto del usuario sobre la banda de semanas
+      if (!userInitiatedRef.current) {
         return;
       }
+      userInitiatedRef.current = false;
 
       const targetWeek = weeksList[pagePos];
       if (targetWeek) {
