@@ -9,7 +9,7 @@ Esta guía contiene la documentación técnica completa del monorepo **Balance**
 El proyecto está estructurado como un monorepo modular:
 
 - **`apps/mobile`**: Aplicación móvil nativa en **React Native + Expo SDK 57** (con React 19, React Native 0.86, Expo Router v6 y `expo-dev-client@57.0.10`).
-- **`apps/dashboard`**: Panel Web administrativo (pendiente de inicialización desde plantilla oficial de Vite).
+- **`apps/dashboard`**: Panel Web administrativo en **Vite + React 19 + TypeScript 7 + Base UI** (`@base-ui/react`).
 - **`apps/server`**: API REST backend en **Rust (Axum) + PostgreSQL (SQLx)**. Ejecutándose como servicio del sistema en `/opt/balance-server` (`balance-server.service`).
 - **Identidad**: Keycloak en `https://auth.shocker.cl/realms/balance`; Google se usa como proveedor federado. La API valida los JWT mediante JWKS, no emite JWT propios.
 
@@ -18,6 +18,7 @@ El proyecto está estructurado como un monorepo modular:
 ## 2. Desarrollo Móvil (`apps/mobile`)
 
 ### Cómo Encender el Servidor Móvil
+
 Desde la raíz del repositorio (`/home/ubuntu/workspace/balance`), ejecuta:
 
 ```bash
@@ -28,6 +29,7 @@ Esto ejecuta automáticamente el comando configurado:
 `REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081`
 
 ### Captura de Logs en Tiempo Real
+
 - El comando `make mobile` utiliza `script` para mantener los gráficos ASCII del código QR en tu terminal mientras canaliza todo el registro a:
   `/tmp/metro.log`
 - Si ocurre algún aviso o error en el teléfono, los registros quedan guardados en `/tmp/metro.log`.
@@ -41,7 +43,7 @@ Esto ejecuta automáticamente el comando configurado:
 3. **Firewall del VPS (Linux `iptables`)**:
    - `sudo iptables -I INPUT 6 -p tcp --dport 8081:8085 -j ACCEPT` (persistente en `/etc/iptables/rules.v4`).
 4. **Firewall de Oracle Cloud (OCI Security List)**:
-   - Configurada la *Ingress Rule* para la VCN `DefaultVCN` permitiendo tráfico `TCP` en el rango `8081-8085` para `0.0.0.0/0`.
+   - Configurada la _Ingress Rule_ para la VCN `DefaultVCN` permitiendo tráfico `TCP` en el rango `8081-8085` para `0.0.0.0/0`.
 5. **Conexión Directa**:
    - No requiere estar en la misma red Wi-Fi ni usar Ngrok.
    - El APK escanea el código QR de la terminal o conecta directamente a:
@@ -65,6 +67,7 @@ EAS publica el instalable interno en el proyecto `@shocker/balance`, canal
 `expo-dev-client` para conectarse al Metro temporal de la tarea activa.
 
 ### B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
+
 - **Evento**: Se activa al modificar `apps/server/**` o mediante `workflow_dispatch`.
 - **Despliegue**: Compila el binario ARM64 con `cross` y lo sube mediante SSH a `/opt/balance-server`, ejecutando `sudo systemctl restart balance-server`.
 - **MCP**: no existe binario ni servicio MCP independiente. El mismo API expone el transporte Streamable HTTP en `https://balance.shocker.cl/api/mcp`.

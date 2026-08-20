@@ -1,7 +1,10 @@
-.PHONY: dev build check test mobile mobile-clear
+.PHONY: dev build check test mobile mobile-clear dashboard
 
 dev:
 	npm run dev
+
+dashboard:
+	npm --prefix apps/dashboard run dev
 
 mobile:
 	script -q -c "npm --prefix apps/mobile run start -- $(FLAGS)" /tmp/metro.log

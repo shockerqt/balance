@@ -32,7 +32,7 @@ workspace ni paquetes compartidos — ver el porqué en `README.md`.
 
 ```
 apps/mobile/      Expo 57 · React Native 0.86 · React 19 · expo-router
-apps/dashboard/   Pendiente de inicialización con plantilla oficial de Vite
+apps/dashboard/   Vite · React 19 · TypeScript 7 · Base UI
 apps/server/      Rust 2024 · Axum · SQLx/Postgres
 ```
 
@@ -71,13 +71,13 @@ function Pantalla() {
 
 Tokens disponibles:
 
-| Grupo | Tokens |
-|---|---|
-| Superficies | `background` `surface` `surfaceRaised` `border` |
-| Acción | `primary` `primaryPressed` `onPrimary` |
-| Texto | `text` `textSecondary` `textMuted` |
-| Estado | `danger` `success` — siempre con texto o icono, nunca color solo |
-| Macros | `macroProtein` `macroCarbs` `macroFat` `macroFiber` |
+| Grupo       | Tokens                                                           |
+| ----------- | ---------------------------------------------------------------- |
+| Superficies | `background` `surface` `surfaceRaised` `border`                  |
+| Acción      | `primary` `primaryPressed` `onPrimary`                           |
+| Texto       | `text` `textSecondary` `textMuted`                               |
+| Estado      | `danger` `success` — siempre con texto o icono, nunca color solo |
+| Macros      | `macroProtein` `macroCarbs` `macroFat` `macroFiber`              |
 
 La escala tipográfica: `display` `title` `heading` `body` `bodyStrong` `label`
 `caption` `number` `numberLarge`. El espaciado va en múltiplos de 4.
@@ -127,7 +127,11 @@ de Expo.
 
 ## Dashboard (`apps/dashboard`)
 
-El frontend del dashboard se encuentra limpio y a la espera de inicialización desde una plantilla oficial de Vite (`npm create vite@latest`).
+El frontend del dashboard está inicializado con **Vite**, **React 19**, **TypeScript 7** y **Base UI** (`@base-ui/react`).
+
+- Para desarrollo: `npm run dev:dashboard` o `make dashboard` (inicia en puerto `:3000`).
+- Para compilar / verificar tipos: `npm run build:dashboard`.
+- Estructura limpia y sin estilos preestablecidos para diseño personalizado posterior.
 
 ---
 

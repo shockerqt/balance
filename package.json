@@ -4,10 +4,13 @@
   "description": "",
   "scripts": {
     "dev": "npm run dev:server",
+    "dev:dashboard": "npm --prefix apps/dashboard run dev",
     "dev:mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
     "dev:server": "cargo watch -x run -p server",
+    "dashboard": "npm --prefix apps/dashboard run dev",
     "mobile": "REACT_NATIVE_DEVTOOLS_ENABLED=0 npm --prefix apps/mobile run start",
     "build": "cargo build -p server",
+    "build:dashboard": "npm --prefix apps/dashboard run build",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
