@@ -4,6 +4,7 @@ import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
 import { MealLogDoc, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
+import { resolveMealLogPortion } from '@/lib/food-portions';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
@@ -261,8 +262,38 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!current) return previous;
       const display = logToLoggedFood(current);
       const merged = { ...display, ...updated, id: foodId };
-      const nextDoc = docFromFood(dateId, merged, foodId);
-      if (!nextDoc) return previous;
+      const consumedAt = epochForChileDateTime(dateId, merged.time);
+      if (consumedAt === null) return previous;
+      const resolvedPortion = resolveMealLogPortion(current, merged.portion);
+      if (!resolvedPortion) return previous;
+
+      const nutritionChanged =
+        (updated.calories !== undefined && updated.calories !== display.calories) ||
+        (updated.protein !== undefined && updated.protein !== display.protein) ||
+        (updated.carbs !== undefined && updated.carbs !== display.carbs) ||
+        (updated.fat !== undefined && updated.fat !== display.fat) ||
+        (updated.fiber !== undefined && updated.fiber !== display.fiber);
+      let nutritionSnapshot = current.nutritionSnapshot;
+      if (nutritionChanged) {
+        try {
+          nutritionSnapshot = snapshotFromDisplayFood({
+            ...merged,
+            portion: `${resolvedPortion.canonicalQuantity}${current.nutritionSnapshot.canonicalUnit}`,
+          });
+        } catch {
+          return previous;
+        }
+      }
+
+      const nextDoc: MealLogDoc = {
+        ...current,
+        nameSnapshot: merged.name,
+        nutritionSnapshot,
+        canonicalQuantity: resolvedPortion.canonicalQuantity,
+        entry: resolvedPortion.entry,
+        consumedAt,
+        updatedAt: Date.now(),
+      };
       const next = mergeLogs(previous, [nextDoc]);
       persistLogs(namespace, next);
       void syncClient.enqueue('mealLogs', nextDoc);

@@ -4,10 +4,11 @@ import {
   FoodLibraryMutationError,
   createPersonalTemplate,
   deletePersonalTemplate,
+  mergeEditedTemplateDetails,
   nextTemplateTimestamp,
   updatePersonalTemplate
 } from '../src/lib/food-library-documents.ts';
-import { parseFoodPortion } from '../src/lib/food-portions.ts';
+import { parseFoodPortion, resolveMealLogPortion } from '../src/lib/food-portions.ts';
 
 const details = {
   schemaVersion: 2,
@@ -92,4 +93,47 @@ test('rejects zero and unsupported portions instead of applying a silent fallbac
   assert.equal(parseFoodPortion('0g'), null);
   assert.equal(parseFoodPortion('1 taza'), null);
   assert.equal(parseFoodPortion('una cucharada'), null);
+});
+
+
+test('preserves named portions when editing a template in the same canonical unit', () => {
+  const portions = [{ id: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5 }];
+  const current = { ...details, portions };
+  const edited = {
+    ...details,
+    nutritionPer100: { ...details.nutritionPer100, calories: 170 },
+    portions: []
+  };
+  const merged = mergeEditedTemplateDetails(current, edited);
+  assert.deepEqual(merged.portions, portions);
+  assert.equal(merged.nutritionPer100.calories, 170);
+});
+
+test('resolves named portion edits from the immutable meal-log snapshot', () => {
+  const doc = {
+    id: 'log-1',
+    templateId: 'food-1',
+    nameSnapshot: 'Pan',
+    nutritionSnapshot: {
+      schemaVersion: 2,
+      canonicalUnit: 'g',
+      nutritionPer100: details.nutritionPer100
+    },
+    canonicalQuantity: 110,
+    entry: {
+      enteredQuantity: 4,
+      portionSnapshot: { portionId: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5 }
+    },
+    consumedAt: 1,
+    updatedAt: 1,
+    _deleted: false
+  };
+  assert.deepEqual(resolveMealLogPortion(doc, '4 slice'), {
+    canonicalQuantity: 110,
+    entry: {
+      enteredQuantity: 4,
+      portionSnapshot: { portionId: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5 }
+    }
+  });
+  assert.equal(resolveMealLogPortion(doc, '5 slice')?.canonicalQuantity, 137.5);
 });

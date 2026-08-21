@@ -125,3 +125,25 @@ test('replace tombstones historical identity and creates a fresh log', () => {
   assert.equal(replacement?.canonicalQuantity, 100);
   assert.notEqual(replacement?.id, old?.id);
 });
+
+
+test('quantity edit preserves named portion semantics', () => {
+  const current = state();
+  current.cursorId = 'c';
+  current.documents = current.documents.map((document) => document.id === 'c' ? {
+    ...document,
+    canonicalQuantity: 110,
+    entry: {
+      enteredQuantity: 4,
+      portionSnapshot: { portionId: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5 },
+    },
+  } : document);
+
+  const result = executeFoodLogCommand(current, { type: 'set-quantity', quantity: 4, unit: 'g' }, context);
+  const updated = result.state.documents.find((document) => document.id === 'c');
+  assert.equal(updated?.canonicalQuantity, 110);
+  assert.equal(updated?.entry.enteredQuantity, 4);
+  assert.deepEqual(updated?.entry.portionSnapshot, {
+    portionId: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5,
+  });
+});

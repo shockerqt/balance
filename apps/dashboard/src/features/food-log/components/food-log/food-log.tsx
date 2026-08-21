@@ -239,7 +239,8 @@ interface InlineQuantityEditorProps {
 function InlineQuantityEditor({ controller, document }: InlineQuantityEditorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(String(document.entry.enteredQuantity));
-  const unit: CanonicalUnit = document.nutritionSnapshot.canonicalUnit;
+  const canonicalUnit: CanonicalUnit = document.nutritionSnapshot.canonicalUnit;
+  const unitLabel = document.entry.portionSnapshot?.name ?? canonicalUnit;
   useEffect(() => { inputRef.current?.focus(); }, []);
   return (
     <span className={styles.inlineQuantity}>
@@ -252,11 +253,11 @@ function InlineQuantityEditor({ controller, document }: InlineQuantityEditorProp
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === 'Escape') { event.preventDefault(); controller.closeOverlay(); }
-          else if (event.key === 'Enter') { event.preventDefault(); controller.commitQuantity(value, unit); }
+          else if (event.key === 'Enter') { event.preventDefault(); controller.commitQuantity(value, canonicalUnit); }
         }}
         aria-label="Edit quantity"
       />
-      <b>{unit}</b>
+      <b>{unitLabel}</b>
     </span>
   );
 }

@@ -469,11 +469,18 @@ function executeQuantity(
   if (command.unit !== current.nutritionSnapshot.canonicalUnit) {
     return { state, message: `unit conversion unavailable: ${command.unit}`, changedDocuments: false };
   }
+  const portionSnapshot = current.entry.portionSnapshot ?? undefined;
+  const entry = portionSnapshot
+    ? { enteredQuantity: command.quantity, portionSnapshot: structuredClone(portionSnapshot) }
+    : { enteredQuantity: command.quantity };
+  const canonicalQuantity = portionSnapshot
+    ? command.quantity / portionSnapshot.portionQuantity * portionSnapshot.canonicalQuantity
+    : command.quantity;
   const next = withHistory(state);
   const documents = next.documents.map((document) => document.id === current.id ? {
     ...document,
-    canonicalQuantity: command.quantity,
-    entry: { enteredQuantity: command.quantity },
+    canonicalQuantity,
+    entry,
     updatedAt: context.now(),
   } : document);
   return {

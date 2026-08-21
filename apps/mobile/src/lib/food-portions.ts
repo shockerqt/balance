@@ -1,4 +1,4 @@
-import type { CanonicalUnit } from '@/services/sync/types';
+import type { CanonicalUnit, MealLogDoc, MealLogEntry } from '@/services/sync/types';
 
 const PORTION_PATTERN = /^([0-9]+(?:[.,][0-9]+)?)\s*(g|ml)$/i;
 
@@ -15,4 +15,37 @@ export function parseFoodPortion(value: string): ParsedFoodPortion | null {
   if (!Number.isFinite(canonicalQuantity) || canonicalQuantity <= 0) return null;
   const unit = match[2].toLowerCase() as CanonicalUnit;
   return { canonicalQuantity, unit, normalized: `${canonicalQuantity}${unit}` };
+}
+
+export interface ResolvedMealLogPortion {
+  canonicalQuantity: number;
+  entry: MealLogEntry;
+}
+
+const NAMED_PORTION_PATTERN = /^([0-9]+(?:[.,][0-9]+)?)\s+(.+)$/;
+
+export function resolveMealLogPortion(doc: MealLogDoc, value: string): ResolvedMealLogPortion | null {
+  const canonical = parseFoodPortion(value);
+  if (canonical) {
+    if (canonical.unit !== doc.nutritionSnapshot.canonicalUnit) return null;
+    return {
+      canonicalQuantity: canonical.canonicalQuantity,
+      entry: { enteredQuantity: canonical.canonicalQuantity },
+    };
+  }
+
+  const snapshot = doc.entry.portionSnapshot;
+  if (!snapshot) return null;
+  const match = value.trim().match(NAMED_PORTION_PATTERN);
+  if (!match) return null;
+  const enteredQuantity = Number(match[1].replace(',', '.'));
+  const name = match[2].trim();
+  if (!Number.isFinite(enteredQuantity) || enteredQuantity <= 0) return null;
+  if (name.localeCompare(snapshot.name, undefined, { sensitivity: 'accent' }) !== 0) return null;
+
+  const portionSnapshot = { ...snapshot };
+  return {
+    canonicalQuantity: enteredQuantity / portionSnapshot.portionQuantity * portionSnapshot.canonicalQuantity,
+    entry: { enteredQuantity, portionSnapshot },
+  };
 }
