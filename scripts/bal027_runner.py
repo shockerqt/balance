@@ -1,5 +1,6 @@
 from pathlib import Path
 import runpy
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,11 +17,23 @@ if 'pub const FOOD_SCHEMA_VERSION: i32 = 1;' in server:
     ):
         run(script)
 
-mobile = (ROOT / 'apps/mobile/src/services/sync/types.ts').read_text()
-if "export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';" in mobile:
-    run('bal027_patch_mobile.py')
-    run('bal027_patch_mobile_post.py')
+# Client patch generators contain regex literals in their replacement text.
+# Make string replacements literal instead of letting re.sub interpret backslashes.
+original_subn = re.subn
+def literal_subn(pattern, repl, string, count=0, flags=0):
+    if isinstance(repl, str):
+        return original_subn(pattern, lambda _match: repl, string, count=count, flags=flags)
+    return original_subn(pattern, repl, string, count=count, flags=flags)
 
-dashboard = (ROOT / 'apps/dashboard/src/types/meal-log.ts').read_text()
-if "export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';" in dashboard:
-    run('bal027_patch_dashboard.py')
+re.subn = literal_subn
+try:
+    mobile = (ROOT / 'apps/mobile/src/services/sync/types.ts').read_text()
+    if "export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';" in mobile:
+        run('bal027_patch_mobile.py')
+        run('bal027_patch_mobile_post.py')
+
+    dashboard = (ROOT / 'apps/dashboard/src/types/meal-log.ts').read_text()
+    if "export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';" in dashboard:
+        run('bal027_patch_dashboard.py')
+finally:
+    re.subn = original_subn
