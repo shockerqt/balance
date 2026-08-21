@@ -955,12 +955,26 @@ fn portion_schema() -> Value {
     })
 }
 
+fn portion_snapshot_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "portionId": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "portionQuantity": positive_number_schema(),
+            "canonicalQuantity": positive_number_schema()
+        },
+        "required": ["name", "portionQuantity", "canonicalQuantity"],
+        "additionalProperties": false
+    })
+}
+
 fn entry_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "enteredQuantity": positive_number_schema(),
-            "portionSnapshot": { "anyOf": [portion_schema(), { "type": "null" }] }
+            "portionSnapshot": { "anyOf": [portion_snapshot_schema(), { "type": "null" }] }
         },
         "required": ["enteredQuantity"],
         "additionalProperties": false
