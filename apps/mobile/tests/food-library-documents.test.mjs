@@ -10,10 +10,9 @@ import {
 import { parseFoodPortion } from '../src/lib/food-portions.ts';
 
 const details = {
-  schemaVersion: 1,
-  baseAmount: 100,
-  unit: 'g',
-  nutrition: {
+  schemaVersion: 2,
+  canonicalUnit: 'g',
+  nutritionPer100: {
     calories: 160,
     protein: 8,
     carbs: 24,
@@ -22,6 +21,7 @@ const details = {
     sodiumMg: 210,
     cholesterolMg: 0
   },
+  portions: [],
   category: 'Panadería',
   typicalTime: '08:00'
 };
@@ -83,20 +83,13 @@ test('rejects blank names and missing foods', () => {
   );
 });
 
-test('normalizes Chilean decimal portions without changing their base', () => {
-  assert.deepEqual(parseFoodPortion('1,5 taza'), {
-    baseAmount: 1.5,
-    unit: 'cup',
-    normalized: '1.5cup'
-  });
-  assert.deepEqual(parseFoodPortion(' 250 ml '), {
-    baseAmount: 250,
-    unit: 'ml',
-    normalized: '250ml'
-  });
+test('normalizes canonical g/ml portions', () => {
+  assert.deepEqual(parseFoodPortion('1,5 g'), { canonicalQuantity: 1.5, unit: 'g', normalized: '1.5g' });
+  assert.deepEqual(parseFoodPortion(' 250 ml '), { canonicalQuantity: 250, unit: 'ml', normalized: '250ml' });
 });
 
 test('rejects zero and unsupported portions instead of applying a silent fallback', () => {
   assert.equal(parseFoodPortion('0g'), null);
+  assert.equal(parseFoodPortion('1 taza'), null);
   assert.equal(parseFoodPortion('una cucharada'), null);
 });

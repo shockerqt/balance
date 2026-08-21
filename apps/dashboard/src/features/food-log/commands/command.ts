@@ -1,4 +1,4 @@
-import type { MealTemplateDoc, MealUnit } from '../../../types/meal-log.ts';
+import type { CanonicalUnit, MealTemplateDoc } from '../../../types/meal-log.ts';
 
 export type Operator = 'delete' | 'yank' | 'normalize';
 
@@ -38,7 +38,7 @@ export type FoodLogCommand =
   | { type: 'next-search'; direction: -1 | 1 }
   | { type: 'add-food'; template: MealTemplateDoc; side: 'before' | 'after' | 'now' | 'explicit'; time?: string }
   | { type: 'replace-food'; template: MealTemplateDoc }
-  | { type: 'set-quantity'; quantity: number; unit: MealUnit }
+  | { type: 'set-quantity'; quantity: number; unit: CanonicalUnit }
   | { type: 'set-time'; target: Target; time: string }
   | { type: 'shift-time'; target: Target; minutes: number }
   | { type: 'search'; query: string; direction: -1 | 1; includeCurrent?: boolean };

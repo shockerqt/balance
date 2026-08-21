@@ -3,7 +3,7 @@ import { storage } from '@/services/storage';
 import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
-import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
+import { MealLogDoc, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
@@ -95,16 +95,6 @@ export function emptyDayLog(dateId: string): DayLog {
   return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
 }
 
-function normalizeUnit(unit: string): MealUnit {
-  const normalized = unit.trim().toLowerCase();
-  if (normalized === 'ml' || normalized === 'unit' || normalized === 'portion' || normalized === 'cup' || normalized === 'g') return normalized;
-  if (normalized === 'un' || normalized === 'unidad') return 'unit';
-  if (normalized === 'cc') return 'ml';
-  if (normalized === 'porción' || normalized === 'porcion') return 'portion';
-  if (normalized === 'taza') return 'cup';
-  return 'portion';
-}
-
 function chileOffsetAt(epochMs: number): number {
   const p = chileDateParts(epochMs);
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;
@@ -141,17 +131,22 @@ function persistLogs(namespace: string, docs: MealLogDoc[]): void {
 function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: string, updatedAt = Date.now()): MealLogDoc | null {
   const parsed = parsePortion(food.portion);
   const quantity = parsed.quantity > 0 ? parsed.quantity : 1;
-  const unit = normalizeUnit(parsed.unit);
-  const normalizedPortion = `${quantity}${unit}`;
-  const snapshot: NutritionSnapshot = snapshotFromDisplayFood({ ...food, portion: normalizedPortion });
+  const normalizedPortion = `${quantity}${parsed.unit}`;
+  let snapshot: NutritionSnapshot;
+  try {
+    snapshot = snapshotFromDisplayFood({ ...food, portion: normalizedPortion });
+  } catch {
+    return null;
+  }
   const consumedAt = epochForChileDateTime(dateId, food.time);
   if (consumedAt === null) return null;
   return {
     id,
     templateId: food.templateId ?? null,
     nameSnapshot: food.name,
-    nutritionSnapshot: { ...snapshot, baseAmount: quantity, unit },
-    quantity,
+    nutritionSnapshot: snapshot,
+    canonicalQuantity: quantity,
+    entry: { enteredQuantity: quantity },
     consumedAt,
     updatedAt,
     _deleted: false,

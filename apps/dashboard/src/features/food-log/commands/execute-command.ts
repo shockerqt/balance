@@ -195,7 +195,8 @@ function createPastedDocuments(
     nameSnapshot: item.nameSnapshot,
     nutritionSnapshot: structuredClone(item.nutritionSnapshot),
     ...(item.provenance === undefined ? {} : { provenance: item.provenance }),
-    quantity: item.quantity,
+    canonicalQuantity: item.canonicalQuantity,
+    entry: structuredClone(item.entry),
     consumedAt: baseEpoch + offsets[index],
     updatedAt: now + index,
     _deleted: false,
@@ -380,9 +381,14 @@ function createMealLogFromTemplate(
     id: context.createId(),
     templateId: template.id,
     nameSnapshot: template.name,
-    nutritionSnapshot: structuredClone(template.details),
+    nutritionSnapshot: {
+      schemaVersion: 2,
+      canonicalUnit: template.details.canonicalUnit,
+      nutritionPer100: structuredClone(template.details.nutritionPer100),
+    },
     ...(template.provenance === undefined ? {} : { provenance: template.provenance }),
-    quantity: template.details.baseAmount,
+    canonicalQuantity: 100,
+    entry: { enteredQuantity: 100 },
     consumedAt,
     updatedAt: context.now(),
     _deleted: false,
@@ -420,18 +426,31 @@ function executeReplace(
   const rows = documentsForSelectedDay(state);
   const current = rows.find((row) => row.id === state.cursorId);
   if (!current) return { state, message: 'no cursor', changedDocuments: false };
-  const compatible = current.nutritionSnapshot.unit === command.template.details.unit;
   const next = withHistory(state);
-  const documents = next.documents.map((document) => document.id === current.id ? {
-    ...document,
+  const now = context.now();
+  const compatible = current.nutritionSnapshot.canonicalUnit === command.template.details.canonicalUnit;
+  const canonicalQuantity = compatible ? current.canonicalQuantity : 100;
+  const replacement: MealLogDoc = {
+    id: context.createId(),
     templateId: command.template.id,
     nameSnapshot: command.template.name,
-    nutritionSnapshot: structuredClone(command.template.details),
-    quantity: compatible ? current.quantity : command.template.details.baseAmount,
-    updatedAt: context.now(),
-  } : document);
+    nutritionSnapshot: {
+      schemaVersion: 2,
+      canonicalUnit: command.template.details.canonicalUnit,
+      nutritionPer100: structuredClone(command.template.details.nutritionPer100),
+    },
+    ...(command.template.provenance === undefined ? {} : { provenance: command.template.provenance }),
+    canonicalQuantity,
+    entry: { enteredQuantity: canonicalQuantity },
+    consumedAt: current.consumedAt,
+    updatedAt: now + 1,
+    _deleted: false,
+  };
+  const documents = next.documents
+    .map((document) => document.id === current.id ? { ...document, _deleted: true, updatedAt: now } : document)
+    .concat(replacement);
   return {
-    state: { ...next, documents, lastChange: command },
+    state: { ...next, documents, cursorId: replacement.id, lastChange: command },
     message: `${current.nameSnapshot} → ${command.template.name}`,
     changedDocuments: true,
   };
@@ -447,33 +466,14 @@ function executeQuantity(
   if (!current || command.quantity <= 0 || !Number.isFinite(command.quantity)) {
     return { state, message: 'invalid quantity', changedDocuments: false };
   }
-  let nutritionSnapshot = current.nutritionSnapshot;
-  if (command.unit !== current.nutritionSnapshot.unit) {
-    const gramsPerUnit = current.nutritionSnapshot.gramsPerUnit;
-    if (!gramsPerUnit || gramsPerUnit <= 0) {
-      return { state, message: `unit conversion unavailable: ${command.unit}`, changedDocuments: false };
-    }
-    if (current.nutritionSnapshot.unit === 'g' && command.unit === 'unit') {
-      nutritionSnapshot = {
-        ...current.nutritionSnapshot,
-        unit: 'unit',
-        baseAmount: current.nutritionSnapshot.baseAmount / gramsPerUnit,
-      };
-    } else if (current.nutritionSnapshot.unit === 'unit' && command.unit === 'g') {
-      nutritionSnapshot = {
-        ...current.nutritionSnapshot,
-        unit: 'g',
-        baseAmount: current.nutritionSnapshot.baseAmount * gramsPerUnit,
-      };
-    } else {
-      return { state, message: `unit conversion unavailable: ${command.unit}`, changedDocuments: false };
-    }
+  if (command.unit !== current.nutritionSnapshot.canonicalUnit) {
+    return { state, message: `unit conversion unavailable: ${command.unit}`, changedDocuments: false };
   }
   const next = withHistory(state);
   const documents = next.documents.map((document) => document.id === current.id ? {
     ...document,
-    quantity: command.quantity,
-    nutritionSnapshot,
+    canonicalQuantity: command.quantity,
+    entry: { enteredQuantity: command.quantity },
     updatedAt: context.now(),
   } : document);
   return {

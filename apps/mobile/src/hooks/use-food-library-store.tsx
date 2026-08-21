@@ -221,7 +221,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const details = current ? {
       ...current.details,
       ...editedDetails,
-      nutrition: { ...current.details.nutrition, ...editedDetails.nutrition },
+      nutritionPer100: { ...current.details.nutritionPer100, ...editedDetails.nutritionPer100 },
     } : editedDetails;
     const doc = updatePersonalTemplate(current, foodData.name, details);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));

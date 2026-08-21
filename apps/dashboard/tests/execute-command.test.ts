@@ -23,12 +23,12 @@ function row(id: string, time: string, name: string): MealLogDoc {
     templateId: id,
     nameSnapshot: name,
     nutritionSnapshot: {
-      schemaVersion: 1,
-      baseAmount: 100,
-      unit: 'g',
-      nutrition: { calories: 100, protein: 10, carbs: 10, fat: 2 },
+      schemaVersion: 2,
+      canonicalUnit: 'g',
+      nutritionPer100: { calories: 100, protein: 10, carbs: 10, fat: 2 },
     },
-    quantity: 100,
+    canonicalQuantity: 100,
+    entry: { enteredQuantity: 100 },
     consumedAt,
     updatedAt: 1,
     _deleted: false,
@@ -109,4 +109,19 @@ test('undo and redo restore document mutations', () => {
   assert.deepEqual(documentsForSelectedDay(undone).map((doc) => doc.id), ['a', 'b', 'c', 'd', 'e']);
   const redone = executeFoodLogCommand(undone, { type: 'redo', count: 1 }, context).state;
   assert.deepEqual(documentsForSelectedDay(redone).map((doc) => doc.id), ['a', 'b', 'd', 'e']);
+});
+
+
+test('replace tombstones historical identity and creates a fresh log', () => {
+  const template = {
+    id: 'replacement', name: 'Arroz', isOfficial: false, updatedAt: 2, _deleted: false,
+    details: { schemaVersion: 2 as const, canonicalUnit: 'g' as const, nutritionPer100: { calories: 130, protein: 3, carbs: 28, fat: 1 }, portions: [] },
+  };
+  const result = executeFoodLogCommand(state(), { type: 'replace-food', template }, context);
+  const old = result.state.documents.find((doc) => doc.id === 'c');
+  const replacement = result.state.documents.find((doc) => doc.id.startsWith('new-'));
+  assert.equal(old?._deleted, true);
+  assert.equal(replacement?.templateId, 'replacement');
+  assert.equal(replacement?.canonicalQuantity, 100);
+  assert.notEqual(replacement?.id, old?.id);
 });
