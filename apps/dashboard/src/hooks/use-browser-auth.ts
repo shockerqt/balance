@@ -91,7 +91,8 @@ export function useBrowserAuth(): BrowserAuthState {
 
   const refreshSession = useCallback(async (): Promise<BrowserSession | null> => {
     const current = sessionRef.current;
-    if (!current?.refreshToken) return null;
+    const refreshToken = current?.refreshToken;
+    if (!current || !refreshToken) return null;
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
     const promise = (async () => {
@@ -99,7 +100,7 @@ export function useBrowserAuth(): BrowserAuthState {
         const response = await fetch(tokenEndpoint(config), {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: refreshTokenBody(config, current.refreshToken),
+          body: refreshTokenBody(config, refreshToken),
         });
         const next = sessionFromTokens(await readTokenResponse(response), current);
         if (!next || sessionRef.current !== current) return null;
