@@ -49,3 +49,25 @@ export function resolveMealLogPortion(doc: MealLogDoc, value: string): ResolvedM
     entry: { enteredQuantity, portionSnapshot },
   };
 }
+
+/**
+ * Meal-log name and nutrition are historical snapshots. Existing logs only
+ * support changing their quantity and consumption time across sync clients.
+ */
+export function updateMealLogQuantityAndTime(
+  doc: MealLogDoc,
+  portion: string,
+  consumedAt: number,
+  updatedAt: number
+): MealLogDoc | null {
+  const resolvedPortion = resolveMealLogPortion(doc, portion);
+  if (!resolvedPortion) return null;
+
+  return {
+    ...doc,
+    canonicalQuantity: resolvedPortion.canonicalQuantity,
+    entry: resolvedPortion.entry,
+    consumedAt,
+    updatedAt,
+  };
+}

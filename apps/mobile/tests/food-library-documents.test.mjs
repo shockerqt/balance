@@ -8,7 +8,11 @@ import {
   nextTemplateTimestamp,
   updatePersonalTemplate
 } from '../src/lib/food-library-documents.ts';
-import { parseFoodPortion, resolveMealLogPortion } from '../src/lib/food-portions.ts';
+import {
+  parseFoodPortion,
+  resolveMealLogPortion,
+  updateMealLogQuantityAndTime
+} from '../src/lib/food-portions.ts';
 
 const details = {
   schemaVersion: 2,
@@ -136,4 +140,35 @@ test('resolves named portion edits from the immutable meal-log snapshot', () => 
     }
   });
   assert.equal(resolveMealLogPortion(doc, '5 slice')?.canonicalQuantity, 137.5);
+});
+
+test('updates meal-log quantity and time without mutating its historical snapshots', () => {
+  const nutritionSnapshot = {
+    schemaVersion: 2,
+    canonicalUnit: 'g',
+    nutritionPer100: details.nutritionPer100
+  };
+  const doc = {
+    id: 'log-1',
+    templateId: 'food-1',
+    nameSnapshot: 'Pan histórico',
+    nutritionSnapshot,
+    canonicalQuantity: 110,
+    entry: {
+      enteredQuantity: 4,
+      portionSnapshot: { portionId: 'slice', name: 'slice', portionQuantity: 1, canonicalQuantity: 27.5 }
+    },
+    consumedAt: 1,
+    updatedAt: 1,
+    _deleted: false
+  };
+
+  const updated = updateMealLogQuantityAndTime(doc, '5 slice', 2, 3);
+
+  assert.equal(updated?.canonicalQuantity, 137.5);
+  assert.equal(updated?.entry.enteredQuantity, 5);
+  assert.equal(updated?.consumedAt, 2);
+  assert.equal(updated?.updatedAt, 3);
+  assert.equal(updated?.nameSnapshot, doc.nameSnapshot);
+  assert.strictEqual(updated?.nutritionSnapshot, nutritionSnapshot);
 });

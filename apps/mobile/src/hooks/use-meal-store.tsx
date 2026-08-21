@@ -4,7 +4,7 @@ import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
 import { MealLogDoc, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
-import { resolveMealLogPortion } from '@/lib/food-portions';
+import { updateMealLogQuantityAndTime } from '@/lib/food-portions';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
@@ -22,6 +22,8 @@ export interface LoggedFoodItem {
   time: string;
   chileanSeals?: string[];
 }
+
+type MealLogEditableFields = Pick<LoggedFoodItem, 'portion' | 'time'>;
 
 export interface DayTargets {
   targetCalories: number;
@@ -162,7 +164,7 @@ interface MealStoreContextType {
   mealDocuments: MealLogDoc[];
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
-  updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
+  updateFood: (dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
   deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
   moveMultipleFoodsTime: (dateId: string, foodIds: string[], newTime: string) => void;
@@ -256,44 +258,20 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     for (const doc of docs) void syncClient.enqueue('mealLogs', doc);
   }, [namespace]);
 
-  const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => {
+  const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => {
     setLogs((previous) => {
       const current = previous.find((doc) => doc.id === foodId);
       if (!current) return previous;
       const display = logToLoggedFood(current);
-      const merged = { ...display, ...updated, id: foodId };
-      const consumedAt = epochForChileDateTime(dateId, merged.time);
+      const consumedAt = epochForChileDateTime(dateId, updated.time ?? display.time);
       if (consumedAt === null) return previous;
-      const resolvedPortion = resolveMealLogPortion(current, merged.portion);
-      if (!resolvedPortion) return previous;
-
-      const nutritionChanged =
-        (updated.calories !== undefined && updated.calories !== display.calories) ||
-        (updated.protein !== undefined && updated.protein !== display.protein) ||
-        (updated.carbs !== undefined && updated.carbs !== display.carbs) ||
-        (updated.fat !== undefined && updated.fat !== display.fat) ||
-        (updated.fiber !== undefined && updated.fiber !== display.fiber);
-      let nutritionSnapshot = current.nutritionSnapshot;
-      if (nutritionChanged) {
-        try {
-          nutritionSnapshot = snapshotFromDisplayFood({
-            ...merged,
-            portion: `${resolvedPortion.canonicalQuantity}${current.nutritionSnapshot.canonicalUnit}`,
-          });
-        } catch {
-          return previous;
-        }
-      }
-
-      const nextDoc: MealLogDoc = {
-        ...current,
-        nameSnapshot: merged.name,
-        nutritionSnapshot,
-        canonicalQuantity: resolvedPortion.canonicalQuantity,
-        entry: resolvedPortion.entry,
+      const nextDoc = updateMealLogQuantityAndTime(
+        current,
+        updated.portion ?? display.portion,
         consumedAt,
-        updatedAt: Date.now(),
-      };
+        Date.now()
+      );
+      if (!nextDoc) return previous;
       const next = mergeLogs(previous, [nextDoc]);
       persistLogs(namespace, next);
       void syncClient.enqueue('mealLogs', nextDoc);
