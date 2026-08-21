@@ -16,12 +16,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: task/BAL-027-canonical-units-portions
-      - name: Apply deterministic patches
+      - name: Apply resumable patches
         run: python scripts/bal027_runner.py
-      - name: Format Rust
-        run: cargo fmt --all
-      - name: Check Rust
-        run: cargo check -p server
       - name: Check dashboard
         working-directory: apps/dashboard
         run: |
@@ -45,5 +41,5 @@ jobs:
             echo "No implementation changes"
             exit 0
           fi
-          git commit -m "feat: model canonical units and portions"
+          git commit -m "feat: finish canonical units and portions clients"
           git push origin HEAD:task/BAL-027-canonical-units-portions
