@@ -16,10 +16,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: task/BAL-027-canonical-units-portions
-      - name: Apply canonical units implementation
+      - name: Apply deterministic patches
         run: python scripts/bal027_runner.py
       - name: Format Rust
         run: cargo fmt --all
+      - name: Check Rust
+        run: cargo check -p server
       - name: Commit implementation
         run: |
           git config user.name "balance-ci"
