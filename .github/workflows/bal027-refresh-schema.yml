@@ -34,6 +34,39 @@ jobs:
         with:
           ref: task/BAL-027-canonical-units-portions
 
+      - name: Migrate remaining V1 server test fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('apps/server/src/connectors/sync.rs')
+          text = path.read_text()
+          replacements = [
+              (
+                  "            base_amount: 100.0,\n            unit: FoodUnit::G,\n            nutrition: NutritionValues {",
+                  "            canonical_unit: CanonicalUnit::G,\n            nutrition_per100: NutritionValues {",
+              ),
+              (
+                  "            serving_label: None,\n            grams_per_unit: None,\n            chilean_seals: vec![],",
+                  "            portions: vec![],\n            chilean_seals: vec![],",
+              ),
+              (
+                  "            .create_consumption(1, log_id, food_id, 150.0, FoodUnit::G, consumed_at)",
+                  "            .create_consumption(1, log_id, food_id, 150.0, None, consumed_at)",
+              ),
+              (
+                  "                        quantity: 200.0,\n                        consumed_at: consumed_at + 60_000,",
+                  "                        canonical_quantity: 200.0,\n                        entry: MealLogEntry {\n                            entered_quantity: 200.0,\n                            portion_snapshot: None,\n                        },\n                        consumed_at: consumed_at + 60_000,",
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one fixture marker, found {count}: {old[:60]!r}')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          cargo fmt --all
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -84,7 +117,7 @@ jobs:
           rm .github/workflows/bal027-refresh-schema.yml
           git config user.name "balance-ci"
           git config user.email "actions@users.noreply.github.com"
-          git add -- docs/generated/database-schema.md .sqlx .github/workflows/bal027-refresh-schema.yml
+          git add -- apps/server/src/connectors/sync.rs docs/generated/database-schema.md .sqlx .github/workflows/bal027-refresh-schema.yml
           git diff --cached --check
           git commit -m "chore: refresh BAL-027 generated schema artifacts"
           git push origin HEAD:task/BAL-027-canonical-units-portions
