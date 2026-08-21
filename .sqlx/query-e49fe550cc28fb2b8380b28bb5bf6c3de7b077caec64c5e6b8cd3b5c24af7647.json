@@ -11,12 +11,12 @@
       {
         "ordinal": 1,
         "name": "email",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 2,
         "name": "name",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 3,
@@ -26,12 +26,12 @@
       {
         "ordinal": 4,
         "name": "family_name",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 5,
         "name": "given_name",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 6,
@@ -41,9 +41,9 @@
     ],
     "parameters": {
       "Left": [
-        "Varchar",
-        "Varchar",
-        "Varchar",
+        "Text",
+        "Text",
+        "Text",
         "Text",
         "Int4"
       ]
@@ -52,7 +52,7 @@
       false,
       false,
       true,
-      false,
+      true,
       true,
       true,
       true

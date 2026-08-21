@@ -74,21 +74,19 @@ EAS publica el instalable interno en el proyecto `@shocker/balance`, canal
 
 ### C. Preparación del esquema PostgreSQL
 
-La carpeta `apps/server/migrations/` es histórica y contiene prefijos de versión
-duplicados, por lo que no es una cadena ejecutable ni la fuente de verdad para
-actualizar producción. No se deben agregar migraciones nuevas a esa secuencia
-hasta que una tarea específica la repare y establezca un baseline verificable.
+La carpeta `apps/server/migrations/` contiene la cadena SQLx activa y comienza
+con el baseline canónico de BAL-029. Los archivos contradictorios anteriores y
+los scripts manuales se conservan únicamente como evidencia en
+`apps/server/migrations-legacy/`; nunca deben ejecutarse.
 
-- Entornos efímeros de CI y desarrollo cargan `scripts/sqlx-test-schema.sql`,
-  que representa el esquema canónico completo y nunca debe apuntar a producción.
-- Producción se prepara mediante scripts aditivos e idempotentes revisados:
-  primero `scripts/ensure-lax-sync-schema.sql` y, para el seguimiento corporal,
-  `scripts/ensure-weight-tracking-schema.sql`; la importación de MacroFactor
-  requiere además `scripts/ensure-macrofactor-import-schema.sql`.
-- Cada script productivo se ejecuta manualmente con `psql --set ON_ERROR_STOP=1`
-  después de un backup verificado y antes de desplegar el binario que depende de
-  su esquema. La aplicación del script y el despliegue requieren aprobación
-  explícita, healthcheck y rollback registrados en Governance.
+- Entornos efímeros de CI y desarrollo ejecutan la cadena SQLx activa desde una
+  base PostgreSQL 17 vacía, verifican el snapshot generado y ejecutan los tests
+  reales del servidor.
+- `make schema-snapshot` reconstruye el esquema en una base efímera y actualiza
+  `docs/generated/database-schema.md`; el snapshot no se edita manualmente.
+- Toda migración productiva sigue `docs/database-migrations.md`, requiere
+  fingerprint y backup verificados, aprobación productiva separada, ejecución
+  host-local, healthcheck y evidencia de rollback en Governance.
 
 ---
 
