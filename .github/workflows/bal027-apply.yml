@@ -22,6 +22,19 @@ jobs:
         run: cargo fmt --all
       - name: Check Rust
         run: cargo check -p server
+      - name: Check dashboard
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Check mobile
+        working-directory: apps/mobile
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run test:food-library
+          npm run test:macrofactor
       - name: Commit implementation
         run: |
           git config user.name "balance-ci"
