@@ -1,4 +1,4 @@
--- Ephemeral SQLx schema for CI and local metadata generation only.
+-- Ephemeral SQLx schema superseded by the BAL-029 active baseline.
 --
 -- This file intentionally does not replace or run production migrations. It
 -- represents the current canonical server data model. Run it only against a

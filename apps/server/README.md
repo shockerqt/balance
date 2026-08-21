@@ -23,18 +23,21 @@ Production deployments must retain the loopback default unless the INF-002
 network exposure review, health checks, rollback procedure and approval permit
 a different bind. Do not add the override to a committed environment file.
 
-## SQLx offline metadata
+## Database schema and SQLx metadata
 
 SQLx query metadata is committed at the repository root in `.sqlx/`. Regenerate
-it only against a disposable PostgreSQL database initialized with
-`scripts/sqlx-test-schema.sql`; never use a production `DATABASE_URL` for this.
-The schema is a CI/dev-only representation of the current server model. It
-does not replace or execute production migrations. CI loads it into a PostgreSQL
-service, then verifies the committed metadata is unchanged. ARM compilation
-runs with `SQLX_OFFLINE=true` and no `DATABASE_URL`.
+it only against a disposable PostgreSQL 17 database initialized through the
+active SQLx migrations; never use a production `DATABASE_URL` for this. CI runs
+the migration chain, verifies the generated catalog snapshot, seeds a controlled
+test identity, checks committed metadata and runs database-backed server tests.
+ARM compilation runs with `SQLX_OFFLINE=true` and no `DATABASE_URL`.
 
 ```bash
 export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/balance_sqlx
-psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file scripts/sqlx-test-schema.sql
+cargo sqlx migrate run --source apps/server/migrations
+psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file scripts/seed-test-user.sql
 cargo sqlx prepare --workspace -- --all-targets
 ```
+
+See `docs/database-migrations.md` before adding a migration or guiding a
+production migration. Application startup intentionally never runs migrations.
