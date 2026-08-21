@@ -38,6 +38,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           sync_path = Path('apps/server/src/connectors/sync.rs')
           text = sync_path.read_text()
@@ -76,65 +77,65 @@ jobs:
 
           ws_path = Path('apps/server/src/modules/sync/ws.rs')
           text = ws_path.read_text()
-          old_template = '''            "details": {
-                "schemaVersion": 1,
-                "baseAmount": 100.0,
-                "unit": "g",
-                "nutrition": {
-                    "calories": 52.0,
-                    "protein": 0.3,
-                    "carbs": 14.0,
-                    "fat": 0.2,
-                    "fiber": 2.4
-                }
-            },'''
-          new_template = '''            "details": {
-                "schemaVersion": 2,
-                "canonicalUnit": "g",
-                "nutritionPer100": {
-                    "calories": 52.0,
-                    "protein": 0.3,
-                    "carbs": 14.0,
-                    "fat": 0.2,
-                    "fiber": 2.4
-                },
-                "portions": []
-            },'''
-          old_log = '''            "nutritionSnapshot": {
-                "schemaVersion": 1,
-                "baseAmount": 100.0,
-                "unit": "g",
-                "nutrition": {
-                    "calories": 52.0,
-                    "protein": 0.3,
-                    "carbs": 14.0,
-                    "fat": 0.2
-                }
-            },
-            "quantity": 150.0,'''
-          new_log = '''            "nutritionSnapshot": {
-                "schemaVersion": 2,
-                "canonicalUnit": "g",
-                "nutritionPer100": {
-                    "calories": 52.0,
-                    "protein": 0.3,
-                    "carbs": 14.0,
-                    "fat": 0.2
-                }
-            },
-            "canonicalQuantity": 150.0,
-            "entry": { "enteredQuantity": 150.0 },'''
+          valid_template = '''    fn valid_template() -> Value {
+              json!({
+                  "id": Uuid::new_v4(),
+                  "name": "Manzana",
+                  "details": {
+                      "schemaVersion": 2,
+                      "canonicalUnit": "g",
+                      "nutritionPer100": {
+                          "calories": 52.0,
+                          "protein": 0.3,
+                          "carbs": 14.0,
+                          "fat": 0.2,
+                          "fiber": 2.4
+                      },
+                      "portions": []
+                  },
+                  "isOfficial": false,
+                  "updatedAt": 1_786_233_600_000_i64,
+                  "_deleted": false
+              })
+          }'''
+          valid_log = '''    fn valid_log() -> Value {
+              json!({
+                  "id": Uuid::new_v4(),
+                  "templateId": Uuid::new_v4(),
+                  "nameSnapshot": "Manzana",
+                  "nutritionSnapshot": {
+                      "schemaVersion": 2,
+                      "canonicalUnit": "g",
+                      "nutritionPer100": {
+                          "calories": 52.0,
+                          "protein": 0.3,
+                          "carbs": 14.0,
+                          "fat": 0.2
+                      }
+                  },
+                  "canonicalQuantity": 150.0,
+                  "entry": { "enteredQuantity": 150.0 },
+                  "consumedAt": 1_786_233_600_000_i64,
+                  "updatedAt": 1_786_233_600_000_i64,
+                  "_deleted": false
+              })
+          }'''
+
+          pattern = r'    fn valid_template\(\) -> Value \{.*?\n    \}\n\n    fn valid_log'
+          text, count = re.subn(pattern, lambda _: valid_template + '\n\n    fn valid_log', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'valid_template function match count: {count}')
+
+          pattern = r'    fn valid_log\(\) -> Value \{.*?\n    \}\n\n    fn valid_weight'
+          text, count = re.subn(pattern, lambda _: valid_log + '\n\n    fn valid_weight', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'valid_log function match count: {count}')
+
           invalid_old = '        template["details"]["baseAmount"] = json!(0);'
           invalid_new = '        template["details"]["nutritionPer100"]["calories"] = json!(-1);'
-          for old, new, label in [
-              (old_template, new_template, 'valid template'),
-              (old_log, new_log, 'valid log'),
-              (invalid_old, invalid_new, 'invalid template assertion'),
-          ]:
-              if text.count(old) != 1:
-                  raise SystemExit(f'{label} marker not found exactly once')
-              text = text.replace(old, new, 1)
-          ws_path.write_text(text)
+          if text.count(invalid_old) != 1:
+              raise SystemExit('invalid template assertion marker not found exactly once')
+          ws_path.write_text(text.replace(invalid_old, invalid_new, 1))
           PY
           cargo fmt --all
 
