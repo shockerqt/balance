@@ -1,18 +1,16 @@
 name: BAL-027 implementation helper
 
 on:
-  push:
+  pull_request:
     branches:
-      - task/BAL-027-canonical-units-portions
-    paths:
-      - scripts/bal027_apply.py
-      - .github/workflows/bal027-apply.yml
+      - main
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.head_ref == 'task/BAL-027-canonical-units-portions'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
