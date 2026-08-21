@@ -751,7 +751,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "create_food",
             "title": "Crear alimento personal",
-            "description": "Crea un alimento personal con nutrición siempre expresada por 100 g o 100 ml. Las porciones nombradas son conversiones opcionales y explícitas.",
+            "description": "Crea un alimento personal con nutrición siempre expresada por 100 g o 100 ml. Las porciones nombradas son conversiones opcionales y explícitas. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
             "inputSchema": create_food_input_schema(),
             "outputSchema": {
                 "type": "object",

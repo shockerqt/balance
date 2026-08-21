@@ -1012,16 +1012,16 @@ mod tests {
             "id": Uuid::new_v4(),
             "name": "Manzana",
             "details": {
-                "schemaVersion": 1,
-                "baseAmount": 100.0,
-                "unit": "g",
-                "nutrition": {
+                "schemaVersion": 2,
+                "canonicalUnit": "g",
+                "nutritionPer100": {
                     "calories": 52.0,
                     "protein": 0.3,
                     "carbs": 14.0,
                     "fat": 0.2,
                     "fiber": 2.4
-                }
+                },
+                "portions": []
             },
             "isOfficial": false,
             "updatedAt": 1_786_233_600_000_i64,
@@ -1035,17 +1035,17 @@ mod tests {
             "templateId": Uuid::new_v4(),
             "nameSnapshot": "Manzana",
             "nutritionSnapshot": {
-                "schemaVersion": 1,
-                "baseAmount": 100.0,
-                "unit": "g",
-                "nutrition": {
+                "schemaVersion": 2,
+                "canonicalUnit": "g",
+                "nutritionPer100": {
                     "calories": 52.0,
                     "protein": 0.3,
                     "carbs": 14.0,
                     "fat": 0.2
                 }
             },
-            "quantity": 150.0,
+            "canonicalQuantity": 150.0,
+            "entry": { "enteredQuantity": 150.0 },
             "consumedAt": 1_786_233_600_000_i64,
             "updatedAt": 1_786_233_600_000_i64,
             "_deleted": false
@@ -1068,7 +1068,7 @@ mod tests {
         assert!(parse_weight_log_document(valid_weight()).is_ok());
 
         let mut template = valid_template();
-        template["details"]["baseAmount"] = json!(0);
+        template["details"]["nutritionPer100"]["calories"] = json!(-1);
         assert!(parse_meal_template_document(template).is_err());
 
         let mut log = valid_log();

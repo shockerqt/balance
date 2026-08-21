@@ -1644,9 +1644,8 @@ mod tests {
         let food_id = Uuid::new_v4();
         let details = FoodDetails {
             schema_version: FOOD_SCHEMA_VERSION,
-            base_amount: 100.0,
-            unit: FoodUnit::G,
-            nutrition: NutritionValues {
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
                 calories: 52.0,
                 protein: 0.3,
                 carbs: 14.0,
@@ -1656,8 +1655,7 @@ mod tests {
                 cholesterol_mg: None,
                 extended_nutrition: Default::default(),
             },
-            serving_label: None,
-            grams_per_unit: None,
+            portions: vec![],
             chilean_seals: vec![],
             category: Some("fruit".into()),
             typical_time: None,
@@ -1696,7 +1694,7 @@ mod tests {
             .unwrap();
         let log_id = Uuid::new_v4();
         let (log, logged) = datasource
-            .create_consumption(1, log_id, food_id, 150.0, FoodUnit::G, consumed_at)
+            .create_consumption(1, log_id, food_id, 150.0, None, consumed_at)
             .await
             .unwrap();
         assert!(logged);
@@ -1725,7 +1723,11 @@ mod tests {
                     MealLogMutation {
                         id: mobile_log_id,
                         template_id: Some(food_id),
-                        quantity: 200.0,
+                        canonical_quantity: 200.0,
+                        entry: MealLogEntry {
+                            entered_quantity: 200.0,
+                            portion_snapshot: None,
+                        },
                         consumed_at: consumed_at + 60_000,
                         updated_at: 1_786_233_600_000,
                         deleted_at: None,
