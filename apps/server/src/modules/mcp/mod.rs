@@ -15,8 +15,8 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            Consumption, FOOD_SCHEMA_VERSION, FoodDetails, FoodUnit, NutritionValues, WeightLogRow,
-            WeightUpsertStatus,
+            CanonicalUnit, Consumption, FOOD_SCHEMA_VERSION, FoodDetails, NutritionValues,
+            PortionDefinition, WeightLogRow, WeightUpsertStatus,
         },
     },
     modules::{auth::middleware::CurrentUser, sync::hub::SyncHub},
@@ -75,11 +75,19 @@ struct GetDailyLogArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PortionInput {
+    id: String,
+    name: String,
+    portion_quantity: f64,
+    canonical_quantity: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateFoodArgs {
     operation_id: Uuid,
     name: String,
-    base_amount: f64,
-    unit: FoodUnit,
+    canonical_unit: CanonicalUnit,
     calories: f64,
     protein: f64,
     carbs: f64,
@@ -88,6 +96,8 @@ struct CreateFoodArgs {
     fiber: f64,
     sodium_mg: Option<f64>,
     cholesterol_mg: Option<f64>,
+    #[serde(default)]
+    portions: Vec<PortionInput>,
     #[serde(default)]
     chilean_seals: Vec<String>,
     category: Option<String>,
@@ -100,7 +110,7 @@ struct LogFoodArgs {
     operation_id: Uuid,
     food_id: Uuid,
     quantity: f64,
-    unit: FoodUnit,
+    portion_id: Option<String>,
     date: Option<String>,
     time: Option<String>,
 }
@@ -287,9 +297,8 @@ async fn call_tool(
             }
             let details = FoodDetails {
                 schema_version: FOOD_SCHEMA_VERSION,
-                base_amount: args.base_amount,
-                unit: args.unit,
-                nutrition: NutritionValues {
+                canonical_unit: args.canonical_unit,
+                nutrition_per100: NutritionValues {
                     calories: args.calories,
                     protein: args.protein,
                     carbs: args.carbs,
@@ -299,8 +308,16 @@ async fn call_tool(
                     cholesterol_mg: args.cholesterol_mg,
                     extended_nutrition: Default::default(),
                 },
-                serving_label: None,
-                grams_per_unit: None,
+                portions: args
+                    .portions
+                    .into_iter()
+                    .map(|portion| PortionDefinition {
+                        id: portion.id,
+                        name: portion.name,
+                        portion_quantity: portion.portion_quantity,
+                        canonical_quantity: portion.canonical_quantity,
+                    })
+                    .collect(),
                 chilean_seals: args.chilean_seals,
                 category: args.category,
                 typical_time: args.typical_time,
@@ -331,7 +348,7 @@ async fn call_tool(
                     args.operation_id,
                     args.food_id,
                     args.quantity,
-                    args.unit,
+                    args.portion_id.as_deref(),
                     consumed_at,
                 )
                 .await?;
@@ -512,8 +529,9 @@ fn consumption_output(consumption: &Consumption) -> Value {
         "id": consumption.id,
         "foodId": consumption.template_id,
         "name": consumption.name,
-        "quantity": consumption.quantity,
-        "unit": consumption.snapshot.unit,
+        "canonicalQuantity": public_number(consumption.canonical_quantity),
+        "canonicalUnit": consumption.snapshot.canonical_unit,
+        "entry": consumption.entry,
         "consumedAt": consumption.consumed_at,
         "updatedAt": consumption.updated_at,
         "nutrition": nutrition_output(&consumption.scaled_nutrition())
@@ -733,7 +751,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "create_food",
             "title": "Crear alimento personal",
-            "description": "Crea un alimento personal solo después de confirmar una porción base y valores nutricionales completos. No estima ni completa datos faltantes.",
+            "description": "Crea un alimento personal con nutrición siempre expresada por 100 g o 100 ml. Las porciones nombradas son conversiones opcionales y explícitas.",
             "inputSchema": create_food_input_schema(),
             "outputSchema": {
                 "type": "object",
@@ -758,11 +776,11 @@ pub(crate) fn tool_definitions() -> Value {
                     "operationId": uuid_schema(),
                     "foodId": uuid_schema(),
                     "quantity": positive_number_schema(),
-                    "unit": unit_schema(),
+                    "portionId": { "type": "string", "minLength": 1, "maxLength": 80 },
                     "date": { "type": "string", "format": "date" },
                     "time": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
                 },
-                "required": ["operationId", "foodId", "quantity", "unit"],
+                "required": ["operationId", "foodId", "quantity"],
                 "additionalProperties": false
             },
             "outputSchema": log_mutation_output_schema(&["logged", "alreadyLogged"]),
@@ -923,14 +941,39 @@ fn weight_history_output_schema() -> Value {
     })
 }
 
+fn portion_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "portionQuantity": positive_number_schema(),
+            "canonicalQuantity": positive_number_schema()
+        },
+        "required": ["id", "name", "portionQuantity", "canonicalQuantity"],
+        "additionalProperties": false
+    })
+}
+
+fn entry_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "enteredQuantity": positive_number_schema(),
+            "portionSnapshot": { "anyOf": [portion_schema(), { "type": "null" }] }
+        },
+        "required": ["enteredQuantity"],
+        "additionalProperties": false
+    })
+}
+
 fn create_food_input_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
             "operationId": uuid_schema(),
             "name": { "type": "string", "minLength": 1, "maxLength": 160 },
-            "baseAmount": positive_number_schema(),
-            "unit": unit_schema(),
+            "canonicalUnit": canonical_unit_schema(),
             "calories": non_negative_number_schema(),
             "protein": non_negative_number_schema(),
             "carbs": non_negative_number_schema(),
@@ -938,11 +981,12 @@ fn create_food_input_schema() -> Value {
             "fiber": non_negative_number_schema(),
             "sodiumMg": non_negative_number_schema(),
             "cholesterolMg": non_negative_number_schema(),
+            "portions": { "type": "array", "items": portion_schema(), "maxItems": 50 },
             "chileanSeals": { "type": "array", "items": { "type": "string" }, "maxItems": 4 },
             "category": { "type": "string", "maxLength": 80 },
             "typicalTime": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
         },
-        "required": ["operationId", "name", "baseAmount", "unit", "calories", "protein", "carbs", "fat"],
+        "required": ["operationId", "name", "canonicalUnit", "calories", "protein", "carbs", "fat"],
         "additionalProperties": false
     })
 }
@@ -981,14 +1025,14 @@ fn food_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "schemaVersion": { "type": "integer", "const": FOOD_SCHEMA_VERSION },
-                    "baseAmount": positive_number_schema(),
-                    "unit": unit_schema(),
-                    "nutrition": nutrition_schema(),
+                    "canonicalUnit": canonical_unit_schema(),
+                    "nutritionPer100": nutrition_schema(),
+                    "portions": { "type": "array", "items": portion_schema() },
                     "chileanSeals": { "type": "array", "items": { "type": "string" } },
                     "category": { "type": "string" },
                     "typicalTime": { "type": "string" }
                 },
-                "required": ["schemaVersion", "baseAmount", "unit", "nutrition", "chileanSeals"],
+                "required": ["schemaVersion", "canonicalUnit", "nutritionPer100", "portions", "chileanSeals"],
                 "additionalProperties": false
             },
             "updatedAt": { "type": "integer" }
@@ -1005,13 +1049,14 @@ fn consumption_schema() -> Value {
             "id": uuid_schema(),
             "foodId": { "type": ["string", "null"], "format": "uuid" },
             "name": { "type": "string" },
-            "quantity": positive_number_schema(),
-            "unit": unit_schema(),
+            "canonicalQuantity": positive_number_schema(),
+            "canonicalUnit": canonical_unit_schema(),
+            "entry": entry_schema(),
             "consumedAt": { "type": "integer" },
             "updatedAt": { "type": "integer" },
             "nutrition": nutrition_schema()
         },
-        "required": ["id", "foodId", "name", "quantity", "unit", "consumedAt", "updatedAt", "nutrition"],
+        "required": ["id", "foodId", "name", "canonicalQuantity", "canonicalUnit", "entry", "consumedAt", "updatedAt", "nutrition"],
         "additionalProperties": false
     })
 }
@@ -1049,8 +1094,8 @@ fn uuid_schema() -> Value {
     json!({ "type": "string", "format": "uuid" })
 }
 
-fn unit_schema() -> Value {
-    json!({ "type": "string", "enum": ["g", "ml", "unit", "portion", "cup"] })
+fn canonical_unit_schema() -> Value {
+    json!({ "type": "string", "enum": ["g", "ml"] })
 }
 
 fn positive_number_schema() -> Value {

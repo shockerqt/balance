@@ -14,7 +14,9 @@ use uuid::Uuid;
 use crate::{
     connectors::{
         db::Database,
-        sync::{FoodDetails, MealLogMutation, NutritionSnapshot, validate_weight_grams},
+        sync::{
+            FoodDetails, MealLogEntry, MealLogMutation, NutritionSnapshot, validate_weight_grams,
+        },
     },
     modules::{auth::middleware::CurrentUser, sync::hub::SyncHub},
     shared::error::AppError,
@@ -87,7 +89,8 @@ struct MealLogDocument {
     nutrition_snapshot: NutritionSnapshot,
     #[serde(default)]
     provenance: Option<ImportProvenanceDocument>,
-    quantity: f64,
+    canonical_quantity: f64,
+    entry: MealLogEntry,
     consumed_at: i64,
     updated_at: i64,
     #[serde(rename = "_deleted")]
@@ -394,7 +397,8 @@ async fn handle_pull(
                         "nameSnapshot": r.name_snapshot,
                         "nutritionSnapshot": r.nutrition_snapshot,
                         "provenance": provenance_json(r.source_provider, r.external_id),
-                        "quantity": r.quantity,
+                        "canonicalQuantity": r.canonical_quantity,
+                        "entry": r.entry_snapshot,
                         "consumedAt": r.consumed_at,
                         "updatedAt": r.updated_at,
                         "_deleted": r.deleted_at.is_some(),
@@ -682,7 +686,8 @@ async fn handle_push(
                         MealLogMutation {
                             id: doc.id,
                             template_id: doc.template_id,
-                            quantity: doc.quantity,
+                            canonical_quantity: doc.canonical_quantity,
+                            entry: doc.entry,
                             consumed_at: doc.consumed_at,
                             updated_at: doc.updated_at,
                             deleted_at,
@@ -696,7 +701,8 @@ async fn handle_push(
                         "nameSnapshot": conflict.name_snapshot,
                         "nutritionSnapshot": conflict.nutrition_snapshot,
                         "provenance": provenance_json(conflict.source_provider, conflict.external_id),
-                        "quantity": conflict.quantity,
+                        "canonicalQuantity": conflict.canonical_quantity,
+                        "entry": conflict.entry_snapshot,
                         "consumedAt": conflict.consumed_at,
                         "updatedAt": conflict.updated_at,
                         "_deleted": conflict.deleted_at.is_some(),
@@ -900,11 +906,7 @@ fn parse_meal_log_document(value: Value) -> Result<MealLogDocument, AppError> {
             "mealLogs.nameSnapshot must contain between 1 and 160 characters".into(),
         ));
     }
-    if !document.quantity.is_finite() || document.quantity <= 0.0 {
-        return Err(AppError::BadRequest(
-            "mealLogs.quantity must be a finite number greater than zero".into(),
-        ));
-    }
+    document.entry.validate(document.canonical_quantity)?;
     if document.consumed_at <= 0 || document.updated_at <= 0 {
         return Err(AppError::BadRequest(
             "mealLogs timestamps must be positive epoch millisecond values".into(),
