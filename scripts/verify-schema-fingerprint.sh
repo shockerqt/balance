@@ -18,6 +18,12 @@ fi
 
 actual=$(DATABASE_URL="$database_url" "$repo_root/scripts/schema-fingerprint.sh")
 database_name=$(psql "$database_url" -X -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')
+database_role=$(psql "$database_url" -X -v ON_ERROR_STOP=1 -Atc 'SELECT current_user')
+
+if [[ "$database_name" == "meal_logger" && "$database_role" != "meal_admin" ]]; then
+  echo "production preflight must run as meal_admin; current role is $database_role" >&2
+  exit 4
+fi
 
 if [[ "$actual" != "$expected" ]]; then
   echo "schema fingerprint mismatch for $database_name" >&2

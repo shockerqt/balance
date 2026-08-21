@@ -71,9 +71,13 @@ may use the existing SSH delivery path and invoke the same host-local procedure.
 
 ## Generated snapshot contract
 
-`scripts/schema-catalog.sql` emits sorted, data-free records for public tables,
-sequences, columns, defaults, constraints and indexes. It excludes the SQLx
-ledger object so the same fingerprint can compare a fresh database with an
+`scripts/schema-catalog.sql` emits sorted, data-free records for the database
+and schema owner contract, migration-role privileges, public tables, table and
+sequence ownership, sequences, columns, defaults, constraints and indexes. The
+actual executor name is normalized to `migration-role`, so CI can compare its
+ephemeral owner with production running as `meal_admin`. An object owned by a
+different role remains literal and causes a mismatch. The catalog excludes the
+SQLx ledger object so the same fingerprint can compare a fresh database with an
 existing production schema before ledger adoption.
 
 `scripts/render-schema-snapshot.sh` writes the catalog, PostgreSQL major,
@@ -104,7 +108,9 @@ The operator or guiding LLM must perform and record these gates in order:
 
    ```bash
    balance_release_dir=/home/ubuntu/workspace/balance
-   sudo -u postgres env DATABASE_URL=postgresql:///meal_logger \
+   sudo -u postgres env \
+     PGOPTIONS='-c role=meal_admin' \
+     DATABASE_URL=postgresql:///meal_logger \
      "$balance_release_dir/scripts/verify-schema-fingerprint.sh" \
      "$balance_release_dir/docs/generated/database-schema.md"
    ```
@@ -125,7 +131,7 @@ The operator or guiding LLM must perform and record these gates in order:
 5. Stop and ask for the separate production approval. The approval must identify
    the release commit, expected schema fingerprint, backup path/hash and exact
    migration head. A previous approval to implement or test is insufficient.
-6. After approval, run the active chain locally as the schema-owning
+6. After approval, run the active chain locally as the database/object-owning
    `meal_admin` role without exposing a password. PostgreSQL's local operating
    account authenticates through the socket and sets the database role for DDL
    ownership:

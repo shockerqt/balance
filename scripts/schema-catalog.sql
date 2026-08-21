@@ -5,7 +5,44 @@
 -- schema can be compared with a freshly migrated ephemeral database.
 WITH catalog_records AS (
     SELECT
-        1 AS kind_order,
+        0 AS kind_order,
+        current_database()::name AS object_name,
+        0 AS item_order,
+        format(
+            'DATABASE_OWNER|%s',
+            CASE
+                WHEN pg_catalog.pg_get_userbyid(d.datdba) = current_user
+                THEN 'migration-role'
+                ELSE pg_catalog.pg_get_userbyid(d.datdba)
+            END
+        ) AS line
+    FROM pg_catalog.pg_database d
+    WHERE d.datname = current_database()
+
+    UNION ALL
+
+    SELECT
+        1,
+        n.nspname,
+        0,
+        format(
+            'SCHEMA|%s|owner=%s|migration-role-usage=%s|migration-role-create=%s',
+            n.nspname,
+            CASE
+                WHEN pg_catalog.pg_get_userbyid(n.nspowner) = current_user
+                THEN 'migration-role'
+                ELSE pg_catalog.pg_get_userbyid(n.nspowner)
+            END,
+            pg_catalog.has_schema_privilege(current_user, n.oid, 'USAGE'),
+            pg_catalog.has_schema_privilege(current_user, n.oid, 'CREATE')
+        )
+    FROM pg_catalog.pg_namespace n
+    WHERE n.nspname = 'public'
+
+    UNION ALL
+
+    SELECT
+        2 AS kind_order,
         c.relname AS object_name,
         0 AS item_order,
         format('TABLE|%s', c.relname) AS line
@@ -18,7 +55,7 @@ WITH catalog_records AS (
     UNION ALL
 
     SELECT
-        2,
+        3,
         c.relname,
         a.attnum,
         format(
@@ -45,7 +82,7 @@ WITH catalog_records AS (
     UNION ALL
 
     SELECT
-        3,
+        4,
         c.relname,
         0,
         format(
@@ -64,7 +101,7 @@ WITH catalog_records AS (
     UNION ALL
 
     SELECT
-        4,
+        5,
         table_name.relname,
         0,
         format(
@@ -82,7 +119,29 @@ WITH catalog_records AS (
 
     UNION ALL
 
-    SELECT 5, c.relname, 0, format('SEQUENCE|%s', c.relname)
+    SELECT
+        6,
+        c.relname,
+        0,
+        format(
+            'OWNER|%s|%s|%s',
+            CASE c.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
+            c.relname,
+            CASE
+                WHEN pg_catalog.pg_get_userbyid(c.relowner) = current_user
+                THEN 'migration-role'
+                ELSE pg_catalog.pg_get_userbyid(c.relowner)
+            END
+        )
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind IN ('r', 'p', 'S')
+      AND c.relname <> '_sqlx_migrations'
+
+    UNION ALL
+
+    SELECT 7, c.relname, 0, format('SEQUENCE|%s', c.relname)
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'

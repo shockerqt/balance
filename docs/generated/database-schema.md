@@ -3,12 +3,14 @@
 
 - PostgreSQL major: 17
 - Migration head: `20260821000000 canonical baseline checksum=27bcd81f0f09c4260ddc099bbe164800de86fdd89b411158fd5cd94cf7f3b8346e7be7dd4f0ff2d7c43865a995823221`
-- Schema fingerprint: `sha256:d192019adff2b0fad412094211593c391941deab4023d9e666495dea3964b8ea`
+- Schema fingerprint: `sha256:638293cc9edbffc58be56cb5ea03b5e599f4285063671afb76c4eba1b7d63c8a`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
 
 ```text
+DATABASE_OWNER|migration-role
+SCHEMA|public|owner=pg_database_owner|migration-role-usage=t|migration-role-create=t
 TABLE|food_import_rows
 TABLE|food_import_sessions
 TABLE|meal_logs
@@ -101,5 +103,13 @@ INDEX|users|users_email_key|CREATE UNIQUE INDEX users_email_key ON public.users 
 INDEX|users|users_pkey|CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)
 INDEX|weight_logs|idx_weight_logs_sync|CREATE INDEX idx_weight_logs_sync ON public.weight_logs USING btree (user_id, updated_at, measured_on)
 INDEX|weight_logs|weight_logs_pkey|CREATE UNIQUE INDEX weight_logs_pkey ON public.weight_logs USING btree (user_id, measured_on)
+OWNER|TABLE|food_import_rows|migration-role
+OWNER|TABLE|food_import_sessions|migration-role
+OWNER|TABLE|meal_logs|migration-role
+OWNER|TABLE|meal_templates|migration-role
+OWNER|TABLE|user_preferences|migration-role
+OWNER|TABLE|users|migration-role
+OWNER|SEQUENCE|users_id_seq|migration-role
+OWNER|TABLE|weight_logs|migration-role
 SEQUENCE|users_id_seq
 ```
