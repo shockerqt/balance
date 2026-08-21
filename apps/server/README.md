@@ -25,6 +25,11 @@ a different bind. Do not add the override to a committed environment file.
 
 ## Database schema and SQLx metadata
 
+For the current database structure, start with the generated, data-free catalog
+at [`docs/generated/database-schema.md`](../../docs/generated/database-schema.md).
+It is the compact human/LLM inspection view verified by CI; do not infer the
+current schema by manually summarizing the migration history.
+
 SQLx query metadata is committed at the repository root in `.sqlx/`. Regenerate
 it only against a disposable PostgreSQL 17 database initialized through the
 active SQLx migrations; never use a production `DATABASE_URL` for this. CI runs
