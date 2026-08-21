@@ -1,0 +1,172 @@
+name: Verify Balance Dashboard E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/dashboard/**"
+      - "apps/server/**"
+      - ".github/workflows/dashboard-e2e.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/dashboard/**"
+      - "apps/server/**"
+      - ".github/workflows/dashboard-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: dashboard-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser-e2e:
+    name: Browser login, sync, reload and logout
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: meal_logger
+          POSTGRES_USER: balance
+          POSTGRES_PASSWORD: balance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U balance -d meal_logger"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://balance:balance@127.0.0.1:5432/meal_logger
+      OIDC_ISSUER: http://127.0.0.1:8180/realms/balance-e2e
+      OIDC_JWKS_URL: http://127.0.0.1:8180/realms/balance-e2e/protocol/openid-connect/certs
+      SQLX_OFFLINE: "true"
+      RUST_LOG: info
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dashboard dependencies
+        run: npm ci --prefix apps/dashboard
+
+      - name: Install Playwright runtime
+        run: npm install --prefix apps/dashboard --no-save --package-lock=false playwright@1.55.0
+
+      - name: Install Chromium
+        working-directory: apps/dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: Apply canonical database migrations
+        run: |
+          for migration in apps/server/migrations/*.sql; do
+            psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file "$migration"
+          done
+
+      - name: Seed E2E identity and canonical meal data
+        run: psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file apps/dashboard/e2e/seed.sql
+
+      - name: Start ephemeral OIDC provider
+        run: |
+          docker run --detach --rm \
+            --name balance-e2e-keycloak \
+            --publish 8180:8080 \
+            --env KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            --env KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            --env JAVA_OPTS_KC_HEAP="-Xms128m -Xmx512m" \
+            --volume "$PWD/apps/dashboard/e2e/keycloak:/opt/keycloak/data/import:ro" \
+            quay.io/keycloak/keycloak:26.2.5 \
+            start-dev --import-realm
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$OIDC_ISSUER/.well-known/openid-configuration" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs balance-e2e-keycloak
+          exit 1
+
+      - name: Start Balance API
+        run: |
+          cargo run --locked --manifest-path apps/server/Cargo.toml > "$RUNNER_TEMP/balance-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/balance-server.pid"
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8080/api-docs/openapi.json >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/balance-server.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/balance-server.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/balance-server.log"
+          exit 1
+
+      - name: Build dashboard for E2E
+        working-directory: apps/dashboard
+        env:
+          VITE_API_URL: http://127.0.0.1:8080
+          VITE_WS_URL: ws://127.0.0.1:8080/ws/sync
+          VITE_OIDC_ISSUER: http://127.0.0.1:8180/realms/balance-e2e
+          VITE_OIDC_CLIENT_ID: balance-dashboard-e2e
+          VITE_OIDC_REDIRECT_URI: http://127.0.0.1:4173/
+        run: npm run build
+
+      - name: Start dashboard preview
+        working-directory: apps/dashboard
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > "$RUNNER_TEMP/dashboard-preview.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/dashboard-preview.pid"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/dashboard-preview.log"
+          exit 1
+
+      - name: Run headless browser E2E
+        working-directory: apps/dashboard
+        env:
+          E2E_BASE_URL: http://127.0.0.1:4173
+          E2E_ARTIFACTS_DIR: e2e-artifacts
+        run: node e2e/dashboard-e2e.mjs
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          mkdir -p apps/dashboard/e2e-artifacts
+          cp "$RUNNER_TEMP/balance-server.log" apps/dashboard/e2e-artifacts/balance-server.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/dashboard-preview.log" apps/dashboard/e2e-artifacts/dashboard-preview.log 2>/dev/null || true
+          docker logs balance-e2e-keycloak > apps/dashboard/e2e-artifacts/oidc-provider.log 2>&1 || true
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-e2e-${{ github.sha }}
+          path: apps/dashboard/e2e-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
