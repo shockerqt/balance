@@ -1,4 +1,4 @@
-export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';
+export type CanonicalUnit = 'g' | 'ml';
 
 export interface Nutrition {
   calories: number;
@@ -16,13 +16,18 @@ export interface ImportProvenance {
   externalId: string;
 }
 
+export interface PortionDefinition {
+  id: string;
+  name: string;
+  portionQuantity: number;
+  canonicalQuantity: number;
+}
+
 export interface MealTemplateDetails {
-  schemaVersion: 1;
-  baseAmount: number;
-  unit: MealUnit;
-  servingLabel?: string | null;
-  gramsPerUnit?: number | null;
-  nutrition: Nutrition;
+  schemaVersion: 2;
+  canonicalUnit: CanonicalUnit;
+  nutritionPer100: Nutrition;
+  portions: PortionDefinition[];
   chileanSeals?: string[];
   category?: string | null;
   typicalTime?: string | null;
@@ -38,100 +43,176 @@ export interface MealTemplateDoc {
   _deleted: boolean;
 }
 
+export interface NutritionSnapshot {
+  schemaVersion: 2;
+  canonicalUnit: CanonicalUnit;
+  nutritionPer100: Nutrition;
+}
+
+export interface PortionSnapshot {
+  portionId?: string;
+  name: string;
+  portionQuantity: number;
+  canonicalQuantity: number;
+}
+
+export interface MealLogEntry {
+  enteredQuantity: number;
+  portionSnapshot?: PortionSnapshot | null;
+}
+
 export interface MealLogDoc {
   id: string;
   templateId: string | null;
   nameSnapshot: string;
-  nutritionSnapshot: MealTemplateDetails;
+  nutritionSnapshot: NutritionSnapshot;
   provenance?: ImportProvenance | null;
-  quantity: number;
+  canonicalQuantity: number;
+  entry: MealLogEntry;
   consumedAt: number;
   updatedAt: number;
   _deleted: boolean;
 }
 
-function nonNegative(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isNullableNonNegative(value: unknown): boolean {
+function finite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function positive(value: unknown): value is number {
+  return finite(value) && value > 0;
+}
+
+function nonNegative(value: unknown): value is number {
+  return finite(value) && value >= 0;
+}
+
+function nullableNonNegative(value: unknown): boolean {
   return value === undefined || value === null || nonNegative(value);
 }
 
 function isProvenance(value: unknown): value is ImportProvenance | null | undefined {
   if (value === undefined || value === null) return true;
-  if (typeof value !== 'object' || Array.isArray(value)) return false;
-  const provenance = value as Record<string, unknown>;
-  return provenance.provider === 'macrofactor' && typeof provenance.externalId === 'string' && provenance.externalId.length > 0;
+  if (!isObject(value)) return false;
+  return value.provider === 'macrofactor' && typeof value.externalId === 'string' && value.externalId.length > 0;
 }
 
-export function isMealUnit(value: unknown): value is MealUnit {
-  return value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup';
+export function isCanonicalUnit(value: unknown): value is CanonicalUnit {
+  return value === 'g' || value === 'ml';
 }
 
 export function isNutrition(value: unknown): value is Nutrition {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const nutrition = value as Record<string, unknown>;
-  const extended = nutrition.extendedNutrition;
+  if (!isObject(value)) return false;
+  const extended = value.extendedNutrition;
   const extendedValid = extended === undefined || extended === null || (
-    typeof extended === 'object' &&
-    !Array.isArray(extended) &&
-    Object.values(extended as Record<string, unknown>).every(nonNegative)
+    isObject(extended) && Object.values(extended).every(nonNegative)
   );
   return (
-    nonNegative(nutrition.calories) &&
-    nonNegative(nutrition.protein) &&
-    nonNegative(nutrition.carbs) &&
-    nonNegative(nutrition.fat) &&
-    isNullableNonNegative(nutrition.fiber) &&
-    isNullableNonNegative(nutrition.sodiumMg) &&
-    isNullableNonNegative(nutrition.cholesterolMg) &&
+    nonNegative(value.calories) &&
+    nonNegative(value.protein) &&
+    nonNegative(value.carbs) &&
+    nonNegative(value.fat) &&
+    nullableNonNegative(value.fiber) &&
+    nullableNonNegative(value.sodiumMg) &&
+    nullableNonNegative(value.cholesterolMg) &&
     extendedValid
   );
 }
 
-export function isMealTemplateDetails(value: unknown): value is MealTemplateDetails {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const details = value as Record<string, unknown>;
+function isPortionDefinition(value: unknown): value is PortionDefinition {
+  if (!isObject(value)) return false;
   return (
-    details.schemaVersion === 1 &&
-    typeof details.baseAmount === 'number' && Number.isFinite(details.baseAmount) && details.baseAmount > 0 &&
-    isMealUnit(details.unit) &&
-    (details.servingLabel === undefined || details.servingLabel === null || typeof details.servingLabel === 'string') &&
-    (details.gramsPerUnit === undefined || details.gramsPerUnit === null || (
-      typeof details.gramsPerUnit === 'number' && Number.isFinite(details.gramsPerUnit) && details.gramsPerUnit > 0
-    )) &&
-    (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime))) &&
-    isNutrition(details.nutrition)
+    typeof value.id === 'string' && value.id.trim().length > 0 && value.id.length <= 80 &&
+    typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 120 &&
+    positive(value.portionQuantity) &&
+    positive(value.canonicalQuantity)
   );
 }
 
-export function isMealTemplateDoc(value: unknown): value is MealTemplateDoc {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const document = value as Record<string, unknown>;
+function isPortionSnapshot(value: unknown): value is PortionSnapshot {
+  if (!isObject(value)) return false;
   return (
-    typeof document.id === 'string' &&
-    typeof document.name === 'string' &&
-    typeof document.isOfficial === 'boolean' &&
-    isMealTemplateDetails(document.details) &&
-    isProvenance(document.provenance) &&
-    typeof document.updatedAt === 'number' && Number.isFinite(document.updatedAt) &&
-    typeof document._deleted === 'boolean'
+    (value.portionId === undefined || (
+      typeof value.portionId === 'string' && value.portionId.trim().length > 0 && value.portionId.length <= 80
+    )) &&
+    typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 120 &&
+    positive(value.portionQuantity) &&
+    positive(value.canonicalQuantity)
+  );
+}
+
+export function isMealTemplateDetails(value: unknown): value is MealTemplateDetails {
+  if (!isObject(value)) return false;
+  const portions = value.portions;
+  if (
+    value.schemaVersion !== 2 ||
+    !isCanonicalUnit(value.canonicalUnit) ||
+    !isNutrition(value.nutritionPer100) ||
+    !Array.isArray(portions) ||
+    !portions.every(isPortionDefinition)
+  ) return false;
+  const validPortions = portions as PortionDefinition[];
+  const ids = new Set(validPortions.map((portion) => portion.id));
+  return (
+    ids.size === validPortions.length &&
+    (value.chileanSeals === undefined || (
+      Array.isArray(value.chileanSeals) && value.chileanSeals.every((seal) => typeof seal === 'string')
+    )) &&
+    (value.category === undefined || value.category === null || typeof value.category === 'string') &&
+    (value.typicalTime === undefined || value.typicalTime === null || (
+      typeof value.typicalTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.typicalTime)
+    ))
+  );
+}
+
+function isNutritionSnapshot(value: unknown): value is NutritionSnapshot {
+  if (!isObject(value)) return false;
+  return value.schemaVersion === 2 && isCanonicalUnit(value.canonicalUnit) && isNutrition(value.nutritionPer100);
+}
+
+function isMealLogEntry(value: unknown, canonicalQuantity: number): value is MealLogEntry {
+  if (!isObject(value)) return false;
+  const enteredQuantity = value.enteredQuantity;
+  if (!positive(enteredQuantity)) return false;
+  const portion = value.portionSnapshot;
+  let expected = enteredQuantity;
+  if (portion !== undefined && portion !== null) {
+    if (!isPortionSnapshot(portion)) return false;
+    expected = enteredQuantity / portion.portionQuantity * portion.canonicalQuantity;
+  }
+  const tolerance = Math.max(1e-8, Math.abs(expected) * 1e-8);
+  return Math.abs(expected - canonicalQuantity) <= tolerance;
+}
+
+export function isMealTemplateDoc(value: unknown): value is MealTemplateDoc {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.isOfficial === 'boolean' &&
+    isMealTemplateDetails(value.details) &&
+    isProvenance(value.provenance) &&
+    finite(value.updatedAt) &&
+    typeof value._deleted === 'boolean'
   );
 }
 
 export function isMealLogDoc(value: unknown): value is MealLogDoc {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const document = value as Record<string, unknown>;
+  if (!isObject(value)) return false;
+  const canonicalQuantity = value.canonicalQuantity;
+  if (!positive(canonicalQuantity)) return false;
   return (
-    typeof document.id === 'string' &&
-    (document.templateId === null || typeof document.templateId === 'string') &&
-    typeof document.nameSnapshot === 'string' &&
-    isMealTemplateDetails(document.nutritionSnapshot) &&
-    isProvenance(document.provenance) &&
-    typeof document.quantity === 'number' && Number.isFinite(document.quantity) && document.quantity > 0 &&
-    typeof document.consumedAt === 'number' && Number.isFinite(document.consumedAt) &&
-    typeof document.updatedAt === 'number' && Number.isFinite(document.updatedAt) &&
-    typeof document._deleted === 'boolean'
+    typeof value.id === 'string' &&
+    (value.templateId === null || typeof value.templateId === 'string') &&
+    typeof value.nameSnapshot === 'string' &&
+    isNutritionSnapshot(value.nutritionSnapshot) &&
+    isProvenance(value.provenance) &&
+    isMealLogEntry(value.entry, canonicalQuantity) &&
+    finite(value.consumedAt) &&
+    finite(value.updatedAt) &&
+    typeof value._deleted === 'boolean'
   );
 }

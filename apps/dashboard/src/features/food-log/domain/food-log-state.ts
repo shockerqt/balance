@@ -1,4 +1,4 @@
-import type { MealLogDoc, MealTemplateDetails } from '../../../types/meal-log.ts';
+import type { MealLogDoc, NutritionSnapshot, MealLogEntry } from '../../../types/meal-log.ts';
 import { timeInChile, toDateId } from './time.ts';
 
 export type FoodLogMode = 'normal' | 'visual';
@@ -7,9 +7,10 @@ export type RegisterSource = 'yank' | 'delete' | 'visual-paste';
 export interface FoodLogRegisterItem {
   templateId: string | null;
   nameSnapshot: string;
-  nutritionSnapshot: MealTemplateDetails;
+  nutritionSnapshot: NutritionSnapshot;
   provenance?: MealLogDoc['provenance'];
-  quantity: number;
+  canonicalQuantity: number;
+  entry: MealLogEntry;
   consumedAt: number;
 }
 
@@ -107,28 +108,31 @@ export function registerItemFromDocument(document: MealLogDoc): FoodLogRegisterI
     nameSnapshot: document.nameSnapshot,
     nutritionSnapshot: structuredClone(document.nutritionSnapshot),
     ...(document.provenance === undefined ? {} : { provenance: document.provenance }),
-    quantity: document.quantity,
+    canonicalQuantity: document.canonicalQuantity,
+    entry: structuredClone(document.entry),
     consumedAt: document.consumedAt,
   };
 }
 
 export function nutritionForDocument(document: MealLogDoc): DisplayNutrition {
-  const snapshot = document.nutritionSnapshot;
-  const factor = snapshot.baseAmount > 0 ? document.quantity / snapshot.baseAmount : 1;
+  const nutrition = document.nutritionSnapshot.nutritionPer100;
+  const factor = document.canonicalQuantity / 100;
   return {
-    calories: snapshot.nutrition.calories * factor,
-    protein: snapshot.nutrition.protein * factor,
-    carbs: snapshot.nutrition.carbs * factor,
-    fat: snapshot.nutrition.fat * factor,
+    calories: nutrition.calories * factor,
+    protein: nutrition.protein * factor,
+    carbs: nutrition.carbs * factor,
+    fat: nutrition.fat * factor,
   };
 }
 
 export function displayRow(document: MealLogDoc): DisplayFoodRow {
-  const unit = document.nutritionSnapshot.unit === 'unit' ? 'u' : document.nutritionSnapshot.unit;
+  const portion = document.entry.portionSnapshot;
   return {
     document,
     time: timeInChile(document.consumedAt),
-    quantityLabel: `${formatNumber(document.quantity)} ${unit}`,
+    quantityLabel: portion
+      ? `${formatNumber(document.entry.enteredQuantity)} ${portion.name}`
+      : `${formatNumber(document.canonicalQuantity)} ${document.nutritionSnapshot.canonicalUnit}`,
     nutrition: nutritionForDocument(document),
   };
 }

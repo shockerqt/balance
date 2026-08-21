@@ -138,7 +138,7 @@ interface TemplateResultProps {
 }
 
 function TemplateResult({ template, active, onHover, onSelect }: TemplateResultProps) {
-  const nutrition = template.details.nutrition;
+  const nutrition = template.details.nutritionPer100;
   return (
     <button
       type="button"
@@ -148,7 +148,7 @@ function TemplateResult({ template, active, onHover, onSelect }: TemplateResultP
     >
       <span>{active ? '>' : ' '}</span>
       <span>{template.name}</span>
-      <span>{template.details.baseAmount} {template.details.unit}</span>
+      <span>100 {template.details.canonicalUnit}</span>
       <span>{Math.round(nutrition.calories)} kcal · {Math.round(nutrition.protein)}P {Math.round(nutrition.carbs)}C {Math.round(nutrition.fat)}F</span>
     </button>
   );

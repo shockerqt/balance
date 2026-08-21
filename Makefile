@@ -1,4 +1,4 @@
-.PHONY: dev build check test mobile mobile-clear dashboard
+.PHONY: dev build check test mobile mobile-clear dashboard schema-snapshot
 
 dev:
 	npm run dev
@@ -20,3 +20,6 @@ build:
 
 test:
 	cargo test -p server
+
+schema-snapshot:
+	scripts/generate-schema-snapshot.sh

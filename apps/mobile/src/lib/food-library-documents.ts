@@ -27,6 +27,20 @@ export function nextTemplateTimestamp(previousUpdatedAt: number, now = Date.now(
   return Math.max(now, previousUpdatedAt + 1);
 }
 
+export function mergeEditedTemplateDetails(
+  current: MealTemplateDetails,
+  edited: MealTemplateDetails
+): MealTemplateDetails {
+  return {
+    ...current,
+    ...edited,
+    nutritionPer100: { ...current.nutritionPer100, ...edited.nutritionPer100 },
+    portions: current.canonicalUnit === edited.canonicalUnit
+      ? current.portions.map((portion) => ({ ...portion }))
+      : edited.portions,
+  };
+}
+
 export function createPersonalTemplate(
   id: string,
   name: string,

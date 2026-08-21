@@ -7,7 +7,6 @@ import {
   MealLogDoc,
   MealTemplateDetails,
   MealTemplateDoc,
-  MealUnit,
   Nutrition,
   NutritionSnapshot,
 } from '../sync/types';
@@ -331,15 +330,6 @@ function documentId(kind: 'template' | 'log', namespace: string, externalId: str
   return uuidv5(`${kind}|${namespace}|${externalId}`, IMPORT_NAMESPACE);
 }
 
-function mealUnit(label: string): MealUnit {
-  const normalized = normalizeIdentity(label);
-  if (normalized === 'g' || normalized === 'gram' || normalized === 'grams') return 'g';
-  if (normalized === 'ml') return 'ml';
-  if (normalized === 'cup' || normalized.startsWith('cup ')) return 'cup';
-  if (normalized === 'unit' || normalized === 'units') return 'unit';
-  return 'portion';
-}
-
 function scaleNutrition(nutrition: Nutrition, divisor: number): Nutrition {
   const divide = (value: number | null | undefined) => (value == null ? undefined : value / divisor);
   const extendedNutrition = Object.fromEntries(
@@ -357,26 +347,54 @@ function scaleNutrition(nutrition: Nutrition, divisor: number): Nutrition {
   };
 }
 
+function canonicalWeight(row: MacroFactorRow): number {
+  if (row.gramsPerUnit === null || row.gramsPerUnit <= 0) {
+    throw new Error(`Fila ${row.rowIndex}: Serving Weight (g) es obligatorio para convertir a unidad canónica`);
+  }
+  return row.servingQuantity * row.gramsPerUnit;
+}
+
+function nutritionPer100ForRow(row: MacroFactorRow): Nutrition {
+  return scaleNutrition(row.nutrition, canonicalWeight(row) / 100);
+}
+
+const canonicalServingLabel = (label: string) => /^(?:g|gram|grams)$/i.test(normalizeIdentity(label));
+
+function portionForRow(row: MacroFactorRow) {
+  if (canonicalServingLabel(row.servingLabel)) return [];
+  return [{ id: 'macrofactor-serving', name: row.servingLabel, portionQuantity: 1, canonicalQuantity: row.gramsPerUnit! }];
+}
+
 function detailsForRow(row: MacroFactorRow, typicalTime: string): MealTemplateDetails {
+  canonicalWeight(row);
   return {
-    schemaVersion: 1,
-    baseAmount: 1,
-    unit: mealUnit(row.servingLabel),
-    servingLabel: row.servingLabel,
-    ...(row.gramsPerUnit === null ? {} : { gramsPerUnit: row.gramsPerUnit }),
-    nutrition: scaleNutrition(row.nutrition, row.servingQuantity),
+    schemaVersion: 2,
+    canonicalUnit: 'g',
+    nutritionPer100: nutritionPer100ForRow(row),
+    portions: portionForRow(row),
     typicalTime,
   };
 }
 
 function snapshotForRow(row: MacroFactorRow): NutritionSnapshot {
+  canonicalWeight(row);
+  return { schemaVersion: 2, canonicalUnit: 'g', nutritionPer100: nutritionPer100ForRow(row) };
+}
+
+function entryForRow(row: MacroFactorRow) {
+  const canonicalQuantity = canonicalWeight(row);
+  if (canonicalServingLabel(row.servingLabel)) return { canonicalQuantity, entry: { enteredQuantity: canonicalQuantity } };
   return {
-    schemaVersion: 1 as const,
-    baseAmount: 1,
-    unit: mealUnit(row.servingLabel),
-    servingLabel: row.servingLabel,
-    ...(row.gramsPerUnit === null ? {} : { gramsPerUnit: row.gramsPerUnit }),
-    nutrition: scaleNutrition(row.nutrition, row.servingQuantity),
+    canonicalQuantity,
+    entry: {
+      enteredQuantity: row.servingQuantity,
+      portionSnapshot: {
+        portionId: 'macrofactor-serving',
+        name: row.servingLabel,
+        portionQuantity: 1,
+        canonicalQuantity: row.gramsPerUnit!,
+      },
+    },
   };
 }
 
@@ -535,7 +553,7 @@ export function buildMacroFactorDocumentPlan(
       templateId: templateExternal ? documentId('template', namespace, templateExternal) : null,
       nameSnapshot: row.foodName,
       nutritionSnapshot: snapshotForRow(row),
-      quantity: row.servingQuantity,
+      ...entryForRow(row),
       consumedAt,
       provenance: provenance(externalId),
       updatedAt: now,
