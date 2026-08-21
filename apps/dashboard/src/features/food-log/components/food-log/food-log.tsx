@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MealLogDoc, MealUnit } from '../../../../types/meal-log.ts';
+import type { CanonicalUnit, MealLogDoc } from '../../../../types/meal-log.ts';
 import {
   displayRow,
   hourKey,
@@ -238,33 +238,10 @@ interface InlineQuantityEditorProps {
 
 function InlineQuantityEditor({ controller, document }: InlineQuantityEditorProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState(String(document.quantity));
-  const [unit, setUnit] = useState<MealUnit>(document.nutritionSnapshot.unit);
-  const options = useMemo<MealUnit[]>(() => {
-    const convertible = document.nutritionSnapshot.gramsPerUnit && (unit === 'g' || unit === 'unit');
-    return convertible ? ['g', 'unit'] : [unit];
-  }, [document.nutritionSnapshot.gramsPerUnit, unit]);
-
+  const [value, setValue] = useState(String(document.entry.enteredQuantity));
+  const canonicalUnit: CanonicalUnit = document.nutritionSnapshot.canonicalUnit;
+  const unitLabel = document.entry.portionSnapshot?.name ?? canonicalUnit;
   useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const cycle = (direction: -1 | 1) => {
-    if (options.length < 2) return;
-    const currentIndex = Math.max(0, options.indexOf(unit));
-    const next = options[(currentIndex + direction + options.length) % options.length];
-    const gramsPerUnit = document.nutritionSnapshot.gramsPerUnit;
-    let nextValue = Number(value) || 0;
-    if (gramsPerUnit) {
-      if (unit === 'g' && next === 'unit') nextValue /= gramsPerUnit;
-      else if (unit === 'unit' && next === 'g') nextValue *= gramsPerUnit;
-    }
-    setValue(String(Math.round(nextValue * 100) / 100));
-    setUnit(next);
-  };
-
-  const label = unit === 'unit'
-    ? document.nutritionSnapshot.servingLabel || 'u'
-    : unit;
-
   return (
     <span className={styles.inlineQuantity}>
       <input
@@ -276,12 +253,11 @@ function InlineQuantityEditor({ controller, document }: InlineQuantityEditorProp
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === 'Escape') { event.preventDefault(); controller.closeOverlay(); }
-          else if (event.key === 'Tab') { event.preventDefault(); cycle(event.shiftKey ? -1 : 1); }
-          else if (event.key === 'Enter') { event.preventDefault(); controller.commitQuantity(value, unit); }
+          else if (event.key === 'Enter') { event.preventDefault(); controller.commitQuantity(value, canonicalUnit); }
         }}
         aria-label="Edit quantity"
       />
-      <b>{label}</b>
+      <b>{unitLabel}</b>
     </span>
   );
 }

@@ -53,7 +53,7 @@ export interface FoodLogController {
   dispatch: (command: FoodLogCommand) => void;
   closeOverlay: () => void;
   chooseTemplate: (template: MealTemplateDoc) => void;
-  commitQuantity: (value: string, unit: import('../../../types/meal-log.ts').MealUnit) => boolean;
+  commitQuantity: (value: string, unit: import('../../../types/meal-log.ts').CanonicalUnit) => boolean;
   commitTime: (value: string) => boolean;
   commitSearch: (query: string) => void;
   selectRow: (id: string) => void;
@@ -181,7 +181,7 @@ export function useFoodLogController(): FoodLogController {
     restoreFocus();
   }, [execute, overlay, restoreFocus]);
 
-  const commitQuantity = useCallback((value: string, unit: import('../../../types/meal-log.ts').MealUnit): boolean => {
+  const commitQuantity = useCallback((value: string, unit: import('../../../types/meal-log.ts').CanonicalUnit): boolean => {
     const quantity = Number(value);
     const current = rows.find((row) => row.id === state.cursorId);
     if (!current || !Number.isFinite(quantity) || quantity <= 0) {

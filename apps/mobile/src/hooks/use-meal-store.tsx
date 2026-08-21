@@ -3,7 +3,8 @@ import { storage } from '@/services/storage';
 import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { logToLoggedFood, snapshotFromDisplayFood } from '@/services/sync/adapters';
-import { MealLogDoc, MealUnit, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
+import { MealLogDoc, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/services/sync/types';
+import { updateMealLogQuantityAndTime } from '@/lib/food-portions';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
@@ -21,6 +22,8 @@ export interface LoggedFoodItem {
   time: string;
   chileanSeals?: string[];
 }
+
+type MealLogEditableFields = Pick<LoggedFoodItem, 'portion' | 'time'>;
 
 export interface DayTargets {
   targetCalories: number;
@@ -95,16 +98,6 @@ export function emptyDayLog(dateId: string): DayLog {
   return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
 }
 
-function normalizeUnit(unit: string): MealUnit {
-  const normalized = unit.trim().toLowerCase();
-  if (normalized === 'ml' || normalized === 'unit' || normalized === 'portion' || normalized === 'cup' || normalized === 'g') return normalized;
-  if (normalized === 'un' || normalized === 'unidad') return 'unit';
-  if (normalized === 'cc') return 'ml';
-  if (normalized === 'porción' || normalized === 'porcion') return 'portion';
-  if (normalized === 'taza') return 'cup';
-  return 'portion';
-}
-
 function chileOffsetAt(epochMs: number): number {
   const p = chileDateParts(epochMs);
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;
@@ -141,17 +134,22 @@ function persistLogs(namespace: string, docs: MealLogDoc[]): void {
 function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: string, updatedAt = Date.now()): MealLogDoc | null {
   const parsed = parsePortion(food.portion);
   const quantity = parsed.quantity > 0 ? parsed.quantity : 1;
-  const unit = normalizeUnit(parsed.unit);
-  const normalizedPortion = `${quantity}${unit}`;
-  const snapshot: NutritionSnapshot = snapshotFromDisplayFood({ ...food, portion: normalizedPortion });
+  const normalizedPortion = `${quantity}${parsed.unit}`;
+  let snapshot: NutritionSnapshot;
+  try {
+    snapshot = snapshotFromDisplayFood({ ...food, portion: normalizedPortion });
+  } catch {
+    return null;
+  }
   const consumedAt = epochForChileDateTime(dateId, food.time);
   if (consumedAt === null) return null;
   return {
     id,
     templateId: food.templateId ?? null,
     nameSnapshot: food.name,
-    nutritionSnapshot: { ...snapshot, baseAmount: quantity, unit },
-    quantity,
+    nutritionSnapshot: snapshot,
+    canonicalQuantity: quantity,
+    entry: { enteredQuantity: quantity },
     consumedAt,
     updatedAt,
     _deleted: false,
@@ -166,7 +164,7 @@ interface MealStoreContextType {
   mealDocuments: MealLogDoc[];
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
-  updateFood: (dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => void;
+  updateFood: (dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => void;
   deleteFood: (dateId: string, foodId: string) => void;
   deleteMultipleFoods: (dateId: string, foodIds: string[]) => void;
   moveMultipleFoodsTime: (dateId: string, foodIds: string[], newTime: string) => void;
@@ -260,13 +258,19 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     for (const doc of docs) void syncClient.enqueue('mealLogs', doc);
   }, [namespace]);
 
-  const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<LoggedFoodItem>) => {
+  const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => {
     setLogs((previous) => {
       const current = previous.find((doc) => doc.id === foodId);
       if (!current) return previous;
       const display = logToLoggedFood(current);
-      const merged = { ...display, ...updated, id: foodId };
-      const nextDoc = docFromFood(dateId, merged, foodId);
+      const consumedAt = epochForChileDateTime(dateId, updated.time ?? display.time);
+      if (consumedAt === null) return previous;
+      const nextDoc = updateMealLogQuantityAndTime(
+        current,
+        updated.portion ?? display.portion,
+        consumedAt,
+        Date.now()
+      );
       if (!nextDoc) return previous;
       const next = mergeLogs(previous, [nextDoc]);
       persistLogs(namespace, next);

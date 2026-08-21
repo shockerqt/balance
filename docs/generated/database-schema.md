@@ -2,8 +2,8 @@
 # Balance database schema snapshot
 
 - PostgreSQL major: 17
-- Migration head: `20260821000000 canonical baseline checksum=27bcd81f0f09c4260ddc099bbe164800de86fdd89b411158fd5cd94cf7f3b8346e7be7dd4f0ff2d7c43865a995823221`
-- Schema fingerprint: `sha256:638293cc9edbffc58be56cb5ea03b5e599f4285063671afb76c4eba1b7d63c8a`
+- Migration head: `20260821010000 canonical units portions checksum=ef2648844285279a99d117cd12f092c3243f080985028339f9974f837fff2a07b8daa712b2c14981b3b5844e2ace5492`
+- Schema fingerprint: `sha256:ad8389510f96661106d30ae0ffac2a04b6e1ce6de97da7bb12d4b35f49a8d3d4`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
@@ -36,12 +36,13 @@ COLUMN|meal_logs|2|user_id|integer|not-null|identity=none|default=
 COLUMN|meal_logs|3|template_id|uuid|nullable|identity=none|default=
 COLUMN|meal_logs|4|name_snapshot|character varying(255)|not-null|identity=none|default=
 COLUMN|meal_logs|5|nutrition_snapshot|jsonb|not-null|identity=none|default='{}'::jsonb
-COLUMN|meal_logs|6|quantity|double precision|not-null|identity=none|default=1.0
+COLUMN|meal_logs|6|canonical_quantity|double precision|not-null|identity=none|default=1.0
 COLUMN|meal_logs|7|consumed_at|bigint|not-null|identity=none|default=
 COLUMN|meal_logs|8|updated_at|bigint|not-null|identity=none|default=
 COLUMN|meal_logs|9|deleted_at|bigint|nullable|identity=none|default=
 COLUMN|meal_logs|10|source_provider|character varying(32)|nullable|identity=none|default=
 COLUMN|meal_logs|11|external_id|character varying(128)|nullable|identity=none|default=
+COLUMN|meal_logs|12|entry_snapshot|jsonb|not-null|identity=none|default=
 COLUMN|meal_templates|1|id|uuid|not-null|identity=none|default=
 COLUMN|meal_templates|2|user_id|integer|nullable|identity=none|default=
 COLUMN|meal_templates|3|name|character varying(255)|not-null|identity=none|default=
@@ -74,6 +75,7 @@ CONSTRAINT|food_import_sessions|food_import_sessions_expected_rows_check|c|CHECK
 CONSTRAINT|food_import_sessions|food_import_sessions_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|food_import_sessions|food_import_sessions_status_check|c|CHECK (status::text = ANY (ARRAY['staged'::character varying, 'committed'::character varying, 'cancelled'::character varying]::text[]))
 CONSTRAINT|food_import_sessions|food_import_sessions_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+CONSTRAINT|meal_logs|meal_logs_canonical_quantity_positive|c|CHECK (canonical_quantity > 0::double precision)
 CONSTRAINT|meal_logs|meal_logs_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|meal_logs|meal_logs_template_id_fkey|f|FOREIGN KEY (template_id) REFERENCES meal_templates(id) ON DELETE SET NULL
 CONSTRAINT|meal_logs|meal_logs_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

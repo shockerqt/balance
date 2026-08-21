@@ -6,7 +6,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
-    connectors::sync::{FoodDetails, NutritionSnapshot},
+    connectors::sync::{FoodDetails, MealLogEntry, NutritionSnapshot},
     shared::error::AppError,
 };
 
@@ -39,7 +39,8 @@ pub struct ImportLogDocument {
     pub template_id: Option<Uuid>,
     pub name_snapshot: String,
     pub nutrition_snapshot: NutritionSnapshot,
-    pub quantity: f64,
+    pub canonical_quantity: f64,
+    pub entry: MealLogEntry,
     pub consumed_at: i64,
     pub provenance: ImportProvenance,
     pub updated_at: i64,
@@ -117,7 +118,8 @@ struct ExistingLog {
     template_id: Option<Uuid>,
     name_snapshot: String,
     nutrition_snapshot: Value,
-    quantity: f64,
+    canonical_quantity: f64,
+    entry_snapshot: Value,
     consumed_at: i64,
     external_id: String,
     deleted_at: Option<i64>,
@@ -437,13 +439,11 @@ fn validate_log(log: &ImportLogDocument) -> Result<(), AppError> {
     if log.deleted
         || log.name_snapshot.trim().is_empty()
         || log.name_snapshot.chars().count() > 160
-        || !log.quantity.is_finite()
-        || log.quantity <= 0.0
         || log.consumed_at <= 0
     {
         return Err(AppError::BadRequest("Invalid imported meal log".into()));
     }
-    Ok(())
+    log.entry.validate(log.canonical_quantity)
 }
 
 async fn reconcile_templates(
@@ -535,7 +535,7 @@ async fn reconcile_logs(
 ) -> Result<ChangeSummary, AppError> {
     let existing = sqlx::query_as::<_, ExistingLog>(
         r#"
-        SELECT id, template_id, name_snapshot, nutrition_snapshot, quantity,
+        SELECT id, template_id, name_snapshot, nutrition_snapshot, canonical_quantity, entry_snapshot,
                consumed_at, external_id, deleted_at
         FROM meal_logs
         WHERE user_id = $1 AND source_provider = $2 AND external_id IS NOT NULL
@@ -571,6 +571,8 @@ async fn reconcile_logs(
         }
         let snapshot = serde_json::to_value(&log.nutrition_snapshot)
             .map_err(|error| AppError::Internal(error.to_string()))?;
+        let entry_snapshot = serde_json::to_value(&log.entry)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
         if let Some(current) = existing.remove(&log.provenance.external_id) {
             if current.id != log.id {
                 return Err(AppError::Conflict(
@@ -580,15 +582,16 @@ async fn reconcile_logs(
             let changed = current.template_id != log.template_id
                 || current.name_snapshot != log.name_snapshot
                 || current.nutrition_snapshot != snapshot
-                || current.quantity != log.quantity
+                || current.canonical_quantity != log.canonical_quantity
+                || current.entry_snapshot != entry_snapshot
                 || current.consumed_at != log.consumed_at
                 || current.deleted_at.is_some();
             if changed {
                 sqlx::query(
                     r#"
                     UPDATE meal_logs SET template_id = $3, name_snapshot = $4,
-                        nutrition_snapshot = $5, quantity = $6, consumed_at = $7,
-                        updated_at = $8, deleted_at = NULL
+                        nutrition_snapshot = $5, canonical_quantity = $6, entry_snapshot = $7, consumed_at = $8,
+                        updated_at = $9, deleted_at = NULL
                     WHERE id = $1 AND user_id = $2
                     "#,
                 )
@@ -597,7 +600,8 @@ async fn reconcile_logs(
                 .bind(log.template_id)
                 .bind(&log.name_snapshot)
                 .bind(snapshot)
-                .bind(log.quantity)
+                .bind(log.canonical_quantity)
+                .bind(entry_snapshot.clone())
                 .bind(log.consumed_at)
                 .bind(now)
                 .execute(&mut **tx)
@@ -621,8 +625,8 @@ async fn reconcile_logs(
                 r#"
                 INSERT INTO meal_logs
                     (id, user_id, template_id, name_snapshot, nutrition_snapshot,
-                     source_provider, external_id, quantity, consumed_at, updated_at, deleted_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
+                     source_provider, external_id, canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL)
                 "#,
             )
             .bind(log.id)
@@ -632,7 +636,8 @@ async fn reconcile_logs(
             .bind(snapshot)
             .bind(PROVIDER)
             .bind(&log.provenance.external_id)
-            .bind(log.quantity)
+            .bind(log.canonical_quantity)
+            .bind(entry_snapshot)
             .bind(log.consumed_at)
             .bind(now)
             .execute(&mut **tx)
@@ -655,17 +660,16 @@ async fn reconcile_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connectors::sync::{FOOD_SCHEMA_VERSION, FoodUnit, NutritionValues};
+    use crate::connectors::sync::{
+        CanonicalUnit, FOOD_SCHEMA_VERSION, MealLogEntry, NutritionValues, PortionDefinition,
+    };
     use std::collections::BTreeMap;
 
     fn details() -> FoodDetails {
         FoodDetails {
             schema_version: FOOD_SCHEMA_VERSION,
-            base_amount: 1.0,
-            unit: FoodUnit::Portion,
-            serving_label: Some("serving".into()),
-            grams_per_unit: Some(100.0),
-            nutrition: NutritionValues {
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
                 calories: 200.0,
                 protein: 20.0,
                 carbs: 10.0,
@@ -675,6 +679,12 @@ mod tests {
                 cholesterol_mg: None,
                 extended_nutrition: BTreeMap::from([("vitaminCMg".into(), 12.0)]),
             },
+            portions: vec![PortionDefinition {
+                id: "serving".into(),
+                name: "serving".into(),
+                portion_quantity: 1.0,
+                canonical_quantity: 100.0,
+            }],
             chilean_seals: vec![],
             category: None,
             typical_time: Some("08:00".into()),
@@ -707,7 +717,11 @@ mod tests {
             template_id: Some(template_id),
             name_snapshot: template.name.clone(),
             nutrition_snapshot: template.details.snapshot(),
-            quantity: 1.0,
+            canonical_quantity: 100.0,
+            entry: MealLogEntry {
+                entered_quantity: 1.0,
+                portion_snapshot: Some((&template.details.portions[0]).into()),
+            },
             consumed_at: 1_723_000_000_000,
             provenance: ImportProvenance {
                 provider: PROVIDER.into(),
