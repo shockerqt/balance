@@ -16,6 +16,7 @@ if 'pub const FOOD_SCHEMA_VERSION: i32 = 1;' in server:
         'bal027_patch_server_postfix.py',
     ):
         run(script)
+run('bal027_patch_existing_server_post.py')
 
 original_subn = re.subn
 def literal_subn(pattern, repl, string, count=0, flags=0):
