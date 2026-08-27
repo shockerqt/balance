@@ -1234,7 +1234,8 @@ mod tests {
         .unwrap();
         assert!(output.get("fiber").is_none());
 
-        let required = nutrition_schema()["required"].as_array().unwrap();
+        let schema = nutrition_schema();
+        let required = schema["required"].as_array().unwrap();
         assert!(!required.contains(&json!("fiber")));
 
         let mut total = zero_nutrition();
