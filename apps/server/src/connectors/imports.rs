@@ -674,7 +674,7 @@ mod tests {
                 protein: 20.0,
                 carbs: 10.0,
                 fat: 8.0,
-                fiber: 2.0,
+                fiber: Some(2.0),
                 sodium_mg: Some(50.0),
                 cholesterol_mg: None,
                 extended_nutrition: BTreeMap::from([("vitaminCMg".into(), 12.0)]),

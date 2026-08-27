@@ -93,7 +93,7 @@ struct CreateFoodArgs {
     carbs: f64,
     fat: f64,
     #[serde(default)]
-    fiber: f64,
+    fiber: Option<f64>,
     sodium_mg: Option<f64>,
     cholesterol_mg: Option<f64>,
     #[serde(default)]
@@ -553,7 +553,7 @@ fn nutrition_output(value: &NutritionValues) -> NutritionValues {
         protein: public_number(value.protein),
         carbs: public_number(value.carbs),
         fat: public_number(value.fat),
-        fiber: public_number(value.fiber),
+        fiber: value.fiber.map(public_number),
         sodium_mg: value.sodium_mg.map(public_number),
         cholesterol_mg: value.cholesterol_mg.map(public_number),
         extended_nutrition: value
@@ -570,7 +570,7 @@ fn zero_nutrition() -> NutritionValues {
         protein: 0.0,
         carbs: 0.0,
         fat: 0.0,
-        fiber: 0.0,
+        fiber: Some(0.0),
         sodium_mg: None,
         cholesterol_mg: None,
         extended_nutrition: Default::default(),
@@ -582,9 +582,16 @@ fn add_nutrition(total: &mut NutritionValues, value: &NutritionValues) {
     total.protein += value.protein;
     total.carbs += value.carbs;
     total.fat += value.fat;
-    total.fiber += value.fiber;
+    total.fiber = add_complete_optional(total.fiber, value.fiber);
     total.sodium_mg = add_optional(total.sodium_mg, value.sodium_mg);
     total.cholesterol_mg = add_optional(total.cholesterol_mg, value.cholesterol_mg);
+}
+
+fn add_complete_optional(left: Option<f64>, right: Option<f64>) -> Option<f64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left + right),
+        _ => None,
+    }
 }
 
 fn add_optional(left: Option<f64>, right: Option<f64>) -> Option<f64> {
@@ -1099,7 +1106,7 @@ fn nutrition_schema() -> Value {
             "sodiumMg": { "type": ["number", "null"], "minimum": 0 },
             "cholesterolMg": { "type": ["number", "null"], "minimum": 0 }
         },
-        "required": ["calories", "protein", "carbs", "fat", "fiber"],
+        "required": ["calories", "protein", "carbs", "fat"],
         "additionalProperties": false
     })
 }
@@ -1183,6 +1190,70 @@ mod tests {
         add_nutrition(&mut total, &second);
         let totals = serde_json::to_value(nutrition_output(&total)).unwrap();
         assert_eq!(totals["protein"], json!(0.3));
+        assert_eq!(totals["fiber"], json!(0.0));
+    }
+
+    #[test]
+    fn optional_fiber_is_preserved_across_mcp_input_output_and_aggregation() {
+        let operation_id = Uuid::new_v4();
+        let without_fiber = parse_args::<CreateFoodArgs>(json!({
+            "operationId": operation_id,
+            "name": "Sin fibra informada",
+            "canonicalUnit": "g",
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0
+        }))
+        .unwrap();
+        assert_eq!(without_fiber.fiber, None);
+
+        let explicit_zero = parse_args::<CreateFoodArgs>(json!({
+            "operationId": operation_id,
+            "name": "Fibra cero",
+            "canonicalUnit": "g",
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0,
+            "fiber": 0.0
+        }))
+        .unwrap();
+        assert_eq!(explicit_zero.fiber, Some(0.0));
+
+        let output = serde_json::to_value(nutrition_output(&NutritionValues {
+            calories: 100.0,
+            protein: 10.0,
+            carbs: 20.0,
+            fat: 5.0,
+            fiber: None,
+            sodium_mg: None,
+            cholesterol_mg: None,
+            extended_nutrition: Default::default(),
+        }))
+        .unwrap();
+        assert!(output.get("fiber").is_none());
+
+        let required = nutrition_schema()["required"].as_array().unwrap();
+        assert!(!required.contains(&json!("fiber")));
+
+        let mut total = zero_nutrition();
+        let known = NutritionValues {
+            calories: 1.0,
+            protein: 1.0,
+            carbs: 1.0,
+            fat: 1.0,
+            fiber: Some(2.0),
+            sodium_mg: None,
+            cholesterol_mg: None,
+            extended_nutrition: Default::default(),
+        };
+        add_nutrition(&mut total, &known);
+        assert_eq!(total.fiber, Some(2.0));
+        let mut unknown = known;
+        unknown.fiber = None;
+        add_nutrition(&mut total, &unknown);
+        assert_eq!(total.fiber, None);
     }
 
     #[test]

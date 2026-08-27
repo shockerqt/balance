@@ -74,8 +74,8 @@ pub struct NutritionValues {
     pub protein: f64,
     pub carbs: f64,
     pub fat: f64,
-    #[serde(default)]
-    pub fiber: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiber: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sodium_mg: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,7 +286,6 @@ impl NutritionValues {
             ("protein", self.protein),
             ("carbs", self.carbs),
             ("fat", self.fat),
-            ("fiber", self.fiber),
         ];
         for (name, value) in required {
             if !value.is_finite() || value < 0.0 {
@@ -296,6 +295,7 @@ impl NutritionValues {
             }
         }
         for (name, value) in [
+            ("fiber", self.fiber),
             ("sodiumMg", self.sodium_mg),
             ("cholesterolMg", self.cholesterol_mg),
         ] {
@@ -417,7 +417,7 @@ impl Consumption {
             protein: nutrition.protein * factor,
             carbs: nutrition.carbs * factor,
             fat: nutrition.fat * factor,
-            fiber: nutrition.fiber * factor,
+            fiber: nutrition.fiber.map(|value| value * factor),
             sodium_mg: nutrition.sodium_mg.map(|value| value * factor),
             cholesterol_mg: nutrition.cholesterol_mg.map(|value| value * factor),
             extended_nutrition: nutrition
@@ -1484,7 +1484,7 @@ mod tests {
             protein: 10.0,
             carbs: 20.0,
             fat: 5.0,
-            fiber: 2.0,
+            fiber: Some(2.0),
             sodium_mg: Some(150.0),
             cholesterol_mg: Some(10.0),
             extended_nutrition: Default::default(),
@@ -1508,7 +1508,11 @@ mod tests {
         assert!(invalid.validate().is_err());
 
         let mut invalid = valid.clone();
-        invalid.fiber = -1.0;
+        invalid.fiber = Some(-1.0);
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.fiber = Some(f64::NAN);
         assert!(invalid.validate().is_err());
 
         let mut invalid = valid.clone();
@@ -1535,7 +1539,7 @@ mod tests {
             protein: 30.0,
             carbs: 40.0,
             fat: 12.0,
-            fiber: 0.0,
+            fiber: Some(0.0),
             sodium_mg: None,
             cholesterol_mg: None,
             extended_nutrition: BTreeMap::from([("vitaminCMg".into(), 10.0)]),
@@ -1583,7 +1587,12 @@ mod tests {
         };
         let scaled = consumption.scaled_nutrition();
         assert_eq!(scaled.calories, 240.0);
+        assert_eq!(scaled.fiber, Some(0.0));
         assert_eq!(scaled.extended_nutrition["vitaminCMg"], 6.0);
+
+        let mut unknown_fiber = consumption;
+        unknown_fiber.snapshot.nutrition_per100.fiber = None;
+        assert_eq!(unknown_fiber.scaled_nutrition().fiber, None);
     }
 
     #[test]
@@ -1608,12 +1617,13 @@ mod tests {
             protein: 10.0,
             carbs: 20.0,
             fat: 5.0,
-            fiber: 0.0,
+            fiber: None,
             sodium_mg: None,
             cholesterol_mg: None,
             extended_nutrition: Default::default(),
         };
         let serialized = serde_json::to_value(&nutrition).unwrap();
+        assert!(serialized.get("fiber").is_none());
         assert!(serialized.get("sodiumMg").is_none());
         assert!(serialized.get("cholesterolMg").is_none());
 
@@ -1624,8 +1634,30 @@ mod tests {
             "fat": 5.0
         }))
         .unwrap();
+        assert_eq!(deserialized.fiber, None);
         assert_eq!(deserialized.sodium_mg, None);
         assert_eq!(deserialized.cholesterol_mg, None);
+
+        let zero: NutritionValues = serde_json::from_value(json!({
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0,
+            "fiber": 0.0
+        }))
+        .unwrap();
+        assert_eq!(zero.fiber, Some(0.0));
+        assert_eq!(serde_json::to_value(&zero).unwrap()["fiber"], json!(0.0));
+
+        let existing_numeric: NutritionValues = serde_json::from_value(json!({
+            "calories": 100.0,
+            "protein": 10.0,
+            "carbs": 20.0,
+            "fat": 5.0,
+            "fiber": 3.5
+        }))
+        .unwrap();
+        assert_eq!(existing_numeric.fiber, Some(3.5));
     }
 
     #[tokio::test]
@@ -1650,7 +1682,7 @@ mod tests {
                 protein: 0.3,
                 carbs: 14.0,
                 fat: 0.2,
-                fiber: 2.4,
+                fiber: Some(2.4),
                 sodium_mg: None,
                 cholesterol_mg: None,
                 extended_nutrition: Default::default(),
@@ -1699,6 +1731,7 @@ mod tests {
             .unwrap();
         assert!(logged);
         assert_eq!(log.scaled_nutrition().calories, 78.0);
+        assert!((log.scaled_nutrition().fiber.unwrap() - 3.6).abs() < 1e-12);
         assert_eq!(
             datasource
                 .get_daily_consumptions(1, "2026-08-09")
