@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { formatCalories, formatEditableNutrition, formatMacroGrams, sumNutrition } from '../src/lib/nutrition.ts';
 import { scaleMacros } from '../src/lib/portion.ts';
+import { isNutrition } from '../src/services/sync/types.ts';
 
 test('formats nutrition for Chilean display without float artifacts', () => {
   assert.equal(formatCalories(104.6), '105');
@@ -42,4 +43,28 @@ test('aggregates raw values and formats only the resulting total', () => {
   assert.equal(formatMacroGrams(totals.protein), '0,3');
   assert.equal(formatMacroGrams(totals.fat), '12,3');
   assert.equal(formatMacroGrams(totals.fiber), '0');
+});
+
+test('sync nutrition round-trip keeps unknown fiber distinct from explicit zero', () => {
+  const unknownFiber = {
+    calories: 100,
+    protein: 10,
+    carbs: 20,
+    fat: 5
+  };
+  assert.equal(isNutrition(unknownFiber), true);
+  const unknownRoundTrip = JSON.parse(JSON.stringify(unknownFiber));
+  assert.equal(isNutrition(unknownRoundTrip), true);
+  assert.equal('fiber' in unknownRoundTrip, false);
+  assert.equal(unknownRoundTrip.fiber, undefined);
+
+  const zeroFiber = { ...unknownFiber, fiber: 0 };
+  assert.equal(isNutrition(zeroFiber), true);
+  const zeroRoundTrip = JSON.parse(JSON.stringify(zeroFiber));
+  assert.equal(isNutrition(zeroRoundTrip), true);
+  assert.equal('fiber' in zeroRoundTrip, true);
+  assert.equal(zeroRoundTrip.fiber, 0);
+
+  assert.equal(isNutrition({ ...unknownFiber, fiber: -1 }), false);
+  assert.equal(isNutrition({ ...unknownFiber, fiber: Number.NaN }), false);
 });
