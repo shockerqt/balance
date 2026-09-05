@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMealStore } from '@/hooks/use-meal-store';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Field, Input, Sheet, Text } from '@/components/ui';
+import { todayId } from '@/lib/dates';
 
 /* Mover varios registros a otra hora. Era un Modal hecho a mano; pasa
    a ser hoja del router como el resto de los formularios. */
@@ -16,8 +17,8 @@ export default function BatchMoveScreen() {
   const router = useRouter();
   const { dateId, ids } = useLocalSearchParams<{ dateId?: string; ids?: string }>();
 
-  const { selectedDateId, moveMultipleFoodsTime } = useMealStore();
-  const targetDate = dateId || selectedDateId;
+  const { moveMultipleFoodsTime } = useMealStore();
+  const targetDate = dateId || todayId();
   const foodIds = (ids ?? '').split(',').filter(Boolean);
 
   const [time, setTime] = useState('13:00');

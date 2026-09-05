@@ -38,6 +38,7 @@
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
     "@types/react": "~19.2.2",
+    "react-test-renderer": "^19.2.3",
     "tsx": "^4.23.11",
     "typescript": "~6.0.3"
   },
@@ -46,13 +47,16 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint",
+    "test": "npm run test:auth && npm run test:dates && npm run test:navigation && npm run test:feed && npm run test:domain && npm run test:food-library && npm run test:macrofactor && npm run test:nutrition && npm run test:weight",
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
+    "test:navigation": "tsx --test tests/log-navigation.test.mjs tests/log-performance.test.mjs",
+    "test:dates": "node --experimental-strip-types --test tests/dates-navigation.test.mjs",
     "test:domain": "tsx --test tests/shared-domain.test.mjs",
     "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs",
     "test:macrofactor": "tsx --test tests/macro-factor-import.test.mjs",
     "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",
-    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs"
+    "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
+    "test:feed": "tsx --test tests/hour-rail.test.mjs tests/food-selection.test.mjs"
   },
   "private": true
 }

@@ -1,4 +1,4 @@
-import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import type { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { sumNutrition } from '@/lib/nutrition';
 
 /* ============================================================
@@ -51,7 +51,9 @@ export function buildHourRail(
   const byHour = new Map<string, LoggedFoodItem[]>();
   for (const food of foods) {
     const key = snapToHour(food.time || '12:00');
-    byHour.set(key, [...(byHour.get(key) ?? []), food]);
+    const group = byHour.get(key);
+    if (group) group.push(food);
+    else byHour.set(key, [food]);
   }
 
   const logged = [...byHour.keys()].map((h) => Number(h.slice(0, 2)));
@@ -66,4 +68,31 @@ export function buildHourRail(
 
 export function sumFoods(foods: LoggedFoodItem[]) {
   return sumNutrition(foods);
+}
+
+export type HourRailRow =
+  | { kind: 'empty'; key: string; hour: string }
+  | { kind: 'summary'; key: string; hour: string; ids: string[]; totals: ReturnType<typeof sumFoods> }
+  | { kind: 'food'; key: string; hour: string; showHour: boolean; food: LoggedFoodItem };
+
+// Empty hours can keep their React/native views across date changes.
+const emptyRows = Array.from({ length: 24 }, (_, hour): HourRailRow => {
+  const label = `${String(hour).padStart(2, '0')}:00`;
+  return { kind: 'empty', key: `hour:${label}`, hour: label };
+});
+
+/** Each food is a virtual cell, including when hundreds share the same hour. */
+export function buildHourRailRows(foods: LoggedFoodItem[], range = DEFAULT_HOUR_RANGE): HourRailRow[] {
+  return buildHourRail(foods, range).flatMap(({ hour, foods: group }): HourRailRow[] => {
+    if (!group.length) return [emptyRows[Number(hour.slice(0, 2))]];
+    const rows: HourRailRow[] = [];
+    if (group.length > 1) rows.push({
+      kind: 'summary', key: `hour:${hour}`, hour,
+      ids: group.map((food) => food.id), totals: sumFoods(group),
+    });
+    group.forEach((food) => rows.push({
+      kind: 'food', key: `food:${food.id}`, hour, showHour: group.length === 1, food,
+    }));
+    return rows;
+  });
 }

@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { useMealStore } from '@/hooks/use-meal-store';
 import { parsePortion, scaleMacros } from '@/lib/portion';
+import { todayId } from '@/lib/dates';
 import { MacroSummary } from '@/components/food-search/macro-summary';
 import { Button, Sheet, Text } from '@/components/ui';
 import { makeStyles, useTheme } from '@/theme';
@@ -18,9 +19,9 @@ export default function FoodPortionScreen() {
   const params = useLocalSearchParams<{ foodId?: string; dateId?: string; time?: string }>();
 
   const { libraryFoods, incrementFoodFrequency } = useFoodLibraryStore();
-  const { addFood, selectedDateId } = useMealStore();
+  const { addFood } = useMealStore();
 
-  const targetDateId = params.dateId || selectedDateId;
+  const targetDateId = params.dateId || todayId();
   const targetTime = params.time || '08:30';
 
   const food = useMemo(

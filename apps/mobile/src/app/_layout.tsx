@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack } from 'expo-router/stack';
 import { ThemeProvider as NavigationThemeProvider, DarkTheme, DefaultTheme } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MealStoreProvider } from '@/hooks/use-meal-store';
 import { FoodLibraryProvider } from '@/hooks/use-food-library-store';
 import { AuthProvider } from '@/hooks/use-auth';
@@ -64,20 +65,23 @@ function Navigation() {
   );
 }
 
+// Required by the discrete day/week gestures on Android.
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <PreferencesProvider>
-          <WeightProvider>
-            <MealStoreProvider>
-              <FoodLibraryProvider>
-                <Navigation />
-              </FoodLibraryProvider>
-            </MealStoreProvider>
-          </WeightProvider>
-        </PreferencesProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <AuthProvider>
+          <PreferencesProvider>
+            <WeightProvider>
+              <MealStoreProvider>
+                <FoodLibraryProvider>
+                  <Navigation />
+                </FoodLibraryProvider>
+              </MealStoreProvider>
+            </WeightProvider>
+          </PreferencesProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
