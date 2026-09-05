@@ -8,6 +8,7 @@ import { fetchOfficialTemplates } from '@/services/sync/official-templates';
 import {
   createPersonalTemplate,
   deletePersonalTemplate,
+  mergeEditedTemplateDetails,
   updatePersonalTemplate,
 } from '@/lib/food-library-documents';
 import { recoverGuestImport } from '@/services/import/guest-import';
@@ -218,11 +219,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const updateCustomFood = useCallback((foodId: string, foodData: LibraryFoodDraft): LibraryFoodItem => {
     const current = templatesRef.current.find((doc) => doc.id === foodId);
     const editedDetails = detailsFromLibraryFood(foodData);
-    const details = current ? {
-      ...current.details,
-      ...editedDetails,
-      nutrition: { ...current.details.nutrition, ...editedDetails.nutrition },
-    } : editedDetails;
+    const details = current ? mergeEditedTemplateDetails(current.details, editedDetails) : editedDetails;
     const doc = updatePersonalTemplate(current, foodData.name, details);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
     void syncClient.enqueue('mealTemplates', doc, current ?? null);

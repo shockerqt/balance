@@ -1,0 +1,16 @@
+:root {
+  color-scheme: dark;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --color-page: #06090e;
+  --color-panel: #0c1117;
+  --color-group: #0d1218;
+  --color-group-hover: #111923;
+  --color-row-hover: #14243b;
+  --color-row-hover-subtle: rgb(110 168 255 / 4%);
+  --color-selection: #182d4b;
+  --color-border: #263443;
+  --color-text: #dce6f0;
+  --color-text-muted: #7c8895;
+  --color-text-faint: #34404c;
+  --color-accent: #6ea8ff;
+}

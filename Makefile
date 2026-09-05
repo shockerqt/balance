@@ -1,7 +1,10 @@
-.PHONY: dev build check test mobile mobile-clear
+.PHONY: dev build check test mobile mobile-clear dashboard schema-snapshot
 
 dev:
 	npm run dev
+
+dashboard:
+	npm --prefix apps/dashboard run dev
 
 mobile:
 	script -q -c "npm --prefix apps/mobile run start -- $(FLAGS)" /tmp/metro.log
@@ -13,7 +16,10 @@ check:
 	cargo check -p server
 
 build:
-	npm --prefix apps/dashboard run build && cargo build -p server
+	cargo build -p server
 
 test:
-	npm --prefix apps/dashboard run typecheck && cargo test -p server
+	cargo test -p server
+
+schema-snapshot:
+	scripts/generate-schema-snapshot.sh

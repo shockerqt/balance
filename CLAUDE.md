@@ -32,7 +32,7 @@ workspace ni paquetes compartidos — ver el porqué en `README.md`.
 
 ```
 apps/mobile/      Expo 57 · React Native 0.86 · React 19 · expo-router
-apps/dashboard/   React 19 · Vite 8 · TanStack Router/Query · Tailwind v4
+apps/dashboard/   Vite · React 19 · TypeScript 7 · Base UI
 apps/server/      Rust 2024 · Axum · SQLx/Postgres
 ```
 
@@ -71,13 +71,13 @@ function Pantalla() {
 
 Tokens disponibles:
 
-| Grupo | Tokens |
-|---|---|
-| Superficies | `background` `surface` `surfaceRaised` `border` |
-| Acción | `primary` `primaryPressed` `onPrimary` |
-| Texto | `text` `textSecondary` `textMuted` |
-| Estado | `danger` `success` — siempre con texto o icono, nunca color solo |
-| Macros | `macroProtein` `macroCarbs` `macroFat` `macroFiber` |
+| Grupo       | Tokens                                                           |
+| ----------- | ---------------------------------------------------------------- |
+| Superficies | `background` `surface` `surfaceRaised` `border`                  |
+| Acción      | `primary` `primaryPressed` `onPrimary`                           |
+| Texto       | `text` `textSecondary` `textMuted`                               |
+| Estado      | `danger` `success` — siempre con texto o icono, nunca color solo |
+| Macros      | `macroProtein` `macroCarbs` `macroFat` `macroFiber`              |
 
 La escala tipográfica: `display` `title` `heading` `body` `bodyStrong` `label`
 `caption` `number` `numberLarge`. El espaciado va en múltiplos de 4.
@@ -127,17 +127,47 @@ de Expo.
 
 ## Dashboard (`apps/dashboard`)
 
-- Vite + React 19 + TypeScript estricto. Entrada en `src/main.tsx`.
-- **TanStack Router** en modo *file-based*: las rutas viven en `src/routes/` y
-  `src/routeTree.gen.ts` se genera solo. **No editarlo a mano.**
-- **TanStack Query** para datos. Cada feature expone `queries.ts` y
-  `mutations.ts` (ver `src/features/foods`).
-- Componentes shadcn en `src/components/ui`. Agregar con
-  `npx shadcn@latest add <componente>`.
-- Aliases: `@/*` → `src/*`, `@features/*` → `src/features/*`.
-- Estructura por feature: `src/features/<feature>/{components,queries.ts,...}`.
-  La UI específica de una feature se queda dentro de su carpeta.
-- ESLint propio en `eslint.config.js`.
+Frontend administrativo con **Vite**, **React 19**, **TypeScript 7**, **Base UI** (`@base-ui/react`) y **CSS Modules**.
+
+- **Desarrollo**: `npm run dev:dashboard` o `make dashboard` (puerto `:3000`).
+- **Build y Typecheck**: `npm run build:dashboard`.
+
+### Convenciones de desarrollo
+
+1. **Nomenclatura estricta en kebab-case:**
+   - **Directorios:** Siempre en `kebab-case` (`components/ui/button/`, `features/nutrition-stats/`, `hooks/`, `services/`).
+   - **Archivos:** Siempre en `kebab-case` (`button.tsx`, `button.module.css`, `use-theme.ts`, `api-client.ts`, `user-profile.ts`).
+   - **Componentes en código:** Declarados y exportados en `PascalCase` (`export function Button(...) {}`).
+
+2. **CSS Modules (`*.module.css`):**
+   - Hoja de estilos colocada junto al componente (`button/button.tsx` con `button/button.module.css`).
+   - Nombres de clases CSS en **`camelCase`** (`.buttonContainer`, `.primaryAction`) para acceso directo con dot notation en TypeScript (`styles.buttonContainer`).
+   - Configurado con `localsConvention: 'camelCaseOnly'` en `vite.config.ts`.
+   - Tokens globales (colores, espaciado, radios) en `src/styles/tokens.css` mediante variables CSS (`--color-surface`, `--radius-md`).
+
+3. **Estructura de carpetas:**
+   ```text
+   src/
+   ├── styles/                  # Tokens globales (tokens.css) y resets
+   ├── components/
+   │   └── ui/                  # Primitivas reutilizables sobre Base UI (button/, dialog/, input/)
+   │       └── button/
+   │           ├── button.tsx
+   │           ├── button.module.css
+   │           └── index.ts
+   ├── features/                # Vistas y lógica por dominio de negocio (overview/, foods/)
+   ├── hooks/                   # Custom hooks compartidos (use-auth.ts)
+   ├── services/                # Clientes HTTP y llamadas a API (api-client.ts)
+   ├── types/                   # Tipos e interfaces globales
+   ├── app.tsx                  # Componente raíz
+   ├── main.tsx                 # Entry point de React
+   └── vite-env.d.ts
+   ```
+
+4. **React 19 & TypeScript 7:**
+   - Funciones con nombre e interfaces explícitas para props (evitar `React.FC`).
+   - `import type { ... }` para tipos e imports limpios con alias `@/`.
+   - Componentes headless de `@base-ui/react` envueltos en `src/components/ui/`.
 
 ---
 
@@ -171,7 +201,6 @@ Luego apuntar `DATABASE_URL` a `localhost:5433`.
 
 ## Qué no tocar sin razón
 
-- `apps/dashboard/src/routeTree.gen.ts` — autogenerado.
 - `apps/server/.env` — no se commitea.
 - El flujo de navegación del móvil: las rutas y los sheets funcionan y
   reestructurar no debería moverlos.

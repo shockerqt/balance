@@ -9,8 +9,7 @@ Esta guía contiene la documentación técnica completa del monorepo **Balance**
 El proyecto está estructurado como un monorepo modular:
 
 - **`apps/mobile`**: Aplicación móvil nativa en **React Native + Expo SDK 57** (con React 19, React Native 0.86, Expo Router v6 y `expo-dev-client@57.0.10`).
-- **`apps/dashboard`**: Panel Web administrativo en **React 19 + Vite 8 + Tailwind CSS v4 + Base UI** preset Shadcn `b6YqzcHxSM`. Compilado y sirviéndose en vivo en:
-  `http://144.22.47.0:8080/mockups/`
+- **`apps/dashboard`**: Panel Web administrativo en **Vite + React 19 + TypeScript 7 + Base UI** (`@base-ui/react`).
 - **`apps/server`**: API REST backend en **Rust (Axum) + PostgreSQL (SQLx)**. Ejecutándose como servicio del sistema en `/opt/balance-server` (`balance-server.service`).
 - **Identidad**: Keycloak en `https://auth.shocker.cl/realms/balance`; Google se usa como proveedor federado. La API valida los JWT mediante JWKS, no emite JWT propios.
 
@@ -19,6 +18,7 @@ El proyecto está estructurado como un monorepo modular:
 ## 2. Desarrollo Móvil (`apps/mobile`)
 
 ### Cómo Encender el Servidor Móvil
+
 Desde la raíz del repositorio (`/home/ubuntu/workspace/balance`), ejecuta:
 
 ```bash
@@ -29,6 +29,7 @@ Esto ejecuta automáticamente el comando configurado:
 `REACT_NATIVE_PACKAGER_HOSTNAME=144.22.47.0 expo start --dev-client --host lan --port 8081`
 
 ### Captura de Logs en Tiempo Real
+
 - El comando `make mobile` utiliza `script` para mantener los gráficos ASCII del código QR en tu terminal mientras canaliza todo el registro a:
   `/tmp/metro.log`
 - Si ocurre algún aviso o error en el teléfono, los registros quedan guardados en `/tmp/metro.log`.
@@ -42,7 +43,7 @@ Esto ejecuta automáticamente el comando configurado:
 3. **Firewall del VPS (Linux `iptables`)**:
    - `sudo iptables -I INPUT 6 -p tcp --dport 8081:8085 -j ACCEPT` (persistente en `/etc/iptables/rules.v4`).
 4. **Firewall de Oracle Cloud (OCI Security List)**:
-   - Configurada la *Ingress Rule* para la VCN `DefaultVCN` permitiendo tráfico `TCP` en el rango `8081-8085` para `0.0.0.0/0`.
+   - Configurada la _Ingress Rule_ para la VCN `DefaultVCN` permitiendo tráfico `TCP` en el rango `8081-8085` para `0.0.0.0/0`.
 5. **Conexión Directa**:
    - No requiere estar en la misma red Wi-Fi ni usar Ngrok.
    - El APK escanea el código QR de la terminal o conecta directamente a:
@@ -66,27 +67,26 @@ EAS publica el instalable interno en el proyecto `@shocker/balance`, canal
 `expo-dev-client` para conectarse al Metro temporal de la tarea activa.
 
 ### B. Compilación y Despliegue del Backend Rust (`.github/workflows/build-arm.yml`)
+
 - **Evento**: Se activa al modificar `apps/server/**` o mediante `workflow_dispatch`.
 - **Despliegue**: Compila el binario ARM64 con `cross` y lo sube mediante SSH a `/opt/balance-server`, ejecutando `sudo systemctl restart balance-server`.
 - **MCP**: no existe binario ni servicio MCP independiente. El mismo API expone el transporte Streamable HTTP en `https://balance.shocker.cl/api/mcp`.
 
 ### C. Preparación del esquema PostgreSQL
 
-La carpeta `apps/server/migrations/` es histórica y contiene prefijos de versión
-duplicados, por lo que no es una cadena ejecutable ni la fuente de verdad para
-actualizar producción. No se deben agregar migraciones nuevas a esa secuencia
-hasta que una tarea específica la repare y establezca un baseline verificable.
+La carpeta `apps/server/migrations/` contiene la cadena SQLx activa y comienza
+con el baseline canónico de BAL-029. Los archivos contradictorios anteriores y
+los scripts manuales se conservan únicamente como evidencia en
+`apps/server/migrations-legacy/`; nunca deben ejecutarse.
 
-- Entornos efímeros de CI y desarrollo cargan `scripts/sqlx-test-schema.sql`,
-  que representa el esquema canónico completo y nunca debe apuntar a producción.
-- Producción se prepara mediante scripts aditivos e idempotentes revisados:
-  primero `scripts/ensure-lax-sync-schema.sql` y, para el seguimiento corporal,
-  `scripts/ensure-weight-tracking-schema.sql`; la importación de MacroFactor
-  requiere además `scripts/ensure-macrofactor-import-schema.sql`.
-- Cada script productivo se ejecuta manualmente con `psql --set ON_ERROR_STOP=1`
-  después de un backup verificado y antes de desplegar el binario que depende de
-  su esquema. La aplicación del script y el despliegue requieren aprobación
-  explícita, healthcheck y rollback registrados en Governance.
+- Entornos efímeros de CI y desarrollo ejecutan la cadena SQLx activa desde una
+  base PostgreSQL 17 vacía, verifican el snapshot generado y ejecutan los tests
+  reales del servidor.
+- `make schema-snapshot` reconstruye el esquema en una base efímera y actualiza
+  `docs/generated/database-schema.md`; el snapshot no se edita manualmente.
+- Toda migración productiva sigue `docs/database-migrations.md`, requiere
+  fingerprint y backup verificados, aprobación productiva separada, ejecución
+  host-local, healthcheck y evidencia de rollback en Governance.
 
 ---
 

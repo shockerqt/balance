@@ -1,0 +1,59 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.month {
+  width: 24px;
+  color: var(--color-text-muted);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 5px);
+  grid-template-rows: repeat(6, 5px);
+  gap: 3px;
+}
+
+.cell {
+  box-sizing: border-box;
+  width: 5px;
+  height: 5px;
+  border: 1px solid transparent;
+  border-radius: 1px;
+  background: #3a4550;
+  opacity: 0.68;
+}
+
+.outside {
+  border-color: #2e3944;
+  background: transparent;
+  opacity: 0.44;
+}
+
+.today {
+  border-color: var(--color-accent);
+  background: transparent;
+  opacity: 1;
+}
+
+.selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  opacity: 1;
+}
+
+.both {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 620px) {
+  .month {
+    display: none;
+  }
+}

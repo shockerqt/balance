@@ -6,10 +6,15 @@ on:
       - main
     paths:
       - 'apps/server/**'
-      - 'scripts/sqlx-test-schema.sql'
-      - 'scripts/ensure-lax-sync-schema.sql'
-      - 'scripts/ensure-macrofactor-import-schema.sql'
-      - 'scripts/ensure-weight-tracking-schema.sql'
+      - 'scripts/seed-test-user.sql'
+      - 'scripts/schema-catalog.sql'
+      - 'scripts/schema-fingerprint.sh'
+      - 'scripts/render-schema-snapshot.sh'
+      - 'scripts/generate-schema-snapshot.sh'
+      - 'scripts/verify-schema-fingerprint.sh'
+      - 'docs/database-migrations.md'
+      - 'docs/generated/database-schema.md'
+      - 'Makefile'
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
@@ -18,10 +23,15 @@ on:
       - main
     paths:
       - 'apps/server/**'
-      - 'scripts/sqlx-test-schema.sql'
-      - 'scripts/ensure-lax-sync-schema.sql'
-      - 'scripts/ensure-macrofactor-import-schema.sql'
-      - 'scripts/ensure-weight-tracking-schema.sql'
+      - 'scripts/seed-test-user.sql'
+      - 'scripts/schema-catalog.sql'
+      - 'scripts/schema-fingerprint.sh'
+      - 'scripts/render-schema-snapshot.sh'
+      - 'scripts/generate-schema-snapshot.sh'
+      - 'scripts/verify-schema-fingerprint.sh'
+      - 'docs/database-migrations.md'
+      - 'docs/generated/database-schema.md'
+      - 'Makefile'
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
@@ -68,8 +78,16 @@ jobs:
           cargo install sqlx-cli --version 0.8.6 --locked
           --no-default-features --features postgres,rustls
 
-      - name: Load the reproducible SQLx CI schema
-        run: psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file scripts/sqlx-test-schema.sql
+      - name: Run the active SQLx migration chain
+        run: cargo sqlx migrate run --source apps/server/migrations
+
+      - name: Verify the generated schema snapshot
+        run: |
+          scripts/render-schema-snapshot.sh "$RUNNER_TEMP/database-schema.md"
+          diff --unified docs/generated/database-schema.md "$RUNNER_TEMP/database-schema.md"
+
+      - name: Seed the controlled integration-test identity
+        run: psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file scripts/seed-test-user.sql
 
       - name: Regenerate SQLx metadata from the ephemeral database
         run: cargo sqlx prepare --workspace -- --all-targets
@@ -78,6 +96,12 @@ jobs:
         run: |
           git diff --exit-code -- .sqlx
           test -z "$(git ls-files --others --exclude-standard .sqlx)"
+
+      - name: Run server tests against PostgreSQL
+        env:
+          BALANCE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/balance_sqlx
+          SQLX_OFFLINE: 'true'
+        run: cargo test -p server --all-targets
 
   build-arm:
     name: Compile Balance API (ARM64)

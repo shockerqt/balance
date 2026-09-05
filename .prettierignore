@@ -3,4 +3,4 @@ dist
 target
 pnpm-lock.yaml
 Cargo.lock
-apps/dashboard/src/routeTree.gen.ts
+apps/server/static

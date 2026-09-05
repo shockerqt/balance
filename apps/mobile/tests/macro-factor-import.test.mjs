@@ -118,13 +118,16 @@ test('normalizes a multi-slice row to one serving and keeps exact historical tot
   const plan = buildMacroFactorDocumentPlan(parsed.rows, [], [], 'guest', 1000);
   assert.equal(plan.templates.length, 1);
   assert.equal(plan.logs.length, 1);
-  assert.equal(plan.templates[0].details.baseAmount, 1);
-  assert.equal(plan.templates[0].details.unit, 'portion');
-  assert.equal(plan.templates[0].details.servingLabel, 'slices');
-  assert.equal(plan.templates[0].details.gramsPerUnit, 27.5);
-  assert.equal(plan.templates[0].details.nutrition.calories, 70.5);
-  assert.equal(plan.logs[0].quantity, 4);
-  assert.equal(plan.logs[0].nutritionSnapshot.nutrition.calories * plan.logs[0].quantity, 282);
+  assert.equal(plan.templates[0].details.schemaVersion, 2);
+  assert.equal(plan.templates[0].details.canonicalUnit, 'g');
+  assert.deepEqual(plan.templates[0].details.portions[0], {
+    id: 'macrofactor-serving', name: 'slices', portionQuantity: 1, canonicalQuantity: 27.5,
+  });
+  assert.ok(Math.abs(plan.templates[0].details.nutritionPer100.calories - (282 / 110 * 100)) < 1e-10);
+  assert.equal(plan.logs[0].canonicalQuantity, 110);
+  assert.equal(plan.logs[0].entry.enteredQuantity, 4);
+  assert.equal(plan.logs[0].entry.portionSnapshot.canonicalQuantity, 27.5);
+  assert.ok(Math.abs(plan.logs[0].nutritionSnapshot.nutritionPer100.calories * plan.logs[0].canonicalQuantity / 100 - 282) < 1e-10);
 });
 
 test('keeps Quick Add in history without creating a reusable template', () => {
@@ -184,7 +187,7 @@ test('is idempotent, updates changed source rows, tombstones removals, and prese
   const updated = buildMacroFactorDocumentPlan(changed.rows, first.templates, first.logs, 'guest', 3000);
   assert.equal(updated.logSummary.updated, 1);
   assert.equal(updated.logs[0].id, first.logs[0].id);
-  assert.equal(updated.logs[0].quantity, 20);
+  assert.equal(updated.logs[0].canonicalQuantity, 20);
 
   const removed = buildMacroFactorDocumentPlan([], first.templates, first.logs, 'guest', 4000);
   assert.equal(removed.templateSummary.deleted, 1);

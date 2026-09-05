@@ -1,113 +1,37 @@
 export const SYNC_COLLECTIONS = ['userPreferences', 'mealTemplates', 'mealLogs', 'weightLogs'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
-export type MealUnit = 'g' | 'ml' | 'unit' | 'portion' | 'cup';
+import {
+  EXTENDED_NUTRIENT_KEYS,
+  type CanonicalUnit,
+  type ExtendedNutrientKey,
+  type ExtendedNutrition,
+  type ImportProvenance,
+  type Nutrition,
+  type PortionDefinition,
+  type MealTemplateDetails,
+  type MealTemplateDoc,
+  type NutritionSnapshot,
+  type PortionSnapshot,
+  type MealLogEntry,
+  type MealLogDoc,
+} from '@balance/domain';
 
-export const EXTENDED_NUTRIENT_KEYS = [
-  'alcoholG',
-  'vitaminB12Mcg',
-  'thiamineMg',
-  'riboflavinMg',
-  'niacinMg',
-  'pantothenicAcidMg',
-  'pyridoxineMg',
-  'caffeineMg',
-  'calciumMg',
-  'cholineMg',
-  'copperMg',
-  'cysteineG',
-  'monounsaturatedFatG',
-  'polyunsaturatedFatG',
-  'saturatedFatG',
-  'transFatG',
-  'folateMcg',
-  'histidineG',
-  'ironMg',
-  'isoleucineG',
-  'leucineG',
-  'lysineG',
-  'magnesiumMg',
-  'manganeseMg',
-  'methionineG',
-  'omega3AlaG',
-  'omega3DhaG',
-  'omega3EpaG',
-  'omega3G',
-  'omega6G',
-  'phenylalanineG',
-  'phosphorusMg',
-  'potassiumMg',
-  'seleniumMcg',
-  'starchG',
-  'sugarsG',
-  'addedSugarsG',
-  'threonineG',
-  'tryptophanG',
-  'tyrosineG',
-  'valineG',
-  'vitaminAMcg',
-  'vitaminCMg',
-  'vitaminDMcg',
-  'vitaminEMg',
-  'vitaminKMcg',
-  'waterG',
-  'zincMg',
-] as const;
-
-export type ExtendedNutrientKey = (typeof EXTENDED_NUTRIENT_KEYS)[number];
-export type ExtendedNutrition = Partial<Record<ExtendedNutrientKey, number>>;
-
-export interface ImportProvenance {
-  provider: 'macrofactor';
-  externalId: string;
-}
-
-export interface Nutrition {
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  fiber?: number | null;
-  sodiumMg?: number | null;
-  cholesterolMg?: number | null;
-  extendedNutrition?: ExtendedNutrition | null;
-}
-
-export interface MealTemplateDetails {
-  schemaVersion: 1;
-  baseAmount: number;
-  unit: MealUnit;
-  servingLabel?: string | null;
-  gramsPerUnit?: number | null;
-  nutrition: Nutrition;
-  chileanSeals?: string[];
-  category?: string | null;
-  typicalTime?: string | null;
-}
-
-export interface MealTemplateDoc {
-  id: string;
-  name: string;
-  isOfficial: boolean;
-  details: MealTemplateDetails;
-  provenance?: ImportProvenance | null;
-  updatedAt: number;
-  _deleted: boolean;
-}
-
-export interface NutritionSnapshot extends MealTemplateDetails {}
-
-export interface MealLogDoc {
-  id: string;
-  templateId: string | null;
-  nameSnapshot: string;
-  nutritionSnapshot: NutritionSnapshot;
-  provenance?: ImportProvenance | null;
-  quantity: number;
-  consumedAt: number;
-  updatedAt: number;
-  _deleted: boolean;
-}
+export {
+  EXTENDED_NUTRIENT_KEYS,
+  type CanonicalUnit,
+  type ExtendedNutrientKey,
+  type ExtendedNutrition,
+  type ImportProvenance,
+  type Nutrition,
+  type PortionDefinition,
+  type MealTemplateDetails,
+  type MealTemplateDoc,
+  type NutritionSnapshot,
+  type PortionSnapshot,
+  type MealLogEntry,
+  type MealLogDoc,
+};
 
 export interface UserPreferences {
   weightTrackingEnabled?: boolean;
@@ -141,8 +65,8 @@ export interface SyncPushRejection {
   message: string;
 }
 
-export function isMealUnit(value: unknown): value is MealUnit {
-  return value === 'g' || value === 'ml' || value === 'unit' || value === 'portion' || value === 'cup';
+export function isCanonicalUnit(value: unknown): value is CanonicalUnit {
+  return value === 'g' || value === 'ml';
 }
 
 const nonNegative = (value: unknown): value is number =>
@@ -184,24 +108,27 @@ export function isNutrition(value: unknown): value is Nutrition {
   );
 }
 
+function isPortionDefinition(value: unknown): value is PortionDefinition {
+  if (!value || typeof value !== 'object') return false;
+  const portion = value as Record<string, unknown>;
+  return (
+    typeof portion.id === 'string' && portion.id.trim().length > 0 && portion.id.length <= 80 &&
+    typeof portion.name === 'string' && portion.name.trim().length > 0 && portion.name.length <= 120 &&
+    typeof portion.portionQuantity === 'number' && Number.isFinite(portion.portionQuantity) && portion.portionQuantity > 0 &&
+    typeof portion.canonicalQuantity === 'number' && Number.isFinite(portion.canonicalQuantity) && portion.canonicalQuantity > 0
+  );
+}
+
 export function isMealTemplateDetails(value: unknown): value is MealTemplateDetails {
   if (!value || typeof value !== 'object') return false;
   const details = value as Record<string, unknown>;
+  if (!Array.isArray(details.portions) || !details.portions.every(isPortionDefinition)) return false;
+  const ids = new Set(details.portions.map((portion) => (portion as PortionDefinition).id));
   return (
-    details.schemaVersion === 1 &&
-    typeof details.baseAmount === 'number' &&
-    Number.isFinite(details.baseAmount) &&
-    details.baseAmount > 0 &&
-    isMealUnit(details.unit) &&
-    (details.servingLabel === undefined ||
-      details.servingLabel === null ||
-      (typeof details.servingLabel === 'string' && details.servingLabel.length <= 120)) &&
-    (details.gramsPerUnit === undefined ||
-      details.gramsPerUnit === null ||
-      (typeof details.gramsPerUnit === 'number' &&
-        Number.isFinite(details.gramsPerUnit) &&
-        details.gramsPerUnit > 0)) &&
-    isNutrition(details.nutrition) &&
+    details.schemaVersion === 2 &&
+    isCanonicalUnit(details.canonicalUnit) &&
+    isNutrition(details.nutritionPer100) &&
+    ids.size === details.portions.length &&
     (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
   );
 }
@@ -220,6 +147,32 @@ export function isMealTemplateDoc(value: unknown): value is MealTemplateDoc {
   );
 }
 
+function isNutritionSnapshot(value: unknown): value is NutritionSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const snapshot = value as Record<string, unknown>;
+  return snapshot.schemaVersion === 2 && isCanonicalUnit(snapshot.canonicalUnit) && isNutrition(snapshot.nutritionPer100);
+}
+
+function isMealLogEntry(value: unknown, canonicalQuantity: number): value is MealLogEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  if (typeof entry.enteredQuantity !== 'number' || !Number.isFinite(entry.enteredQuantity) || entry.enteredQuantity <= 0) return false;
+  let expected = entry.enteredQuantity;
+  if (entry.portionSnapshot !== undefined && entry.portionSnapshot !== null) {
+    if (!entry.portionSnapshot || typeof entry.portionSnapshot !== 'object') return false;
+    const portion = entry.portionSnapshot as Record<string, unknown>;
+    if (
+      (portion.portionId !== undefined && (typeof portion.portionId !== 'string' || portion.portionId.length > 80)) ||
+      typeof portion.name !== 'string' || !portion.name.trim() || portion.name.length > 120 ||
+      typeof portion.portionQuantity !== 'number' || !Number.isFinite(portion.portionQuantity) || portion.portionQuantity <= 0 ||
+      typeof portion.canonicalQuantity !== 'number' || !Number.isFinite(portion.canonicalQuantity) || portion.canonicalQuantity <= 0
+    ) return false;
+    expected = entry.enteredQuantity / portion.portionQuantity * portion.canonicalQuantity;
+  }
+  const tolerance = Math.max(1e-8, Math.abs(expected) * 1e-8);
+  return Math.abs(expected - canonicalQuantity) <= tolerance;
+}
+
 export function isMealLogDoc(value: unknown): value is MealLogDoc {
   if (!value || typeof value !== 'object') return false;
   const doc = value as Record<string, unknown>;
@@ -227,12 +180,12 @@ export function isMealLogDoc(value: unknown): value is MealLogDoc {
     typeof doc.id === 'string' &&
     (doc.templateId === null || typeof doc.templateId === 'string') &&
     typeof doc.nameSnapshot === 'string' &&
-    isMealTemplateDetails(doc.nutritionSnapshot) &&
-    typeof doc.quantity === 'number' &&
-    Number.isFinite(doc.quantity) &&
-    doc.quantity > 0 &&
-    typeof doc.consumedAt === 'number' &&
-    Number.isFinite(doc.consumedAt) &&
+    isNutritionSnapshot(doc.nutritionSnapshot) &&
+    typeof doc.canonicalQuantity === 'number' &&
+    Number.isFinite(doc.canonicalQuantity) &&
+    doc.canonicalQuantity > 0 &&
+    isMealLogEntry(doc.entry, doc.canonicalQuantity) &&
+    typeof doc.consumedAt === 'number' && Number.isFinite(doc.consumedAt) &&
     typeof doc.updatedAt === 'number' &&
     typeof doc._deleted === 'boolean' &&
     isImportProvenance(doc.provenance)

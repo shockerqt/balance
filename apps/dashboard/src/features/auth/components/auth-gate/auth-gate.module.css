@@ -1,0 +1,66 @@
+.page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--color-page);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.panel {
+  width: min(520px, 100%);
+  padding: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: rgb(9 13 18 / 94%);
+  box-shadow: 0 24px 84px rgb(0 0 0 / 34%);
+}
+
+.path {
+  margin-bottom: 18px;
+  color: var(--color-accent);
+  font-size: 12px;
+}
+
+.panel h1 {
+  margin: 0;
+  font-size: clamp(18px, 4vw, 28px);
+  font-weight: 500;
+}
+
+.panel p {
+  margin: 12px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.error {
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: #f59a9a;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.loginButton {
+  margin-top: 22px;
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.loginButton:hover,
+.loginButton:focus-visible {
+  background: var(--color-accent);
+  color: #07111f;
+  outline: 0;
+}

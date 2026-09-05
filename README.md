@@ -9,7 +9,7 @@ sí, cada una se instala y se ejecuta por su cuenta.
 ```
 apps/
   mobile/      App Expo 57 / React Native 0.86 con expo-router
-  dashboard/   SPA React 19 + Vite 8 + TanStack Router/Query + Tailwind v4
+  dashboard/   Panel web Vite / React 19 / TypeScript 7 / Base UI
   server/      API Axum (Rust 2024) con SQLx/Postgres, OIDC/Keycloak y Gemini
 ```
 
@@ -26,8 +26,8 @@ Cada aplicación instala sus dependencias por separado:
 
 ```bash
 npm install                        # utilidades de la raíz (concurrently, prettier)
-npm --prefix apps/dashboard install
 npm --prefix apps/mobile install
+npm --prefix apps/dashboard install
 ```
 
 El server necesita `apps/server/.env` con:
@@ -45,29 +45,28 @@ OIDC_JWKS_URL=https://auth.shocker.cl/realms/balance/protocol/openid-connect/cer
 ## Desarrollo
 
 ```bash
-make dev        # dashboard (:3000) + server (:8080) en paralelo
+make dev        # server (:8080)
+make dashboard  # Vite dev server (:3000)
 make mobile     # Metro local/loopback (:8081), con los logs en /tmp/metro.log
-make build      # compila dashboard y server
+make build      # compila server
 make check      # verificación rápida del server
-make test       # typecheck del dashboard y tests del server
+make test       # tests del server
 ```
 
 O directamente:
 
 ```bash
-npm run dev:dashboard
 npm run dev:server
+npm run dev:dashboard
 npm --prefix apps/mobile run start
 ```
 
-| Servicio | URL |
-|---|---|
-| Dashboard | http://localhost:3000 |
-| API | http://localhost:8080 |
-| Swagger | http://localhost:8080/docs |
-| MCP HTTP | http://localhost:8080/mcp |
-
-El dashboard asume el server en `:8080` y el server permite CORS desde `:3000`.
+| Servicio  | URL                        |
+| --------- | -------------------------- |
+| Dashboard | http://localhost:3000      |
+| API       | http://localhost:8080      |
+| Swagger   | http://localhost:8080/docs |
+| MCP HTTP  | http://localhost:8080/mcp  |
 
 El servidor usa `127.0.0.1:8080` de forma predeterminada. Para desarrollo en
 LAN se debe solicitar explícitamente `SERVER_BIND_ADDR=0.0.0.0:8080`; ver
@@ -95,11 +94,11 @@ de interfaz rara vez se comparten tal cual, así que no se dio por supuesto.
 
 ## Documentación
 
-| Documento | Para qué |
-|---|---|
-| `README.md` | Qué es y cómo levantarlo |
-| `CLAUDE.md` | Convenciones y reglas para trabajar en el código |
-| `DEVELOPMENT_GUIDE.md` | Operación: VPS, puertos, red y CI/CD |
-| `docs/eas-daily-use.md` | Instalación Daily, OTA y política de releases Android con EAS |
-| `apps/mobile/ANALYSIS.md` | Análisis del estado del móvil y su reestructuración |
-| `docs/authentication-mcp.md` | OIDC, Keycloak y uso del MCP HTTP remoto |
+| Documento                    | Para qué                                                      |
+| ---------------------------- | ------------------------------------------------------------- |
+| `README.md`                  | Qué es y cómo levantarlo                                      |
+| `CLAUDE.md`                  | Convenciones y reglas para trabajar en el código              |
+| `DEVELOPMENT_GUIDE.md`       | Operación: VPS, puertos, red y CI/CD                          |
+| `docs/eas-daily-use.md`      | Instalación Daily, OTA y política de releases Android con EAS |
+| `apps/mobile/ANALYSIS.md`    | Análisis del estado del móvil y su reestructuración           |
+| `docs/authentication-mcp.md` | OIDC, Keycloak y uso del MCP HTTP remoto                      |
