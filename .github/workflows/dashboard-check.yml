@@ -7,14 +7,10 @@ on:
     paths:
       - "apps/dashboard/**"
       - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-check.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/dashboard/**"
-      - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-check.yml"
+      - ".github/workflows/**"
+      - "scripts/delivery/**"
+      - "delivery/**"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -28,6 +24,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -48,4 +46,18 @@ jobs:
 
       - name: Typecheck and build dashboard
         working-directory: apps/dashboard
-        run: npm run build
+        run: npm run build -- --base /releases/${{ github.event.pull_request.head.sha || github.sha }}/
+
+      - name: Package exact validated dashboard
+        env:
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/delivery/package-dashboard.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            dashboard.tar.gz
+            dashboard.sha256
+          retention-days: 30
+          if-no-files-found: error
