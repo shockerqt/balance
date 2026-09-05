@@ -20,6 +20,12 @@ baseline in delivery/daily-runtime.json. It publishes only Android/preview/daily
 verifies channel mapping, reconciles reruns and records source/update/group/runtime.
 A native mismatch blocks Daily with NEW_APK_REQUIRED; dashboard remains independently
 deliverable after the common tests. See eas-daily-use.md for installation and rollback.
+The native gate excludes the reviewed test-only `react-test-renderer@19.2.3`
+addition from PR #59 only when both manifests declare `^19.2.3` exclusively in
+devDependencies and its complete lock entry matches the reviewed version,
+registry URL, integrity and metadata. Shared/transitive lock entries remain
+checked. Other dev dependencies and future renderer versions require review;
+this is not a general exemption for development dependencies.
 The version available in EAS and the version running on each phone are distinct.
 
 ## Dashboard

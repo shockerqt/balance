@@ -42,3 +42,61 @@ test('native dependency and config changes invalidate compatibility', () => {
     assert.notEqual(nativeContract('HEAD'), next);
   } finally { process.chdir(original); rmSync(temp, { recursive: true, force: true }); }
 });
+
+import { readFileSync } from 'node:fs';
+const reviewedRenderer = JSON.parse(readFileSync(new URL('./fixtures/pr-59-test-renderer.json', import.meta.url)));
+test('verified PR #59 test dependency passes without hiding APK-requiring changes', () => {
+  const original = process.cwd(), temp = mkdtempSync(join(tmpdir(), 'balance-test-dependency-'));
+  const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const write = (path, value) => {
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value));
+  };
+  try {
+    process.chdir(temp);
+    git('init'); git('config', 'user.email', 'fixture@example.invalid'); git('config', 'user.name', 'Fixture');
+    const basePkg = { dependencies: { expo: '57.0.0', react: '19.2.3' }, devDependencies: { typescript: '~6.0.3' } };
+    const baseLock = { lockfileVersion: 3, packages: {
+      '': structuredClone(basePkg),
+      'node_modules/react-is': { version: '19.2.3' },
+      'node_modules/scheduler': { version: '0.27.0' },
+    } };
+    write('apps/mobile/package.json', basePkg);
+    write('apps/mobile/package-lock.json', baseLock);
+    write('apps/mobile/app.json', { expo: { version: '1.0.0' } });
+    git('add', '.'); git('commit', '-m', 'baseline');
+    const baseline = nativeContract('HEAD');
+    const pkg = structuredClone(basePkg), lock = structuredClone(baseLock);
+    pkg.devDependencies['react-test-renderer'] = '^19.2.3';
+    lock.packages[''].devDependencies['react-test-renderer'] = '^19.2.3';
+    lock.packages['node_modules/react-test-renderer'] = structuredClone(reviewedRenderer);
+    write('apps/mobile/package.json', pkg); write('apps/mobile/package-lock.json', lock);
+    git('add', '.'); git('commit', '-m', 'verified test renderer');
+    const allowed = git('rev-parse', 'HEAD');
+    assert.equal(nativeContract(allowed), baseline);
+    const cases = [
+      ['runtime dependency', (p) => { p.dependencies['react-test-renderer'] = '^19.2.3'; }],
+      ['optional dependency', (p) => { p.optionalDependencies = { 'react-test-renderer': '^19.2.3' }; }],
+      ['different version', (_, l) => { l.packages['node_modules/react-test-renderer'].version = '19.2.4'; }],
+      ['different integrity', (_, l) => { l.packages['node_modules/react-test-renderer'].integrity = 'changed'; }],
+      ['install hook', (_, l) => { l.packages['node_modules/react-test-renderer'].hasInstallScript = true; }],
+      ['not dev only', (_, l) => { delete l.packages['node_modules/react-test-renderer'].dev; }],
+      ['inconsistent root', (_, l) => { delete l.packages[''].devDependencies['react-test-renderer']; }],
+      ['new transitive dependency', (_, l) => { l.packages['node_modules/new-native-module'] = { version: '1.0.0', dev: true }; }],
+      ['shared transitive change', (_, l) => { l.packages['node_modules/scheduler'].version = '0.28.0'; }],
+      ['unreviewed dev dependency', (p) => { p.devDependencies['native-config-plugin'] = '1.0.0'; }],
+      ['native config', () => write('apps/mobile/app.json', { expo: { version: '2.0.0' } })],
+      ['asset', () => write('apps/mobile/assets/icon.png', 'changed asset')],
+      ['native code', () => write('apps/mobile/android/app/build.gradle', 'native change')],
+      ['config plugin', () => write('apps/mobile/plugins/with-native.cjs', 'module.exports = {};')],
+    ];
+    for (const [name, mutate] of cases) {
+      git('reset', '--hard', allowed); git('clean', '-fd');
+      const candidatePkg = structuredClone(pkg), candidateLock = structuredClone(lock);
+      mutate(candidatePkg, candidateLock);
+      write('apps/mobile/package.json', candidatePkg); write('apps/mobile/package-lock.json', candidateLock);
+      git('add', '.'); git('commit', '-m', name);
+      assert.notEqual(nativeContract('HEAD'), baseline, name);
+    }
+  } finally { process.chdir(original); rmSync(temp, { recursive: true, force: true }); }
+});

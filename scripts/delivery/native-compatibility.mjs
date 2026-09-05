@@ -3,6 +3,19 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 const purePackage = '@balance/domain';
+// Reviewed in PR #59: this exact test-only package adds no native code. Its
+// shared react-is/scheduler dependencies remain in the contract. Never exempt
+// devDependencies generally: they can contain native modules/config plugins.
+const testPackage = 'react-test-renderer';
+const verifiedTestLock = {
+  version: '19.2.3',
+  resolved: 'https://registry.npmjs.org/react-test-renderer/-/react-test-renderer-19.2.3.tgz',
+  integrity: 'sha512-TMR1LnSFiWZMJkCgNf5ATSvAheTT2NvKIwiVwdBPHxjBI7n/JbWd4gaZ16DVd9foAXdvDz+sB5yxZTwMjPRxpw==',
+  dev: true,
+  license: 'MIT',
+  dependencies: { 'react-is': '^19.2.3', scheduler: '^0.27.0' },
+  peerDependencies: { react: '^19.2.3' },
+};
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const read = (ref, path) => git('show', `${ref}:${path}`);
 const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
@@ -13,6 +26,15 @@ export function nativeContract(ref) {
   delete pkg.scripts;
   delete pkg.dependencies[purePackage];
   const lock = JSON.parse(read(ref, 'apps/mobile/package-lock.json'));
+  const root = lock.packages[''];
+  const testOnly = [pkg, root].every(manifest =>
+    manifest.devDependencies?.[testPackage] === '^19.2.3' &&
+    ['dependencies', 'optionalDependencies', 'peerDependencies'].every(key => !manifest[key]?.[testPackage]));
+  if (testOnly && JSON.stringify(sorted(lock.packages[`node_modules/${testPackage}`])) === JSON.stringify(sorted(verifiedTestLock))) {
+    delete pkg.devDependencies[testPackage];
+    delete root.devDependencies[testPackage];
+    delete lock.packages[`node_modules/${testPackage}`];
+  }
   delete lock.packages[''].dependencies[purePackage];
   for (const path of Object.keys(lock.packages)) {
     if (path === `node_modules/${purePackage}` || path === '../../packages/balance-domain') delete lock.packages[path];
