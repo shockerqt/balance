@@ -93,9 +93,12 @@ Para reintentar una entrega, ejecutar ese workflow manualmente desde `main`;
 no ejecutar el workflow reutilizable de OTA directamente.
 
 `delivery/daily-runtime.json` identifica la APK de referencia. El gate compara
-configuración, assets, dependencias y lockfile con su commit. Solo excluye scripts
+configuración, assets, dependencias y lockfile con su commit. Excluye scripts
 npm y el paquete TS puro `@balance/domain`, que debe conservar cero dependencias
-externas, hooks de instalación y configuración nativa. Un cambio incompatible
+externas, hooks de instalación y configuración nativa. También permite la adición
+verificada de `react-test-renderer@19.2.3` solo para pruebas, con manifiestos y
+entrada de lock exactos; las condiciones acotadas están en `delivery.md`.
+Un cambio incompatible
 produce `NEW_APK_REQUIRED`; crear y verificar una APK nueva antes de actualizar
 la referencia mediante PR. Esta comprobación conservadora puede exigir revisión
 para cambios inocuos; no equivale a inferir compatibilidad solo por versión.
