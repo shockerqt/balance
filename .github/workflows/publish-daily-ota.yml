@@ -1,12 +1,7 @@
 name: Publish Balance Daily OTA
 
 on:
-  workflow_dispatch:
-    inputs:
-      message:
-        description: Release note shown to Daily testers
-        required: true
-        type: string
+  workflow_call:
 
 permissions:
   contents: read
@@ -38,6 +33,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -45,6 +42,13 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Require compatible native contract and current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/delivery/assert-current.mjs
+          node scripts/delivery/native-compatibility.mjs > daily-compatibility.json
 
       - name: Install mobile dependencies
         run: npm ci --prefix apps/mobile
@@ -57,19 +61,29 @@ jobs:
         working-directory: apps/mobile
         run: APP_VARIANT=daily npx expo config --type public
 
-      - name: Publish update to EAS Daily channel
+      - name: Recheck source immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/delivery/assert-current.mjs
+
+      - name: Publish or reconcile this source on Daily
         working-directory: apps/mobile
         env:
           APP_VARIANT: daily
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          UPDATE_MESSAGE: ${{ inputs.message }}
-        run: >-
-          npx eas-cli@${{ env.EAS_CLI_VERSION }} update
-          --channel daily
-          --environment preview
-          --platform android
-          --non-interactive
-          --message "$UPDATE_MESSAGE"
+          UPDATE_MESSAGE: main ${{ github.sha }} / Actions ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          npx eas-cli@${{ env.EAS_CLI_VERSION }} channel:view daily --json --non-interactive > ../../daily-channel.json
+          node ../../scripts/delivery/verify-channel.mjs ../../daily-channel.json
+          npx eas-cli@${{ env.EAS_CLI_VERSION }} update:list --branch daily --limit 1 --json --non-interactive > ../../daily-before.json
+          existing=$(jq -r --arg sha "$GITHUB_SHA" '.currentPage[0] | select(.message | contains($sha)) | .group' ../../daily-before.json)
+          if [[ -n "$existing" ]]; then
+            npx eas-cli@${{ env.EAS_CLI_VERSION }} update:view "$existing" --json > ../../daily-update.json
+          else
+            npx eas-cli@${{ env.EAS_CLI_VERSION }} update --channel daily --environment preview --platform android --non-interactive --message "$UPDATE_MESSAGE" --json > ../../daily-update.json
+          fi
+          npx eas-cli@${{ env.EAS_CLI_VERSION }} update:list --branch daily --limit 1 --json --non-interactive > ../../daily-after.json
 
       - name: Confirm the runtime version the channel now points to
         working-directory: apps/mobile
@@ -79,3 +93,22 @@ jobs:
         run: >-
           npx eas-cli@${{ env.EAS_CLI_VERSION }} channel:view daily
           --non-interactive
+          --json > ../../daily-channel-after.json
+
+      - name: Record delivered update identity
+        run: |
+          node scripts/delivery/verify-channel.mjs daily-channel-after.json
+          node scripts/delivery/verify-update.mjs
+          cat daily-delivery.json >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-delivery-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            daily-before.json
+            daily-after.json
+            daily-compatibility.json
+            daily-update.json
+            daily-delivery.json
+          retention-days: 90

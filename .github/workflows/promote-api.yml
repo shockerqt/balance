@@ -1,0 +1,89 @@
+name: Promote Balance API
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful main Build & Deploy Balance API run to promote
+        required: true
+        type: string
+      expected_current:
+        description: Currently deployed API source SHA, or none for first managed release
+        required: true
+        type: string
+      approve_production:
+        description: Approve this exact artifact and current-state precondition for production (false performs read-only plan)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: balance-api-delivery
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve successful integrated build
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > build-run.json
+          jq -e '.conclusion == "success" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/build-arm.yml"' build-run.json
+          source=$(jq -r .head_sha build-run.json)
+          [[ "$source" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/compare/$source...main" --jq .status | grep -Ex 'ahead|identical'
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-${{ steps.build.outputs.source }}
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify digest and configure delivery transport
+        env:
+          DEPLOY_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.BALANCE_KNOWN_HOSTS }}
+        run: |
+          sha256sum --check api.sha256
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Verify schema and promote only with explicit approval
+        env:
+          DEPLOY_HOST: ${{ secrets.SERVER_IP }}
+          DEPLOY_USER: ${{ secrets.SERVER_USER }}
+          SOURCE_SHA: ${{ steps.build.outputs.source }}
+          EXPECTED_CURRENT: ${{ inputs.expected_current }}
+          APPROVED: ${{ inputs.approve_production }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CURRENT" == none || "$EXPECTED_CURRENT" =~ ^[0-9a-f]{40}$ ]]
+          digest=$(cut -d ' ' -f 1 api.sha256)
+          ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo /usr/local/sbin/balance-api-delivery plan --source-sha $SOURCE_SHA --artifact-sha256 $digest" < api.tar.gz > api-plan.json
+          if [[ "$APPROVED" == true ]]; then
+            ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo /usr/local/sbin/balance-api-delivery deploy --source-sha $SOURCE_SHA --artifact-sha256 $digest --expected-current $EXPECTED_CURRENT" < api.tar.gz > api-delivery.json
+          fi
+          cat api-plan.json >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f api-delivery.json ]]; then cat api-delivery.json >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-delivery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-run.json
+            api-plan.json
+            api-delivery.json
+          retention-days: 90

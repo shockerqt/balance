@@ -9,19 +9,14 @@ on:
       - "apps/dashboard/**"
       - "apps/server/**"
       - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-e2e.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/dashboard/**"
-      - "apps/server/**"
-      - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-e2e.yml"
+      - ".github/workflows/**"
+      - "scripts/delivery/**"
+      - "delivery/**"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: dashboard-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: dashboard-e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -58,6 +53,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -99,7 +96,7 @@ jobs:
             --volume "$PWD/apps/dashboard/e2e/keycloak:/opt/keycloak/data/import:ro" \
             quay.io/keycloak/keycloak:26.2.5 \
             start-dev --import-realm
-          for attempt in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl --fail --silent "$OIDC_ISSUER/.well-known/openid-configuration" >/dev/null; then
               exit 0
             fi
@@ -112,7 +109,7 @@ jobs:
         run: |
           cargo run --locked --manifest-path apps/server/Cargo.toml > "$RUNNER_TEMP/balance-server.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/balance-server.pid"
-          for attempt in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             if curl --fail --silent http://127.0.0.1:8080/api-docs/openapi.json >/dev/null; then
               exit 0
             fi
@@ -140,7 +137,7 @@ jobs:
         run: |
           npm run preview -- --host 127.0.0.1 --port 4173 > "$RUNNER_TEMP/dashboard-preview.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/dashboard-preview.pid"
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then
               exit 0
             fi

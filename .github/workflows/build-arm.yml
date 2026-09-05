@@ -18,6 +18,7 @@ on:
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
+      - 'scripts/delivery/package-api.py'
   pull_request:
     branches:
       - main
@@ -35,13 +36,8 @@ on:
       - '.sqlx/**'
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
+      - 'scripts/delivery/package-api.py'
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: 'Deploy the already-verified ARM artifact after production approval'
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -69,6 +65,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -112,6 +110,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install cross prebuilt
         uses: taiki-e/install-action@cross
@@ -119,55 +119,17 @@ jobs:
       - name: Build server with cross for ARM64
         run: cross build --target=aarch64-unknown-linux-gnu --release --manifest-path apps/server/Cargo.toml
 
-      - name: Upload server binary as artifact
+      - name: Package source-bound API artifact
+        env:
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/delivery/package-api.py
+
+      - name: Upload validated API artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-server-arm
-          path: target/aarch64-unknown-linux-gnu/release/server
+          name: api-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            api.tar.gz
+            api.sha256
+          retention-days: 30
           if-no-files-found: error
-
-  deploy:
-    name: Deploy verified binary to OCI VPS
-    needs: build-arm
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Download compiled server binary
-        uses: actions/download-artifact@v4
-        with:
-          name: binary-server-arm
-          path: ./deploy
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
-
-      - name: Stage and roll out the verified binary
-        run: |
-          scp ./deploy/server ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/${{ secrets.SERVER_USER }}/balance-server.candidate
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            set -eu
-            sudo install -m 755 /home/${{ secrets.SERVER_USER }}/balance-server.candidate /opt/balance-server.candidate
-            sudo cp --archive /opt/balance-server /opt/balance-server.previous
-            sudo mv /opt/balance-server.candidate /opt/balance-server
-            if ! sudo systemctl restart balance-server; then
-              sudo mv /opt/balance-server.previous /opt/balance-server
-              sudo systemctl restart balance-server || true
-              exit 1
-            fi
-          '
-
-      - name: Healthcheck and rollback on failure
-        run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            if ! curl --fail --retry 5 --retry-delay 2 http://127.0.0.1:8080/docs >/dev/null; then
-              sudo mv /opt/balance-server.previous /opt/balance-server
-              sudo systemctl restart balance-server
-              exit 1
-            fi
-            sudo rm -f /opt/balance-server.previous
-          '

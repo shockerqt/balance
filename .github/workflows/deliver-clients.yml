@@ -1,0 +1,85 @@
+name: Deliver Balance Clients
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serial delivery; never cancel an activation in progress. Each job rechecks main.
+concurrency:
+  group: balance-client-delivery
+  cancel-in-progress: false
+
+jobs:
+  dashboard-check:
+    uses: ./.github/workflows/dashboard-check.yml
+  mobile-check:
+    uses: ./.github/workflows/mobile-check.yml
+  browser-check:
+    uses: ./.github/workflows/dashboard-e2e.yml
+  delivery-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test scripts/delivery/*.test.mjs
+  daily:
+    if: vars.BALANCE_DELIVERY_ENABLED == 'true'
+    needs: [dashboard-check, mobile-check, browser-check, delivery-tests]
+    uses: ./.github/workflows/publish-daily-ota.yml
+  dashboard:
+    if: vars.BALANCE_DELIVERY_ENABLED == 'true'
+    needs: [dashboard-check, mobile-check, browser-check, delivery-tests]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-${{ github.sha }}
+      - name: Verify archive digest and fresh source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum --check dashboard.sha256
+          node scripts/delivery/assert-current.mjs
+      - name: Configure restricted deployment identity
+        env:
+          DEPLOY_KEY: ${{ secrets.BALANCE_DASHBOARD_KEY }}
+          KNOWN_HOSTS: ${{ secrets.BALANCE_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Activate exact artifact and verify public identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_HOST: ${{ secrets.SERVER_IP }}
+        run: |
+          set -euo pipefail
+          node scripts/delivery/assert-current.mjs
+          ssh -o BatchMode=yes "balance-deploy@$DEPLOY_HOST" status > prior.json
+          current=$(jq -r '.current_source // "none"' prior.json)
+          digest=$(cut -d ' ' -f 1 dashboard.sha256)
+          ssh -o BatchMode=yes "balance-deploy@$DEPLOY_HOST" "deploy --source-sha $GITHUB_SHA --artifact-sha256 $digest --expected-current $current" < dashboard.tar.gz > dashboard-delivery.json
+          jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and .source_sha == $sha' dashboard-delivery.json
+          cat dashboard-delivery.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dashboard-delivery-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            prior.json
+            dashboard-delivery.json
+          retention-days: 90

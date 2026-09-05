@@ -56,7 +56,7 @@ Con una red externa y sin Metro, comprobar:
 
 ## Actualizaciones OTA
 
-Una vez instalada la APK, los cambios compatibles de JavaScript, estilos y lógica se publican explícitamente al canal diario:
+Una vez instalada la APK, los cambios compatibles se publican mediante el pipeline descrito abajo. El siguiente comando explica la operación ejecutada por CI; no sustituye sus gates:
 
 ```bash
 cd apps/mobile
@@ -86,14 +86,26 @@ al binario nuevo llegue a instalaciones antiguas incompatibles.
 
 La exportación OTA normal debe ejecutarse en un runner con un compilador Hermes compatible; se recomienda x86_64. El host ARM actual no puede ejecutar el binario Hermes x86_64 incluido por la dependencia. La exportación sin bytecode (`expo export --no-bytecode`) se usó solamente para una OTA de prueba y Expo la considera una alternativa de depuración: no debe convertirse en el procedimiento habitual.
 
-GitHub Actions valida los Pull Requests hacia `main` que cambian la app móvil mediante instalación reproducible, TypeScript y resolución de la configuración Daily. La OTA no se publica al hacer push: se inicia manualmente desde **Actions → Publish Balance Daily OTA → Run workflow**, seleccionando `main` e indicando la nota de versión. El workflow rechaza cualquier otra rama, vuelve a ejecutar las validaciones, publica sólo Android en el canal `daily`, entorno EAS `preview`, y termina mostrando a qué `runtimeVersion` quedó apuntando el canal.
+Cada push integrado a `main` ejecuta **Deliver Balance Clients**: pruebas del
+dominio, móvil/Hermes, dashboard y navegador antes de publicar Android en Daily.
+La publicación usa ese mismo commit y se detiene si otro commit lo reemplazó.
+Para reintentar una entrega, ejecutar ese workflow manualmente desde `main`;
+no ejecutar el workflow reutilizable de OTA directamente.
 
-Los dos workflows del móvil:
+`delivery/daily-runtime.json` identifica la APK de referencia. El gate compara
+configuración, assets, dependencias y lockfile con su commit. Solo excluye scripts
+npm y el paquete TS puro `@balance/domain`, que debe conservar cero dependencias
+externas, hooks de instalación y configuración nativa. Un cambio incompatible
+produce `NEW_APK_REQUIRED`; crear y verificar una APK nueva antes de actualizar
+la referencia mediante PR. Esta comprobación conservadora puede exigir revisión
+para cambios inocuos; no equivale a inferir compatibilidad solo por versión.
 
-| Workflow | Cuándo corre | Qué hace |
-|---|---|---|
-| `mobile-check.yml` | PR hacia `main` que toca `apps/mobile` | `npm ci`, `tsc`, resolución de la config Daily |
-| `publish-daily-ota.yml` | Manual desde `main` | Valida y publica la OTA al canal `daily` |
+Los workflows conservan los IDs de actualización y grupo, runtime, SHA y resultado.
+Un reintento del mismo SHA recupera la actualización existente. **Roll back
+Balance Daily** restaura un grupo Android previamente publicado, verificando el
+grupo actual esperado. Deshabilitar primero Deliver Balance Clients si se necesita
+mantener un rollback mientras se prepara la corrección. Una publicación EAS
+confirmada no implica que todos los teléfonos ya hayan descargado la OTA.
 
 Las Development Builds no se compilan en GitHub Actions. Se crean y
 distribuyen mediante el perfil `development` de Expo EAS.
@@ -105,7 +117,7 @@ Antes del primer uso, crear el entorno protegido `preview` en GitHub y añadir a
 - `main` se mantiene estable y no recibe commits directos.
 - Cada hito usa una rama corta (`feature/...`, `fix/...` o `hotfix/...`), preferentemente en un Git Worktree.
 - El cambio se integra mediante Pull Request contra `main` tras validación.
-- Un push de código no publica OTA automáticamente; la publicación a `daily` es una acción explícita.
+- Un merge a `main` publica a `daily` después de superar los checks y el gate de compatibilidad.
 - La promoción a Google Play se hará desde una versión aprobada, nunca desde cada push.
 
 ## Seguridad

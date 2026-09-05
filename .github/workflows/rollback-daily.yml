@@ -1,0 +1,61 @@
+name: Roll back Balance Daily
+on:
+  workflow_dispatch:
+    inputs:
+      group_id:
+        description: Previously published Daily Android group to restore
+        required: true
+        type: string
+      expected_current_group:
+        description: Current Daily group being rolled back
+        required: true
+        type: string
+permissions:
+  contents: read
+# Same lock as the full client pipeline: rollback cannot race automatic publication.
+concurrency:
+  group: balance-client-delivery
+  cancel-in-progress: false
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --prefix apps/mobile
+      - name: Verify expected group and republish the selected compatible update
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: daily
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          GROUP_ID: ${{ inputs.group_id }}
+          EXPECTED_GROUP: ${{ inputs.expected_current_group }}
+        run: |
+          set -euo pipefail
+          [[ "$GROUP_ID" =~ ^[0-9a-f-]{36}$ && "$EXPECTED_GROUP" =~ ^[0-9a-f-]{36}$ ]]
+          npx eas-cli@21.7.0 channel:view daily --json --non-interactive > channel.json
+          node ../../scripts/delivery/verify-channel.mjs channel.json
+          npx eas-cli@21.7.0 update:list --branch daily --limit 1 --json --non-interactive > before.json
+          jq -e --arg group "$EXPECTED_GROUP" '.currentPage[0].group == $group' before.json
+          npx eas-cli@21.7.0 update:view "$GROUP_ID" --json > candidate.json
+          runtime=$(jq -r .runtime_version ../../delivery/daily-runtime.json)
+          jq -e --arg runtime "$runtime" 'length == 1 and .[0].branch == "daily" and .[0].platform == "android" and .[0].runtimeVersion == $runtime' candidate.json
+          npx eas-cli@21.7.0 update:republish --group "$GROUP_ID" --destination-channel daily --platform android --message "Rollback to $GROUP_ID / Actions $GITHUB_RUN_ID" --json --non-interactive > ../../daily-rollback.json
+          npx eas-cli@21.7.0 update:list --branch daily --limit 1 --json --non-interactive > after.json
+          group=$(jq -r '.[0].group' ../../daily-rollback.json)
+          jq -e --arg group "$group" '.currentPage[0].group == $group' after.json
+          cat ../../daily-rollback.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-rollback-${{ github.run_id }}
+          path: |
+            daily-rollback.json
+            apps/mobile/before.json
+            apps/mobile/after.json
+            apps/mobile/candidate.json
+          retention-days: 90
