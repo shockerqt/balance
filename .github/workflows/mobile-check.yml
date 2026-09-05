@@ -46,6 +46,10 @@ jobs:
         working-directory: apps/mobile
         run: npx tsc --noEmit
 
+      - name: Test date navigation regressions
+        working-directory: apps/mobile
+        run: npm run test:dates && npm run test:navigation
+
       - name: Test shared domain mobile consumer
         working-directory: apps/mobile
         run: npm run test:domain

@@ -65,9 +65,7 @@ function Navigation() {
   );
 }
 
-/* Raiz de gesture-handler. La pide la libreria en Android para recibir los
-   gestos, y de ella dependen los toques que se animan en el hilo de UI
-   (`PressScale`). No altera la jerarquia de navegacion: solo la envuelve. */
+// Required by the discrete day/week gestures on Android.
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

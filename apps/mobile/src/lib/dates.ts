@@ -1,5 +1,5 @@
 /* Utilidades de fecha deterministas y seguras frente a zonas horarias.
-   Centralizan el cálculo de ventanas de días y semanas para PagerView.
+   Centralizan el cálculo de días y semanas del calendario.
 
    Dos caminos distintos, y la diferencia importa para el rendimiento:
 
@@ -160,8 +160,7 @@ const DAYS_PER_WEEK = 7;
 
 /**
  * Ventana de dias centrada en la semana de `dateId`, alineada a lunes.
- * Alimenta el PagerView: `weeksBefore` semanas antes y `weeksAfter`
- * despues, para poder deslizar sin regenerar.
+ * Incluye `weeksBefore` semanas antes y `weeksAfter` después.
  */
 export function buildDateWindow(dateId: string, weeksBefore = 3, weeksAfter = 3): string[] {
   const mondayId = getMondayDateId(dateId);

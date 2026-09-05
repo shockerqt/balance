@@ -1,23 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import { todayId } from '@/lib/dates';
+import { createLogNavigation } from '@/lib/log-navigation';
 
-let currentDateId = todayId();
-const listeners = new Set<() => void>();
-
-export const logsDateStore = {
-  get: () => currentDateId,
-  set: (next: string) => {
-    if (currentDateId === next) return;
-    currentDateId = next;
-    listeners.forEach((listener) => listener());
-  },
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  },
-};
+export const logsDateStore = createLogNavigation(todayId());
 
 export function useLogsSelectedDate(): [string, (dateId: string) => void] {
   const dateId = useSyncExternalStore(
