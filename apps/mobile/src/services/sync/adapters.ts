@@ -7,6 +7,7 @@ import type {
   NutritionSnapshot,
 } from './types';
 import { parseFoodPortion } from '@/lib/food-portions';
+import { scaleNutrition } from '@balance/domain';
 
 export interface LibraryFoodAdapter {
   id: string; name: string; portion: string; calories: number; protein: number; carbs: number; fat: number;
@@ -34,15 +35,6 @@ export function templateToLibraryFood(doc: MealTemplateDoc, frequency = 0): Libr
   };
 }
 
-function scaleNutrition(n: Nutrition, factor: number) {
-  return {
-    calories: n.calories * factor, protein: n.protein * factor, carbs: n.carbs * factor, fat: n.fat * factor,
-    ...(n.fiber == null ? {} : { fiber: n.fiber * factor }),
-    ...(n.sodiumMg == null ? {} : { sodiumMg: n.sodiumMg * factor }),
-    ...(n.cholesterolMg == null ? {} : { cholesterolMg: n.cholesterolMg * factor }),
-  };
-}
-
 function timeInChile(epochMs: number): string {
   try {
     return new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Santiago', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(epochMs));
@@ -53,11 +45,24 @@ function timeInChile(epochMs: number): string {
 }
 
 export function logToLoggedFood(doc: MealLogDoc): LoggedFoodAdapter {
-  const nutrition = scaleNutrition(doc.nutritionSnapshot.nutritionPer100, doc.canonicalQuantity / 100);
+  const scaled = scaleNutrition(doc.nutritionSnapshot.nutritionPer100, doc.canonicalQuantity / 100);
   const portion = doc.entry.portionSnapshot
     ? `${doc.entry.enteredQuantity} ${doc.entry.portionSnapshot.name}`
     : formatPortion(doc.canonicalQuantity, doc.nutritionSnapshot.canonicalUnit);
-  return { id: doc.id, templateId: doc.templateId ?? undefined, name: doc.nameSnapshot, portion, ...nutrition, time: timeInChile(doc.consumedAt) };
+  return {
+    id: doc.id,
+    templateId: doc.templateId ?? undefined,
+    name: doc.nameSnapshot,
+    portion,
+    calories: scaled.calories,
+    protein: scaled.protein,
+    carbs: scaled.carbs,
+    fat: scaled.fat,
+    ...(scaled.fiber == null ? {} : { fiber: scaled.fiber }),
+    ...(scaled.sodiumMg == null ? {} : { sodiumMg: scaled.sodiumMg }),
+    ...(scaled.cholesterolMg == null ? {} : { cholesterolMg: scaled.cholesterolMg }),
+    time: timeInChile(doc.consumedAt),
+  };
 }
 
 function nutritionPer100(nutrition: Nutrition, amount: number): Nutrition {

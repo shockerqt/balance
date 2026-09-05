@@ -8,6 +8,7 @@ on:
     paths:
       - "apps/dashboard/**"
       - "apps/server/**"
+      - "packages/balance-domain/**"
       - ".github/workflows/dashboard-e2e.yml"
   push:
     branches:
@@ -15,6 +16,7 @@ on:
     paths:
       - "apps/dashboard/**"
       - "apps/server/**"
+      - "packages/balance-domain/**"
       - ".github/workflows/dashboard-e2e.yml"
   workflow_dispatch:
 
@@ -162,8 +164,8 @@ jobs:
           cp "$RUNNER_TEMP/dashboard-preview.log" apps/dashboard/e2e-artifacts/dashboard-preview.log 2>/dev/null || true
           docker logs balance-e2e-keycloak > apps/dashboard/e2e-artifacts/oidc-provider.log 2>&1 || true
 
-      - name: Upload failure diagnostics
-        if: failure()
+      - name: Upload browser evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dashboard-e2e-${{ github.sha }}

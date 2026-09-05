@@ -1,4 +1,5 @@
 import type { CanonicalUnit, MealLogDoc, MealLogEntry } from '@/services/sync/types';
+import { canonicalQuantityForPortion } from '@balance/domain';
 
 const PORTION_PATTERN = /^([0-9]+(?:[.,][0-9]+)?)\s*(g|ml)$/i;
 
@@ -44,8 +45,10 @@ export function resolveMealLogPortion(doc: MealLogDoc, value: string): ResolvedM
   if (name.localeCompare(snapshot.name, undefined, { sensitivity: 'accent' }) !== 0) return null;
 
   const portionSnapshot = { ...snapshot };
+  const canonicalQuantity = canonicalQuantityForPortion(enteredQuantity, portionSnapshot);
+  if (canonicalQuantity === null) return null;
   return {
-    canonicalQuantity: enteredQuantity / portionSnapshot.portionQuantity * portionSnapshot.canonicalQuantity,
+    canonicalQuantity,
     entry: { enteredQuantity, portionSnapshot },
   };
 }

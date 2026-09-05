@@ -1,0 +1,45 @@
+{
+  "reference": "apps/server/src/connectors/sync.rs::tests::canonical_portions_scale_and_snapshot_history",
+  "document": {
+    "id": "20000000-0000-4000-8000-000000000032",
+    "templateId": null,
+    "nameSnapshot": "Synthetic spoon fixture",
+    "nutritionSnapshot": {
+      "schemaVersion": 2,
+      "canonicalUnit": "g",
+      "nutritionPer100": {
+        "calories": 400,
+        "protein": 30,
+        "carbs": 40,
+        "fat": 12,
+        "fiber": 0,
+        "extendedNutrition": {
+          "vitaminCMg": 10
+        }
+      }
+    },
+    "canonicalQuantity": 6,
+    "entry": {
+      "enteredQuantity": 1,
+      "portionSnapshot": {
+        "portionId": "tbsp",
+        "name": "cucharada",
+        "portionQuantity": 5,
+        "canonicalQuantity": 30
+      }
+    },
+    "consumedAt": 1787241600000,
+    "updatedAt": 1787241600000,
+    "_deleted": false
+  },
+  "expectedNutrition": {
+    "calories": 24,
+    "protein": 1.8,
+    "carbs": 2.4,
+    "fat": 0.72,
+    "fiber": 0,
+    "extendedNutrition": {
+      "vitaminCMg": 0.6
+    }
+  }
+}
