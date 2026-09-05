@@ -4,8 +4,8 @@ export function scaleNutrition(nutrition: Nutrition, factor: number): Nutrition 
   if (!nutrition || typeof nutrition !== 'object') {
     throw new TypeError('scaleNutrition: nutrition must be an object');
   }
-  if (typeof factor !== 'number' || !Number.isFinite(factor)) {
-    throw new TypeError('scaleNutrition: factor must be a finite number');
+  if (typeof factor !== 'number' || !Number.isFinite(factor) || factor < 0) {
+    throw new TypeError('scaleNutrition: factor must be a finite non-negative number');
   }
 
   const result: Nutrition = {

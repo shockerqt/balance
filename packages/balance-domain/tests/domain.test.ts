@@ -231,6 +231,8 @@ test('invalid numeric inputs', () => {
   assert.throws(() => scaleNutrition(sample, NaN), TypeError);
   assert.throws(() => scaleNutrition(sample, Infinity), TypeError);
   assert.throws(() => scaleNutrition(sample, -Infinity), TypeError);
+  assert.throws(() => scaleNutrition(sample, -0.5), TypeError);
+  assert.deepStrictEqual(scaleNutrition(sample, 0), { calories: 0, protein: 0, carbs: 0, fat: 0 });
   assert.throws(() => scaleNutrition(sample, '2' as unknown as number), TypeError);
   assert.throws(() => scaleNutrition(null as unknown as Nutrition, 1), TypeError);
   assert.throws(() => scaleNutrition(undefined as unknown as Nutrition, 1), TypeError);
