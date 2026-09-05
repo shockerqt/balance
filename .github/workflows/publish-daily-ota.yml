@@ -50,6 +50,12 @@ jobs:
           node scripts/delivery/assert-current.mjs
           node scripts/delivery/native-compatibility.mjs > daily-compatibility.json
 
+      - name: Require publication credentials
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          test -n "$EXPO_TOKEN" || { echo "EXPO_TOKEN is unavailable to the Daily job; check reusable secret inheritance and the preview environment."; exit 1; }
+
       - name: Install mobile dependencies
         run: npm ci --prefix apps/mobile
 
