@@ -9,19 +9,14 @@ on:
       - "apps/dashboard/**"
       - "apps/server/**"
       - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-e2e.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/dashboard/**"
-      - "apps/server/**"
-      - "packages/balance-domain/**"
-      - ".github/workflows/dashboard-e2e.yml"
+      - ".github/workflows/**"
+      - "scripts/delivery/**"
+      - "delivery/**"
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: dashboard-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: dashboard-e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -58,6 +53,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
