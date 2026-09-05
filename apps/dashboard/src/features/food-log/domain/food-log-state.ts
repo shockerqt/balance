@@ -1,4 +1,5 @@
 import type { MealLogDoc, NutritionSnapshot, MealLogEntry } from '../../../types/meal-log.ts';
+import { scaleNutrition } from '@balance/domain';
 import { timeInChile, toDateId } from './time.ts';
 
 export type FoodLogMode = 'normal' | 'visual';
@@ -115,13 +116,12 @@ export function registerItemFromDocument(document: MealLogDoc): FoodLogRegisterI
 }
 
 export function nutritionForDocument(document: MealLogDoc): DisplayNutrition {
-  const nutrition = document.nutritionSnapshot.nutritionPer100;
-  const factor = document.canonicalQuantity / 100;
+  const scaled = scaleNutrition(document.nutritionSnapshot.nutritionPer100, document.canonicalQuantity / 100);
   return {
-    calories: nutrition.calories * factor,
-    protein: nutrition.protein * factor,
-    carbs: nutrition.carbs * factor,
-    fat: nutrition.fat * factor,
+    calories: scaled.calories,
+    protein: scaled.protein,
+    carbs: scaled.carbs,
+    fat: scaled.fat,
   };
 }
 

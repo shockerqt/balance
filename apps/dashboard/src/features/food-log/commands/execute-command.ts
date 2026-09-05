@@ -1,4 +1,5 @@
 import type { MealLogDoc, MealTemplateDoc } from '../../../types/meal-log.ts';
+import { canonicalQuantityForPortion } from '@balance/domain';
 import {
   createSnapshot,
   documentsForSelectedDay,
@@ -470,12 +471,13 @@ function executeQuantity(
     return { state, message: `unit conversion unavailable: ${command.unit}`, changedDocuments: false };
   }
   const portionSnapshot = current.entry.portionSnapshot ?? undefined;
+  const canonicalQuantity = canonicalQuantityForPortion(command.quantity, portionSnapshot);
+  if (canonicalQuantity === null) {
+    return { state, message: 'invalid quantity', changedDocuments: false };
+  }
   const entry = portionSnapshot
     ? { enteredQuantity: command.quantity, portionSnapshot: structuredClone(portionSnapshot) }
     : { enteredQuantity: command.quantity };
-  const canonicalQuantity = portionSnapshot
-    ? command.quantity / portionSnapshot.portionQuantity * portionSnapshot.canonicalQuantity
-    : command.quantity;
   const next = withHistory(state);
   const documents = next.documents.map((document) => document.id === current.id ? {
     ...document,

@@ -7,7 +7,7 @@ const workspaceRoot = path.resolve(projectRoot, '../..');
 const config = getDefaultConfig(projectRoot);
 
 // 1. Watch all files within the monorepo
-config.watchFolders = [projectRoot];
+config.watchFolders = [projectRoot, path.resolve(workspaceRoot, 'packages/balance-domain')];
 
 // 2. Let Metro know where to resolve packages
 config.resolver.nodeModulesPaths = [

@@ -52,6 +52,33 @@ try {
   await visibleText('150 g');
   await visibleText('synced');
 
+  const historicalRow = page.getByText('E2E historic spoon', { exact: true }).locator('..');
+  await historicalRow.getByText('5 cucharada', { exact: true }).click();
+  await quantity.fill('1');
+  await quantity.press('Enter');
+  await visibleText('1 cucharada');
+  await visibleText('synced');
+  await page.reload();
+  await visibleText('1 cucharada');
+  await visibleText('synced');
+  // 1/5 of 30 g = 6 g; at 400 kcal/100 g the historical row is 24 kcal.
+  await historicalRow.getByText('24', { exact: true }).waitFor({ state: 'visible' });
+
+  await page.getByLabel('Balance terminal food log').focus();
+  await page.keyboard.press('a');
+  const librarySearch = page.getByRole('textbox', { name: 'Search food library' });
+  await librarySearch.fill('E2E oats');
+  await librarySearch.press('Enter');
+  await page.getByText('E2E oats', { exact: true }).nth(1).waitFor({ state: 'visible' });
+  await visibleText('synced');
+  await page.reload();
+  await page.getByText('E2E oats', { exact: true }).nth(1).waitFor({ state: 'visible' });
+  await visibleText('100 g');
+  await visibleText('150 g');
+  await visibleText('1 cucharada');
+  await visibleText('synced');
+  await page.screenshot({ path: join(artifactsDir, 'shared-domain-smoke.png'), fullPage: true });
+
   await page.getByRole('button', { name: 'logout' }).click();
   await page.getByRole('button', { name: 'login' }).waitFor({ state: 'visible' });
   assert.equal(await page.evaluate(() => window.localStorage.getItem('balance.dashboard.oidc-sso.v1')), null);

@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@balance/domain": "file:../../packages/balance-domain",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "^9.1.0",
     "@react-native-vector-icons/lucide": "^13.1.2",
@@ -47,6 +48,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
+    "test:domain": "tsx --test tests/shared-domain.test.mjs",
     "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs",
     "test:macrofactor": "tsx --test tests/macro-factor-import.test.mjs",
     "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",

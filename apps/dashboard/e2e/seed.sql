@@ -70,3 +70,25 @@ ON CONFLICT (id) DO UPDATE SET
   consumed_at = EXCLUDED.consumed_at,
   updated_at = EXCLUDED.updated_at,
   deleted_at = NULL;
+
+-- Historical portion survives with no library template. Values match the
+-- portable canonical-spoon fixture and the existing Rust domain example.
+INSERT INTO meal_logs (
+  id, user_id, template_id, name_snapshot, nutrition_snapshot,
+  canonical_quantity, entry_snapshot, consumed_at, updated_at
+)
+SELECT
+  '20000000-0000-4000-8000-000000000032', user_id, NULL,
+  'E2E historic spoon',
+  '{"schemaVersion":2,"canonicalUnit":"g","nutritionPer100":{"calories":400,"protein":30,"carbs":40,"fat":12,"fiber":0,"extendedNutrition":{"vitaminCMg":10}}}'::jsonb,
+  30,
+  '{"enteredQuantity":5,"portionSnapshot":{"portionId":"tbsp","name":"cucharada","portionQuantity":5,"canonicalQuantity":30}}'::jsonb,
+  consumed_at + 60000, updated_at
+FROM meal_logs WHERE id = '20000000-0000-4000-8000-000000000001'
+ON CONFLICT (id) DO UPDATE SET
+  nutrition_snapshot = EXCLUDED.nutrition_snapshot,
+  canonical_quantity = EXCLUDED.canonical_quantity,
+  entry_snapshot = EXCLUDED.entry_snapshot,
+  consumed_at = EXCLUDED.consumed_at,
+  updated_at = EXCLUDED.updated_at,
+  deleted_at = NULL;
