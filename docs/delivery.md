@@ -1,5 +1,10 @@
 # Balance delivery
 
+After the initial Infrastructure cutover, repository variable
+`BALANCE_DELIVERY_ENABLED=true` enables automatic client publication. Setting it
+to false suspends publication while preserving checks. A skipped publication is
+not delivery evidence.
+
 Merge to main starts **Deliver Balance Clients**. It verifies dashboard,
 mobile/Hermes, shared contracts and browser E2E for the same source commit.
 Dashboard CI uploads the exact compiled archive with a digest and release.json.

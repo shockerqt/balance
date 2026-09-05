@@ -31,9 +31,11 @@ jobs:
           node-version: 24
       - run: node --test scripts/delivery/*.test.mjs
   daily:
+    if: vars.BALANCE_DELIVERY_ENABLED == 'true'
     needs: [dashboard-check, mobile-check, browser-check, delivery-tests]
     uses: ./.github/workflows/publish-daily-ota.yml
   dashboard:
+    if: vars.BALANCE_DELIVERY_ENABLED == 'true'
     needs: [dashboard-check, mobile-check, browser-check, delivery-tests]
     runs-on: ubuntu-latest
     environment: production
