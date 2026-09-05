@@ -48,7 +48,7 @@ jobs:
 
       - name: Test date navigation regressions
         working-directory: apps/mobile
-        run: npm run test:dates && npm run test:navigation
+        run: npm run test:dates && npm run test:navigation && npm run test:feed
 
       - name: Test shared domain mobile consumer
         working-directory: apps/mobile

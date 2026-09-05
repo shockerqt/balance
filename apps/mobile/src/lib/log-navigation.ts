@@ -1,7 +1,7 @@
 import { shiftDateId } from './dates';
 
 /** The only date authority. Rendering and animation never write back to it. */
-export function createLogNavigation(initialDateId: string) {
+export function createLogNavigation(initialDateId: string, onNavigate?: (revision: number) => void) {
   let dateId = initialDateId;
   let revision = 0;
   const listeners = new Set<() => void>();
@@ -10,6 +10,7 @@ export function createLogNavigation(initialDateId: string) {
     if (next === dateId) return;
     dateId = next;
     revision += 1;
+    onNavigate?.(revision);
     listeners.forEach((listener) => listener());
   };
 

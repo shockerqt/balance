@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { Profiler, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
@@ -14,28 +14,36 @@ import { Screen, Text } from '@/components/ui';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
+import { logRenderCallback } from '@/dev/log-performance';
 
 export default function LogsScreen() {
   const [selectedDateId, setSelectedDateId] = useLogsSelectedDate();
+  const { dayLogs } = useMealStore();
+  const count = dayLogs[selectedDateId]?.foods.length ?? 0;
+  const revision = logsDateStore.getRevision();
   return (
-    <Screen>
-      <DateStripHeader
-        selectedDateId={selectedDateId}
-        onSelectDate={setSelectedDateId}
-        onShiftDate={logsDateStore.shift}
-      />
-      <DayLog key={selectedDateId} selectedDateId={selectedDateId} />
-    </Screen>
+    <Profiler id="screen" onRender={logRenderCallback('screen', revision, count)}>
+      <Screen>
+        <Profiler id="header" onRender={logRenderCallback('header', revision, count)}>
+          <DateStripHeader
+            selectedDateId={selectedDateId}
+            onSelectDate={setSelectedDateId}
+            onShiftDate={logsDateStore.shift}
+          />
+        </Profiler>
+        <DayLog selectedDateId={selectedDateId} />
+      </Screen>
+    </Profiler>
   );
 }
 
-// Date-scoped state: a new day starts with no selected foods or old scroll position.
-// Header, totals, weight and write actions all use this same committed date.
+// Keep the view mounted; selection and scroll are scoped explicitly to the date.
 function DayLog({ selectedDateId }: { selectedDateId: string }) {
   const router = useRouter();
   const { dayLogs, deleteMultipleFoods } = useMealStore();
-  const log = dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId);
-  const selection = useFoodSelection();
+  const log = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
+  const selection = useFoodSelection(selectedDateId);
+  const revision = logsDateStore.getRevision();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
@@ -96,29 +104,34 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
         />
       ) : null}
       {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
-      <StickyMacroHeader
-        foods={log.foods}
-        targetCalories={log.targetCalories}
-        targetProtein={log.targetProtein}
-        targetCarbs={log.targetCarbs}
-        targetFat={log.targetFat}
-        targetFiber={log.targetFiber}
-      />
-      <DateSwipe disabled={selection.isSelectionMode} style={{ flex: 1 }}>
-        <HourRailFeed
+      <Profiler id="summary" onRender={logRenderCallback('summary', revision, log.foods.length)}>
+        <StickyMacroHeader
           foods={log.foods}
-          onSelectFood={(food) => {
-            if (!selection.isSelectionMode) openEditFor(selectedDateId, food);
-          }}
-          onAddAtHour={(hour) => openFoodSearchFor(selectedDateId, hour)}
-          isSelectionMode={selection.isSelectionMode}
-          selectedFoodIds={selection.selectedIds}
-          onLongPressFood={selection.startFromFood}
-          onLongPressGroup={selection.startFromGroup}
-          onToggleSelectFood={selection.toggleFood}
-          onToggleSelectGroup={selection.toggleGroup}
+          targetCalories={log.targetCalories}
+          targetProtein={log.targetProtein}
+          targetCarbs={log.targetCarbs}
+          targetFat={log.targetFat}
+          targetFiber={log.targetFiber}
         />
-      </DateSwipe>
+      </Profiler>
+      <Profiler id="feed" onRender={logRenderCallback('feed', revision, log.foods.length)}>
+        <DateSwipe disabled={selection.isSelectionMode} style={{ flex: 1 }}>
+          <HourRailFeed
+            dateId={selectedDateId}
+            foods={log.foods}
+            onSelectFood={(food) => {
+              if (!selection.isSelectionMode) openEditFor(selectedDateId, food);
+            }}
+            onAddAtHour={(hour) => openFoodSearchFor(selectedDateId, hour)}
+            isSelectionMode={selection.isSelectionMode}
+            selectedFoodIds={selection.selectedIds}
+            onLongPressFood={selection.startFromFood}
+            onLongPressGroup={selection.startFromGroup}
+            onToggleSelectFood={selection.toggleFood}
+            onToggleSelectGroup={selection.toggleGroup}
+          />
+        </DateSwipe>
+      </Profiler>
       {selection.isSelectionMode ? (
         <BatchActionBar
           count={selection.selectedCount}

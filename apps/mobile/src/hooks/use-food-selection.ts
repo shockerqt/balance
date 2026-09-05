@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 
 /* ============================================================
@@ -24,63 +24,47 @@ export interface FoodSelection {
   clear: () => void;
 }
 
-export function useFoodSelection(): FoodSelection {
-  const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+const EMPTY_SELECTION: ReadonlySet<string> = new Set();
+type SelectionState = { scope: string; ids: ReadonlySet<string> };
 
-  /* Idempotente a proposito. La pantalla de registros la llama en cada cambio
-     de dia; devolver un Set nuevo cuando ya estaba vacio cambiaba la identidad
-     de la seleccion y forzaba un segundo render completo del pager por toque. */
+export function useFoodSelection(scope = 'default'): FoodSelection {
+  const committedScope = useRef(scope);
+  useLayoutEffect(() => { committedScope.current = scope; }, [scope]);
+  const [state, setState] = useState<SelectionState>({ scope, ids: EMPTY_SELECTION });
+  const selectedIds = state.scope === scope ? state.ids : EMPTY_SELECTION;
+
+  // Clear a previous day's nonempty selection before native input can act on it.
+  // Ordinary date navigation with no selection causes no additional state update.
+  useLayoutEffect(() => {
+    if (state.scope !== scope && state.ids.size) setState({ scope, ids: EMPTY_SELECTION });
+  }, [scope, state]);
+
   const clear = useCallback(() => {
-    setIsSelectionMode(false);
-    setSelectedIds((prev) => (prev.size === 0 ? prev : new Set()));
-  }, []);
+    if (committedScope.current !== scope) return;
+    setState((previous) => previous.ids.size ? { scope, ids: EMPTY_SELECTION } : previous);
+  }, [scope]);
 
-  const startFromFood = useCallback((food: LoggedFoodItem) => {
-    setIsSelectionMode((mode) => {
-      if (!mode) setSelectedIds(new Set([food.id]));
-      return true;
+  const startFromGroup = useCallback((ids: string[]) => {
+    if (committedScope.current !== scope) return;
+    setState((previous) => previous.scope === scope && previous.ids.size
+      ? previous : { scope, ids: new Set(ids) });
+  }, [scope]);
+  const startFromFood = useCallback((food: LoggedFoodItem) => startFromGroup([food.id]), [startFromGroup]);
+
+  const toggleGroup = useCallback((ids: string[]) => {
+    if (committedScope.current !== scope) return;
+    setState((previous) => {
+      const next = new Set(previous.scope === scope ? previous.ids : EMPTY_SELECTION);
+      const allSelected = ids.every((id) => next.has(id));
+      ids.forEach((id) => allSelected ? next.delete(id) : next.add(id));
+      return { scope, ids: next.size ? next : EMPTY_SELECTION };
     });
-  }, []);
+  }, [scope]);
+  const toggleFood = useCallback((id: string) => toggleGroup([id]), [toggleGroup]);
 
-  const startFromGroup = useCallback((foodIds: string[]) => {
-    setIsSelectionMode((mode) => {
-      if (!mode) setSelectedIds(new Set(foodIds));
-      return true;
-    });
-  }, []);
-
-  const toggleFood = useCallback((foodId: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(foodId)) next.delete(foodId);
-      else next.add(foodId);
-      if (next.size === 0) setIsSelectionMode(false);
-      return next;
-    });
-  }, []);
-
-  const toggleGroup = useCallback((foodIds: string[]) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      const allSelected = foodIds.every((id) => next.has(id));
-      foodIds.forEach((id) => (allSelected ? next.delete(id) : next.add(id)));
-      if (next.size === 0) setIsSelectionMode(false);
-      return next;
-    });
-  }, []);
-
-  return useMemo(
-    () => ({
-      isSelectionMode,
-      selectedIds,
-      selectedCount: selectedIds.size,
-      startFromFood,
-      startFromGroup,
-      toggleFood,
-      toggleGroup,
-      clear,
-    }),
-    [isSelectionMode, selectedIds, startFromFood, startFromGroup, toggleFood, toggleGroup, clear]
-  );
+  return useMemo(() => ({
+    isSelectionMode: selectedIds.size > 0,
+    selectedIds, selectedCount: selectedIds.size,
+    startFromFood, startFromGroup, toggleFood, toggleGroup, clear,
+  }), [selectedIds, startFromFood, startFromGroup, toggleFood, toggleGroup, clear]);
 }

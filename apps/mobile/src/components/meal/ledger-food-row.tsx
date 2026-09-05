@@ -1,4 +1,5 @@
 import React from 'react';
+import { countFoodRender } from '@/dev/log-performance';
 import { TouchableOpacity, View } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { makeStyles } from '@/theme';
@@ -22,6 +23,7 @@ export const LedgerFoodRow: React.FC<{
   isSelected?: boolean;
   onToggleSelect?: (foodId: string) => void;
 }> = React.memo(({ food, onPress, onLongPress, isSelectionMode = false, isSelected = false, onToggleSelect }) => {
+  countFoodRender();
   const styles = useStyles();
 
   const handlePress = () => {
