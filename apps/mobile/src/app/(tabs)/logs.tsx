@@ -1,81 +1,76 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View } from 'react-native';
-import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import React, { Profiler, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
-import { buildDateWindow, currentTimeString } from '@/lib/dates';
+import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
+import { currentTimeString, todayId } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
+import { DateSwipe } from '@/components/meal/date-swipe';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
 import { HourRailFeed } from '@/components/meal/hour-rail-feed';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
 import { Screen, Text } from '@/components/ui';
-import { makeStyles } from '@/theme';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
-import { todayId } from '@/hooks/use-meal-store';
-
-/* Registros del dia. La pantalla compone: la ventana de fechas vive
-   en lib/dates, la seleccion multiple en use-food-selection, y la
-   barra de lote y el boton flotante son componentes propios. */
-
-/** Solo se montan los dias vecinos al activo: el resto son paginas vacias. */
-const PRELOAD_RADIUS = 2;
+import { logRenderCallback } from '@/dev/log-performance';
 
 export default function LogsScreen() {
-  const styles = useStyles();
+  const [selectedDateId, setSelectedDateId] = useLogsSelectedDate();
+  const { dayLogs } = useMealStore();
+  const count = dayLogs[selectedDateId]?.foods.length ?? 0;
+  const revision = logsDateStore.getRevision();
+  return (
+    <Profiler id="screen" onRender={logRenderCallback('screen', revision, count)}>
+      <Screen>
+        <Profiler id="header" onRender={logRenderCallback('header', revision, count)}>
+          <DateStripHeader
+            selectedDateId={selectedDateId}
+            onSelectDate={setSelectedDateId}
+            onShiftDate={logsDateStore.shift}
+          />
+        </Profiler>
+        <DayLog selectedDateId={selectedDateId} />
+      </Screen>
+    </Profiler>
+  );
+}
+
+// Keep the view mounted; selection and scroll are scoped explicitly to the date.
+function DayLog({ selectedDateId }: { selectedDateId: string }) {
   const router = useRouter();
-  const pagerRef = useRef<PagerView>(null);
-
-  const {
-    selectedDateId,
-    setSelectedDateId,
-    currentDayLog,
-    dayLogs,
-    deleteMultipleFoods,
-  } = useMealStore();
-
-  const selection = useFoodSelection();
+  const { dayLogs, deleteMultipleFoods } = useMealStore();
+  const log = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
+  const selection = useFoodSelection(selectedDateId);
+  const revision = logsDateStore.getRevision();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
-  // La ventana se reconstruye solo cuando el dia sale de ella.
-  const [windowAnchor, setWindowAnchor] = useState(selectedDateId);
-  const dateWindow = useMemo(() => buildDateWindow(windowAnchor), [windowAnchor]);
-
-  const activeIndex = dateWindow.indexOf(selectedDateId);
-  useEffect(() => {
-    if (activeIndex === -1) setWindowAnchor(selectedDateId);
-  }, [activeIndex, selectedDateId]);
-
-  useEffect(() => {
-    selection.clear();
-    if (activeIndex !== -1) pagerRef.current?.setPage(activeIndex);
-    // `selection` cambia de identidad al seleccionar; solo interesa el dia.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDateId, activeIndex]);
-
-  const openFoodSearch = useCallback(
-    (time?: string) => {
+  const openFoodSearchFor = useCallback(
+    (dateId: string, time?: string) => {
       router.push({
         pathname: '/food-search',
-        params: { dateId: selectedDateId, time: time ?? currentTimeString() },
+        params: { dateId, time: time ?? currentTimeString() },
       });
     },
-    [router, selectedDateId]
+    [router]
   );
 
-  const openEdit = useCallback(
-    (food: LoggedFoodItem) => {
-      if (selection.isSelectionMode) return;
+  const openEditFor = useCallback(
+    (dateId: string, food: LoggedFoodItem) => {
       router.push({
         pathname: '/food-edit',
-        params: { dateId: selectedDateId, foodId: food.id },
+        params: { dateId, foodId: food.id },
       });
     },
-    [router, selectedDateId, selection.isSelectionMode]
+    [router]
+  );
+
+  // El botón flotante siempre anota en el día confirmado.
+  const openFoodSearch = useCallback(
+    () => openFoodSearchFor(selectedDateId),
+    [openFoodSearchFor, selectedDateId]
   );
 
   const batchDelete = useCallback(() => {
@@ -88,76 +83,55 @@ export default function LogsScreen() {
   const openBatchMove = useCallback(() => {
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
-    router.push({ pathname: '/batch-move', params: { dateId: selectedDateId, ids: ids.join(',') } });
+    router.push({
+      pathname: '/batch-move',
+      params: { dateId: selectedDateId, ids: ids.join(',') },
+    });
     selection.clear();
   }, [router, selectedDateId, selection]);
 
-  const onPageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const target = dateWindow[e.nativeEvent.position];
-    if (target && target !== selectedDateId) setSelectedDateId(target);
-  };
+  const openWeightEntry = useCallback(() => {
+    router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } });
+  }, [router, selectedDateId]);
 
   return (
-    <Screen>
-      <DateStripHeader
-        selectedDateId={selectedDateId}
-        onSelectDate={(dateId) => {
-          setSelectedDateId(dateId);
-          const index = dateWindow.indexOf(dateId);
-          if (index !== -1) pagerRef.current?.setPage(index);
-        }}
-      />
-
+    <>
       {preferencesReady && weightTrackingEnabled ? (
         <DailyWeightRow
           measurement={weightsByDate[selectedDateId]}
           disabled={selectedDateId > todayId()}
-          onPress={() =>
-            router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } })
-          }
+          onPress={openWeightEntry}
         />
       ) : null}
       {weightSyncError ? <Text tone="danger">{weightSyncError.message}</Text> : null}
-
-      <StickyMacroHeader
-        foods={currentDayLog.foods}
-        targetCalories={currentDayLog.targetCalories}
-        targetProtein={currentDayLog.targetProtein}
-        targetCarbs={currentDayLog.targetCarbs}
-        targetFat={currentDayLog.targetFat}
-        targetFiber={currentDayLog.targetFiber}
-      />
-
-      <PagerView
-        ref={pagerRef}
-        style={styles.pager}
-        scrollEnabled={!selection.isSelectionMode}
-        initialPage={activeIndex !== -1 ? activeIndex : 0}
-        onPageSelected={onPageSelected}>
-        {dateWindow.map((dateId, index) => {
-          const isNearby = Math.abs(index - activeIndex) <= PRELOAD_RADIUS;
-          const log = dayLogs[dateId] ?? emptyDayLog(dateId);
-
-          return (
-            <View key={dateId} style={styles.page}>
-              {isNearby ? (
-                <HourRailFeed
-                  foods={log.foods}
-                  onSelectFood={openEdit}
-                  onAddAtHour={openFoodSearch}
-                  isSelectionMode={selection.isSelectionMode}
-                  selectedFoodIds={selection.selectedIds}
-                  onLongPressFood={selection.startFromFood}
-                  onLongPressGroup={selection.startFromGroup}
-                  onToggleSelectFood={selection.toggleFood}
-                  onToggleSelectGroup={selection.toggleGroup}
-                />
-              ) : null}
-            </View>
-          );
-        })}
-      </PagerView>
-
+      <Profiler id="summary" onRender={logRenderCallback('summary', revision, log.foods.length)}>
+        <StickyMacroHeader
+          foods={log.foods}
+          targetCalories={log.targetCalories}
+          targetProtein={log.targetProtein}
+          targetCarbs={log.targetCarbs}
+          targetFat={log.targetFat}
+          targetFiber={log.targetFiber}
+        />
+      </Profiler>
+      <Profiler id="feed" onRender={logRenderCallback('feed', revision, log.foods.length)}>
+        <DateSwipe disabled={selection.isSelectionMode} style={{ flex: 1 }}>
+          <HourRailFeed
+            dateId={selectedDateId}
+            foods={log.foods}
+            onSelectFood={(food) => {
+              if (!selection.isSelectionMode) openEditFor(selectedDateId, food);
+            }}
+            onAddAtHour={(hour) => openFoodSearchFor(selectedDateId, hour)}
+            isSelectionMode={selection.isSelectionMode}
+            selectedFoodIds={selection.selectedIds}
+            onLongPressFood={selection.startFromFood}
+            onLongPressGroup={selection.startFromGroup}
+            onToggleSelectFood={selection.toggleFood}
+            onToggleSelectGroup={selection.toggleGroup}
+          />
+        </DateSwipe>
+      </Profiler>
       {selection.isSelectionMode ? (
         <BatchActionBar
           count={selection.selectedCount}
@@ -166,15 +140,8 @@ export default function LogsScreen() {
           onDelete={batchDelete}
         />
       ) : (
-        <FloatingAddButton onPress={() => openFoodSearch()} />
+        <FloatingAddButton onPress={openFoodSearch} />
       )}
-
-
-    </Screen>
+    </>
   );
 }
-
-const useStyles = makeStyles(() => ({
-  pager: { flex: 1 },
-  page: { flex: 1 },
-}));

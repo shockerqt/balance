@@ -11,9 +11,10 @@ interface StickyMacroHeaderProps {
   targetCarbs?: number;
   targetFat?: number;
   targetFiber?: number;
+
 }
 
-export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
+export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   foods,
   targetCalories = 2200,
   targetProtein = 150,
@@ -68,7 +69,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = ({
       </View>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

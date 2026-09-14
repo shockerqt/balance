@@ -1,264 +1,79 @@
-import React, { useRef, useEffect } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
-import PagerView, { PagerViewOnPageSelectedEvent } from 'react-native-pager-view';
+import React, { useMemo } from 'react';
+import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme';
 import { Icon } from '@/components/ui';
-
-export type WeekStartDay = 'monday' | 'sunday';
-
-interface DateItem {
-  dateId: string;
-  dayName: string;
-  dayNumber: number;
-  isToday: boolean;
-}
-
-interface WeekGroup {
-  weekIndex: number;
-  startDateId: string;
-  days: DateItem[];
-}
+import { DateSwipe } from './date-swipe';
+import { DAY_NAMES, MONTH_NAMES, buildWeekGroup, getMondayDateId, parseDateId, todayId } from '@/lib/dates';
 
 interface DateStripHeaderProps {
   selectedDateId: string;
   onSelectDate: (dateId: string) => void;
-  weekStartsOn?: WeekStartDay;
+  onShiftDate: (days: number) => void;
 }
 
-const MONTH_NAMES_ES = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-];
-
-const DAY_NAMES_FULL_ES = [
-  'Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'
-];
-
-const parseDateId = (dateId: string): Date => {
-  const parts = dateId.split('-');
-  if (parts.length === 3) {
-    const y = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) - 1;
-    const d = parseInt(parts[2], 10);
-    return new Date(y, m, d);
-  }
-  return new Date();
-};
-
-const formatDateId = (d: Date): string => {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-export const DateStripHeader: React.FC<DateStripHeaderProps> = ({
-  selectedDateId,
-  onSelectDate,
-  weekStartsOn = 'monday',
-}) => {
+export function DateStripHeader({ selectedDateId, onSelectDate, onShiftDate }: DateStripHeaderProps) {
   const theme = useTheme();
   const router = useRouter();
-  const { width: windowWidth } = useWindowDimensions();
-  const pagerRef = useRef<PagerView>(null);
-
-  const todayDateId = useRef<string>(formatDateId(new Date())).current;
-
-  const buildWeekDays = (baseDate: Date): DateItem[] => {
-    const dayOfWeek = baseDate.getDay();
-    let startOffset = 0;
-    if (weekStartsOn === 'monday') {
-      startOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    } else {
-      startOffset = -dayOfWeek;
-    }
-
-    const startOfWeek = new Date(baseDate);
-    startOfWeek.setDate(baseDate.getDate() + startOffset);
-
-    const labelsMon = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-    const labelsSun = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-    const labels = weekStartsOn === 'monday' ? labelsMon : labelsSun;
-
-    const days: DateItem[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startOfWeek);
-      d.setDate(startOfWeek.getDate() + i);
-
-      const dId = formatDateId(d);
-      days.push({
-        dateId: dId,
-        dayName: labels[i],
-        dayNumber: d.getDate(),
-        isToday: dId === todayDateId,
-      });
-    }
-    return days;
-  };
-
-  const generateFiveWeeks = (centerDateId: string): WeekGroup[] => {
-    const centerDate = parseDateId(centerDateId);
-    const weeks: WeekGroup[] = [];
-
-    for (let offset = -2; offset <= 2; offset++) {
-      const wDate = new Date(centerDate);
-      wDate.setDate(centerDate.getDate() + offset * 7);
-
-      const days = buildWeekDays(wDate);
-      weeks.push({
-        weekIndex: offset + 2,
-        startDateId: days[0].dateId,
-        days,
-      });
-    }
-    return weeks;
-  };
-
-  const weeksList = useRef<WeekGroup[]>(generateFiveWeeks(selectedDateId)).current;
-
-  const findActiveWeekIndex = (dateId: string): number => {
-    const idx = weeksList.findIndex((w) => w.days.some((d) => d.dateId === dateId));
-    return idx !== -1 ? idx : 2;
-  };
-
-  const activeWeekIndex = findActiveWeekIndex(selectedDateId);
-
-  useEffect(() => {
-    if (pagerRef.current && activeWeekIndex !== -1) {
-      pagerRef.current.setPage(activeWeekIndex);
-    }
-  }, [selectedDateId, activeWeekIndex]);
-
-  const handlePageSelected = (e: PagerViewOnPageSelectedEvent) => {
-    const pagePos = e.nativeEvent.position;
-    const targetWeek = weeksList[pagePos];
-    if (targetWeek) {
-      const stillInWeek = targetWeek.days.some((d) => d.dateId === selectedDateId);
-      if (!stillInWeek) {
-        onSelectDate(targetWeek.days[0].dateId);
-      }
-    }
-  };
-
-  const handlePrevDay = () => {
-    const curr = parseDateId(selectedDateId);
-    curr.setDate(curr.getDate() - 1);
-    onSelectDate(formatDateId(curr));
-  };
-
-  const handleNextDay = () => {
-    const curr = parseDateId(selectedDateId);
-    curr.setDate(curr.getDate() + 1);
-    onSelectDate(formatDateId(curr));
-  };
-
-  const selDateObj = parseDateId(selectedDateId);
-  const dayNameFull = DAY_NAMES_FULL_ES[selDateObj.getDay()];
-  const dayNum = selDateObj.getDate();
-  const monthNameFull = MONTH_NAMES_ES[selDateObj.getMonth()];
-  const yearNum = selDateObj.getFullYear();
-  const isSelectedToday = selectedDateId === todayDateId;
-
-  const line1Text = isSelectedToday ? 'Hoy' : `${dayNameFull} ${dayNum}`;
-  const line2Text = isSelectedToday ? `${dayNum} de ${monthNameFull}` : `${monthNameFull}, ${yearNum}`;
+  const today = todayId();
+  const monday = getMondayDateId(selectedDateId);
+  const week = useMemo(() => buildWeekGroup(monday, 0, today), [monday, today]);
+  const date = parseDateId(selectedDateId);
+  const isToday = selectedDateId === today;
+  const title = isToday ? 'Hoy' : `${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()}`;
+  const subtitle = `${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()]} · ${date.getUTCFullYear()}`;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
-      {/* 1. Header Row */}
       <View style={styles.topHeaderRow}>
         <View style={styles.fixedDateNavBox}>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ir al día anterior"
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
-            accessibilityLabel="Ir al día anterior"
-            onPress={handlePrevDay}>
+            onPress={() => onShiftDate(-1)}>
             <Icon name="chevron-left" size={20} tone="accent" />
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.dateTitleBox}
-            delayPressIn={0}
-            activeOpacity={0.7}
-            onPress={() => router.push('/date-picker')}>
-            <Text style={[styles.headlineTitle, { color: theme.colors.text }]}>{line1Text}</Text>
-            <Text style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>{line2Text}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Elegir fecha"
+            style={styles.dateTitleBox} onPress={() => router.push('/date-picker')}>
+            <Text numberOfLines={1} style={[styles.headlineTitle, { color: theme.colors.text }]}>{title}</Text>
+            <Text numberOfLines={1} style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>{subtitle}</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ir al día siguiente"
             style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]}
-            delayPressIn={0}
-            accessibilityRole="button"
-            accessibilityLabel="Ir al día siguiente"
-            onPress={handleNextDay}>
+            onPress={() => onShiftDate(1)}>
             <Icon name="chevron-right" size={20} tone="accent" />
           </TouchableOpacity>
         </View>
-
-        {!isSelectedToday && (
-          <TouchableOpacity
+        {!isToday && (
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Volver a hoy"
             style={[styles.todayPillBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]}
-            delayPressIn={0}
-            onPress={() => onSelectDate(todayDateId)}>
+            onPress={() => onSelectDate(today)}>
             <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>Hoy</Text>
           </TouchableOpacity>
         )}
       </View>
-
-      {/* 2. Week Strip Pager */}
-      <PagerView
-        ref={pagerRef}
-        style={styles.pagerView}
-        initialPage={2}
-        onPageSelected={handlePageSelected}>
-        {weeksList.map((week) => (
-          <View key={week.weekIndex} style={[styles.weekPage, { width: windowWidth }]}>
-            <View style={styles.daysRow}>
-              {week.days.map((item) => {
-                const isSelected = item.dateId === selectedDateId;
-
-                return (
-                  <TouchableOpacity
-                    key={item.dateId}
-                    style={[
-                      styles.dayPill,
-                      { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-                      isSelected && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-                      item.isToday && !isSelected && { borderColor: theme.colors.primary },
-                    ]}
-                    delayPressIn={0}
-                    activeOpacity={0.7}
-                    onPress={() => onSelectDate(item.dateId)}>
-                    <Text
-                      style={[
-                        styles.dayNameText,
-                        { color: theme.colors.textMuted },
-                        isSelected && { color: theme.colors.onPrimary, fontWeight: '700' },
-                        item.isToday && !isSelected && { color: theme.colors.primary },
-                      ]}>
-                      {item.dayName}
-                    </Text>
-
-                    <Text
-                      style={[
-                        styles.dayNumberText,
-                        { color: theme.colors.text },
-                        isSelected && { color: theme.colors.onPrimary },
-                        item.isToday && !isSelected && { color: theme.colors.primary },
-                      ]}>
-                      {item.dayNumber}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        ))}
-      </PagerView>
+      <DateSwipe days={7}>
+        <View style={styles.daysRow}>
+          {week.days.map((item) => {
+            const selected = item.dateId === selectedDateId;
+            return (
+              <TouchableOpacity key={item.dateId}
+                accessibilityRole="button" accessibilityLabel={`${DAY_NAMES[parseDateId(item.dateId).getUTCDay()]} ${item.dateId}`}
+                accessibilityState={{ selected }}
+                onPress={() => onSelectDate(item.dateId)}
+                style={[styles.dayPill, {
+                  backgroundColor: selected ? theme.colors.primary : theme.colors.surface,
+                  borderColor: selected || item.isToday ? theme.colors.primary : theme.colors.border,
+                }]}>
+                <Text style={[styles.dayNameText, { color: selected ? theme.colors.onPrimary : theme.colors.textMuted }]}>{item.dayName}</Text>
+                <Text style={[styles.dayNumberText, { color: selected ? theme.colors.onPrimary : theme.colors.text }]}>{item.dayNumber}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </DateSwipe>
     </View>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
@@ -267,6 +82,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   topHeaderRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -275,7 +91,7 @@ const styles = StyleSheet.create({
     height: 48,
   },
   fixedDateNavBox: {
-    width: 256,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -288,6 +104,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dateTitleBox: {
+    flex: 1,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
@@ -304,9 +122,10 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   todayPillBtn: {
-    position: 'absolute',
-    right: 16,
+    marginLeft: 8,
     paddingHorizontal: 10,
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 5,
     borderRadius: 12,
     borderWidth: 1,
@@ -314,13 +133,6 @@ const styles = StyleSheet.create({
   todayPillText: {
     fontSize: 12,
     fontWeight: '600',
-  },
-  pagerView: {
-    height: 58,
-  },
-  weekPage: {
-    height: 58,
-    justifyContent: 'center',
   },
   daysRow: {
     flexDirection: 'row',
