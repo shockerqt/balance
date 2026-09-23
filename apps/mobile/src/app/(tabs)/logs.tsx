@@ -1,9 +1,11 @@
-import React, { Profiler, useCallback, useMemo } from 'react';
+import React, { Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import Animated, { cancelAnimation, Easing, ReduceMotion, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { LoggedFoodItem, emptyDayLog, useMealStore } from '@/hooks/use-meal-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
 import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
-import { currentTimeString, todayId } from '@/lib/dates';
+import { currentTimeString, shiftDateId, todayId } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { DateSwipe } from '@/components/meal/date-swipe';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
@@ -21,6 +23,42 @@ export default function LogsScreen() {
   const { dayLogs } = useMealStore();
   const count = dayLogs[selectedDateId]?.foods.length ?? 0;
   const revision = logsDateStore.getRevision();
+  const { width } = useWindowDimensions();
+  const [centerDateId, setCenterDateId] = useState(selectedDateId);
+  const translation = useSharedValue(0);
+  const transitionId = useRef(0);
+  const dates = useMemo(() => [shiftDateId(centerDateId, -1), centerDateId, shiftDateId(centerDateId, 1)], [centerDateId]);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translation.value }] }));
+
+  const finishTransition = useCallback((id: number, dateId: string) => {
+    if (transitionId.current === id && logsDateStore.get() === dateId) setCenterDateId(dateId);
+  }, []);
+
+  useLayoutEffect(() => {
+    const id = ++transitionId.current;
+    cancelAnimation(translation);
+    translation.value = 0;
+    if (selectedDateId === centerDateId) {
+      return;
+    }
+    const direction = selectedDateId === dates[2] ? 1 : selectedDateId === dates[0] ? -1 : 0;
+    if (direction === 0) {
+      setCenterDateId(selectedDateId);
+      return;
+    }
+    translation.value = withTiming(-direction * width, {
+      duration: 170,
+      easing: Easing.out(Easing.cubic),
+      reduceMotion: ReduceMotion.System,
+    }, (finished) => {
+      if (finished) runOnJS(finishTransition)(id, selectedDateId);
+    });
+  }, [centerDateId, dates, finishTransition, revision, selectedDateId, translation, width]);
+  useEffect(() => () => {
+    transitionId.current += 1;
+    cancelAnimation(translation);
+  }, [translation]);
+
   return (
     <Profiler id="screen" onRender={logRenderCallback('screen', revision, count)}>
       <Screen>
@@ -31,24 +69,45 @@ export default function LogsScreen() {
             onShiftDate={logsDateStore.shift}
           />
         </Profiler>
-        <DayLog selectedDateId={selectedDateId} />
+        <View style={styles.viewport}>
+          <Animated.View style={[styles.track, { left: -width, width: width * 3 }, animatedStyle]}>
+            {dates.map((dateId) => (
+              <View key={dateId} pointerEvents={dateId === selectedDateId ? 'auto' : 'none'}
+                style={{ width, flex: 1 }} accessibilityElementsHidden={dateId !== selectedDateId}
+                importantForAccessibility={dateId === selectedDateId ? 'auto' : 'no-hide-descendants'}>
+                <DayLog selectedDateId={dateId} />
+              </View>
+            ))}
+          </Animated.View>
+        </View>
       </Screen>
     </Profiler>
   );
 }
 
-// Keep the view mounted; selection and scroll are scoped explicitly to the date.
-function DayLog({ selectedDateId }: { selectedDateId: string }) {
+const styles = StyleSheet.create({
+  viewport: { flex: 1, overflow: 'hidden' },
+  track: { position: 'absolute', top: 0, bottom: 0, flexDirection: 'row' },
+});
+
+// A bounded three-day window keeps adjacent native views ready. The date store
+// remains authoritative; offscreen views cannot issue actions or gestures.
+const DayLog = React.memo(function DayLog({ selectedDateId }: { selectedDateId: string }) {
   const router = useRouter();
   const { dayLogs, deleteMultipleFoods } = useMealStore();
   const log = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
   const selection = useFoodSelection(selectedDateId);
-  const revision = logsDateStore.getRevision();
+  // Clear selection on departure without re-rendering an already prepared neighbor.
+  useEffect(() => logsDateStore.subscribe(() => {
+    if (logsDateStore.get() !== selectedDateId) selection.clear();
+  }), [selectedDateId, selection.clear]);
+  const revision = logsDateStore.get() === selectedDateId ? logsDateStore.getRevision() : -1;
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   const openFoodSearchFor = useCallback(
     (dateId: string, time?: string) => {
+      if (logsDateStore.get() !== dateId) return;
       router.push({
         pathname: '/food-search',
         params: { dateId, time: time ?? currentTimeString() },
@@ -59,6 +118,7 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
 
   const openEditFor = useCallback(
     (dateId: string, food: LoggedFoodItem) => {
+      if (logsDateStore.get() !== dateId) return;
       router.push({
         pathname: '/food-edit',
         params: { dateId, foodId: food.id },
@@ -74,6 +134,7 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
   );
 
   const batchDelete = useCallback(() => {
+    if (logsDateStore.get() !== selectedDateId) return;
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
     deleteMultipleFoods(selectedDateId, ids);
@@ -81,6 +142,7 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
   }, [deleteMultipleFoods, selectedDateId, selection]);
 
   const openBatchMove = useCallback(() => {
+    if (logsDateStore.get() !== selectedDateId) return;
     const ids = Array.from(selection.selectedIds);
     if (!ids.length) return;
     router.push({
@@ -91,8 +153,22 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
   }, [router, selectedDateId, selection]);
 
   const openWeightEntry = useCallback(() => {
+    if (logsDateStore.get() !== selectedDateId) return;
     router.push({ pathname: '/weight-entry', params: { dateId: selectedDateId } });
   }, [router, selectedDateId]);
+
+  const onLongPressFood = useCallback((food: LoggedFoodItem) => {
+    if (logsDateStore.get() === selectedDateId) selection.startFromFood(food);
+  }, [selectedDateId, selection.startFromFood]);
+  const onLongPressGroup = useCallback((ids: string[]) => {
+    if (logsDateStore.get() === selectedDateId) selection.startFromGroup(ids);
+  }, [selectedDateId, selection.startFromGroup]);
+  const onToggleSelectFood = useCallback((id: string) => {
+    if (logsDateStore.get() === selectedDateId) selection.toggleFood(id);
+  }, [selectedDateId, selection.toggleFood]);
+  const onToggleSelectGroup = useCallback((ids: string[]) => {
+    if (logsDateStore.get() === selectedDateId) selection.toggleGroup(ids);
+  }, [selectedDateId, selection.toggleGroup]);
 
   return (
     <>
@@ -125,10 +201,10 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
             onAddAtHour={(hour) => openFoodSearchFor(selectedDateId, hour)}
             isSelectionMode={selection.isSelectionMode}
             selectedFoodIds={selection.selectedIds}
-            onLongPressFood={selection.startFromFood}
-            onLongPressGroup={selection.startFromGroup}
-            onToggleSelectFood={selection.toggleFood}
-            onToggleSelectGroup={selection.toggleGroup}
+            onLongPressFood={onLongPressFood}
+            onLongPressGroup={onLongPressGroup}
+            onToggleSelectFood={onToggleSelectFood}
+            onToggleSelectGroup={onToggleSelectGroup}
           />
         </DateSwipe>
       </Profiler>
@@ -144,4 +220,4 @@ function DayLog({ selectedDateId }: { selectedDateId: string }) {
       )}
     </>
   );
-}
+});
