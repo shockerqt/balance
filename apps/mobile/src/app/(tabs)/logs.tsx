@@ -9,7 +9,7 @@ import { currentTimeString, shiftDateId, todayId } from '@/lib/dates';
 import { DateStripHeader } from '@/components/meal/date-strip-header';
 import { DateSwipe } from '@/components/meal/date-swipe';
 import { StickyMacroHeader } from '@/components/meal/sticky-macro-header';
-import { HourRailFeed } from '@/components/meal/hour-rail-feed';
+import { HourRailFeed, type HourRailFeedHandle } from '@/components/meal/hour-rail-feed';
 import { BatchActionBar } from '@/components/meal/batch-action-bar';
 import { FloatingAddButton } from '@/components/meal/floating-add-button';
 import { Screen, Text } from '@/components/ui';
@@ -97,9 +97,11 @@ const DayLog = React.memo(function DayLog({ selectedDateId }: { selectedDateId: 
   const { dayLogs, deleteMultipleFoods } = useMealStore();
   const log = useMemo(() => dayLogs[selectedDateId] ?? emptyDayLog(selectedDateId), [dayLogs, selectedDateId]);
   const selection = useFoodSelection(selectedDateId);
-  // Clear selection on departure without re-rendering an already prepared neighbor.
+  const feed = useRef<HourRailFeedHandle>(null);
+  // Reset a retained pane on arrival without re-rendering prepared food rows.
   useEffect(() => logsDateStore.subscribe(() => {
     if (logsDateStore.get() !== selectedDateId) selection.clear();
+    else feed.current?.resetScroll();
   }), [selectedDateId, selection.clear]);
   const revision = logsDateStore.get() === selectedDateId ? logsDateStore.getRevision() : -1;
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
@@ -193,6 +195,7 @@ const DayLog = React.memo(function DayLog({ selectedDateId }: { selectedDateId: 
       <Profiler id="feed" onRender={logRenderCallback('feed', revision, log.foods.length)}>
         <DateSwipe disabled={selection.isSelectionMode} style={{ flex: 1 }}>
           <HourRailFeed
+            ref={feed}
             dateId={selectedDateId}
             foods={log.foods}
             onSelectFood={(food) => {

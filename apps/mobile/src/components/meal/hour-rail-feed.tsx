@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react';
 import { FlatList, TouchableOpacity, View } from 'react-native';
 import type { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { DEFAULT_HOUR_RANGE, HourRange, HourRailRow, buildHourRailRows } from '@/lib/hours';
@@ -109,11 +109,18 @@ const RailRow = React.memo(function RailRow({ row, isLast, ...actions }: FeedAct
 
 const keyExtractor = (row: HourRailRow) => row.key;
 
+export interface HourRailFeedHandle {
+  resetScroll: () => void;
+}
+
 export const HourRailFeed = React.memo(function HourRailFeed({
-  dateId, foods, hourRange = DEFAULT_HOUR_RANGE, ...actions
-}: FeedActions & { dateId: string; foods: LoggedFoodItem[]; hourRange?: HourRange }) {
+  dateId, foods, hourRange = DEFAULT_HOUR_RANGE, ref, ...actions
+}: FeedActions & { dateId: string; foods: LoggedFoodItem[]; hourRange?: HourRange; ref?: React.Ref<HourRailFeedHandle> }) {
   const styles = useStyles();
   const list = useRef<FlatList<HourRailRow>>(null);
+  useImperativeHandle(ref, () => ({
+    resetScroll: () => list.current?.scrollToOffset({ offset: 0, animated: false }),
+  }), []);
   const rows = useMemo(() => buildHourRailRows(foods, hourRange), [foods, hourRange]);
   useLayoutEffect(() => { list.current?.scrollToOffset({ offset: 0, animated: false }); }, [dateId]);
 
