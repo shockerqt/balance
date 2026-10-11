@@ -14,7 +14,10 @@ Compose compiler follows Expo's Kotlin version. A scoped config plugin enables
 
 `apps/mobile/modules/balance-daily-log/android` owns the screen, native
 HorizontalPager, lazy list, calendar, summary, weight display, selection and
-batch dialogs. JavaScript supplies a JSON presentation snapshot from the existing
+batch dialogs. Expo's SDK57 `ExpoComposeView` host supplies Activity-bound
+composition, screen reattachment/layout repair and explicit unmount disposal;
+this avoids inheriting a destroyed tab fragment's composition lifecycle.
+JavaScript supplies a JSON presentation snapshot from the existing
 meal/weight/preferences stores and handles domain actions. Native code has no
 network client, account credentials, persistence, nutritional scaling or sync
 journal. Addition, individual editing and weight entry open the existing routes.

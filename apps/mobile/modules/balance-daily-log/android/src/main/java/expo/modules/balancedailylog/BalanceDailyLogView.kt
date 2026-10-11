@@ -15,8 +15,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,7 +22,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
-import expo.modules.kotlin.views.ExpoView
+import expo.modules.kotlin.views.ExpoComposeView
+import expo.modules.kotlin.views.ComposeProps
+import expo.modules.kotlin.views.ComposableScope
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -34,8 +34,7 @@ import org.json.JSONObject
 
 internal data class DateCommand(val date: LocalDate, val fromNative: Boolean, val revision: Long)
 
-class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
-  override val shouldUseAndroidLayout = true
+class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoComposeView<ComposeProps>(context, appContext, withHostingView = true) {
   private val onAction by EventDispatcher()
   internal val active = mutableStateOf(false)
   private val data = mutableStateOf(JSONObject())
@@ -43,31 +42,27 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoView(c
   private var sequence = 0L
   private var session = ""
 
-  init {
-    addView(ComposeView(context).apply {
-      setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
-      setContent {
-        val snapshot = data.value
-        val colors = snapshot.optJSONObject("colors") ?: JSONObject()
-        val background = color(colors, "background", Color(0xFF12160F))
-        MaterialTheme(colorScheme = darkColorScheme(
-          primary = color(colors, "primary", Color(0xFFEEF2E6)),
-          onPrimary = color(colors, "onPrimary", Color(0xFF12160F)),
-          surface = color(colors, "surface", Color(0xFF1A1F16)),
-          surfaceContainer = color(colors, "surfaceRaised", Color(0xFF232A1E)),
-          onSurface = color(colors, "text", Color(0xFFEEF2E6)),
-          onSurfaceVariant = color(colors, "textSecondary", Color(0xFF9AA392)),
-          outlineVariant = color(colors, "border", Color(0xFF333C2C)),
-          background = background,
-          error = color(colors, "danger", Color(0xFFFF6B6B))
-        )) {
-          Surface(modifier = Modifier.fillMaxSize(), color = background,
-            contentColor = MaterialTheme.colorScheme.onSurface) {
-            DailyLog(snapshot, command.value, active.value, ::emit)
-          }
-        }
+  @Composable
+  override fun ComposableScope.Content() {
+    val snapshot = data.value
+    val colors = snapshot.optJSONObject("colors") ?: JSONObject()
+    val background = color(colors, "background", Color(0xFF12160F))
+    MaterialTheme(colorScheme = darkColorScheme(
+      primary = color(colors, "primary", Color(0xFFEEF2E6)),
+      onPrimary = color(colors, "onPrimary", Color(0xFF12160F)),
+      surface = color(colors, "surface", Color(0xFF1A1F16)),
+      surfaceContainer = color(colors, "surfaceRaised", Color(0xFF232A1E)),
+      onSurface = color(colors, "text", Color(0xFFEEF2E6)),
+      onSurfaceVariant = color(colors, "textSecondary", Color(0xFF9AA392)),
+      outlineVariant = color(colors, "border", Color(0xFF333C2C)),
+      background = background,
+      error = color(colors, "danger", Color(0xFFFF6B6B))
+    )) {
+      Surface(modifier = Modifier.fillMaxSize(), color = background,
+        contentColor = MaterialTheme.colorScheme.onSurface) {
+        DailyLog(snapshot, command.value, active.value, ::emit)
       }
-    }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
   }
 
   fun setData(value: String) {
