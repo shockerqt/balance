@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '@/services/config';
+import { authDataNamespace } from '@/services/auth/session-state';
 import React, {
   createContext,
   useCallback,
@@ -34,7 +36,7 @@ function mergePreference(
 
 export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const namespace = user ? `user:${user.id}` : 'guest';
+  const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const defaultDoc = useMemo<UserPreferencesDoc>(
     () => ({
       id: user?.id ?? 'guest',

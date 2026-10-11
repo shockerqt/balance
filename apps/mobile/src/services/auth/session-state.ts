@@ -1,3 +1,104 @@
+export interface SessionBinding {
+  issuer: string;
+  clientId: string;
+  resource?: string;
+  apiBaseUrl: string;
+}
+
+const isSessionBinding = (value: unknown): value is SessionBinding => {
+  if (!value || typeof value !== "object") return false;
+  const binding = value as Partial<SessionBinding>;
+  return [binding.issuer, binding.clientId, binding.apiBaseUrl].every(
+    (field) => typeof field === "string" && field.length > 0,
+  ) && (binding.resource === undefined ||
+    typeof binding.resource === "string" && binding.resource.length > 0);
+};
+
+export const sameSessionBinding = (a: SessionBinding, b: SessionBinding) =>
+  a.issuer === b.issuer && a.clientId === b.clientId &&
+  a.resource === b.resource && a.apiBaseUrl === b.apiBaseUrl;
+
+// The sole one-time unbound-session migration policy. It cannot follow env
+// overrides to a new issuer, client, resource or backend.
+const isLegacyProductionBinding = (binding: SessionBinding) =>
+  binding.issuer === "https://auth.shocker.cl/realms/balance" &&
+  binding.clientId === "balance-mobile" && binding.resource === undefined &&
+  binding.apiBaseUrl === "https://balance.shocker.cl/api";
+
+export const sessionForAuthContext = (
+  session: StoredAuthSession | null,
+  binding: SessionBinding,
+): StoredAuthSession | null => {
+  if (!session) return null;
+  if (session.binding) return sameSessionBinding(session.binding, binding) ? session : null;
+  return isLegacyProductionBinding(binding) ? { ...session, binding: { ...binding } } : null;
+};
+
+// Production retains its existing storage keys; every other API has its own
+// opaque namespace even when user IDs coincide across databases.
+export const authDataNamespace = (apiBaseUrl: string, userId: number): string =>
+  apiBaseUrl === "https://balance.shocker.cl/api"
+    ? `user:${userId}`
+    : `user:${encodeURIComponent(apiBaseUrl)}:${userId}`;
+
+// A transient refresh failure leaves the session retryable. The refresh owner
+// handles terminal failure; an invalidated request must never retry or clear.
+export const retryUnauthorizedRequest = async <T extends { status: number }>(
+  original: T,
+  refresh: () => Promise<StoredAuthSession | null>,
+  isCurrent: () => boolean,
+  request: (token: string) => Promise<T>,
+  clear: () => Promise<unknown>,
+): Promise<T> => {
+  const refreshed = await refresh();
+  if (!isCurrent() || !refreshed) return original;
+  const response = await request(refreshed.accessToken);
+  if (response.status === 401 && isCurrent()) await clear();
+  return response;
+};
+
+export const oauthResourceParams = (resource?: string): Record<string, string> =>
+  resource ? { resource } : {};
+
+export const assertAuthorizationResponseIssuer = (
+  issuer: string,
+  responseIssuer: string | undefined,
+  advertised: boolean,
+) => {
+  if ((advertised || responseIssuer !== undefined) && responseIssuer !== issuer)
+    throw new Error("Authorization response issuer rejected");
+};
+
+export const assertStagingMobileRedirect = (
+  binding: SessionBinding,
+  scheme: string,
+  redirect: string,
+) => {
+  if (binding.issuer === "https://auth-staging.shocker.cl" ||
+      binding.clientId === "balance-mobile-staging") {
+    if (binding.issuer !== "https://auth-staging.shocker.cl" ||
+        binding.clientId !== "balance-mobile-staging" ||
+        binding.apiBaseUrl !== "https://balance-staging.shocker.cl/api" ||
+        (binding.resource !== undefined && binding.resource !== "https://balance-staging.shocker.cl/api") ||
+        scheme !== "balance-dev" || redirect !== "balance-dev://auth-callback")
+      throw new Error("Staging requires the registered Balance Dev redirect");
+  }
+};
+
+// Do not let a late async result (or error) advance an invalidated login.
+export const awaitCurrentAuthStep = async <T>(
+  operation: Promise<T>,
+  isCurrent: () => boolean,
+): Promise<T | undefined> => {
+  try {
+    const value = await operation;
+    return isCurrent() ? value : undefined;
+  } catch (error) {
+    if (isCurrent()) throw error;
+    return undefined;
+  }
+};
+
 export interface StoredUserProfile {
   id: number;
   email: string;
@@ -17,6 +118,7 @@ export interface StoredAuthSession {
   // a different login (deep link, another account) gets a new one. That lets
   // an in-flight response tell a rotation apart from a replacement.
   lineage?: string;
+  binding?: SessionBinding;
 }
 
 let lineageCounter = 0;
@@ -59,6 +161,7 @@ export const parseStoredSession = (
         !isPositiveNumber(candidate.expiresIn)) ||
       (candidate.lineage !== undefined &&
         typeof candidate.lineage !== "string") ||
+      (candidate.binding !== undefined && !isSessionBinding(candidate.binding)) ||
       !isStoredUser(candidate.user)
     ) {
       return null;
@@ -83,7 +186,8 @@ export const isSessionFresh = (
 export const isSameSessionLineage = (
   a: StoredAuthSession,
   b: StoredAuthSession,
-) => a.lineage !== undefined && a.lineage === b.lineage;
+) => a.lineage !== undefined && a.lineage === b.lineage &&
+  (a.binding && b.binding ? sameSessionBinding(a.binding, b.binding) : !a.binding && !b.binding);
 
 export const sessionForUnauthorizedResponse = (
   requestSession: StoredAuthSession,
@@ -167,13 +271,15 @@ export class SerializedSessionWriter<T> {
 
 export const mergeRefreshedSession = (
   previous: StoredAuthSession,
-  refreshed: Omit<StoredAuthSession, "version" | "user" | "lineage">,
+  refreshed: Omit<StoredAuthSession, "version" | "user" | "lineage" | "binding">,
+  web = false,
 ): StoredAuthSession => ({
   version: 2,
   ...refreshed,
-  refreshToken: refreshed.refreshToken ?? previous.refreshToken,
+  refreshToken: web ? undefined : refreshed.refreshToken ?? previous.refreshToken,
   user: previous.user,
   lineage: previous.lineage,
+  ...(previous.binding ? { binding: previous.binding } : {}),
 });
 
 // SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
@@ -223,6 +329,13 @@ export const resolveStoredSession = (
 ): StoredAuthSession | null => {
   if (record === LOGGED_OUT_MARKER) return null;
 
+  // A corrupt deciding record must never fall back to an older unbound token.
+  if (record) {
+    try {
+      const value = JSON.parse(record);
+      if (value?.binding !== undefined && !isSessionBinding(value.binding)) return null;
+    } catch { return null; }
+  }
   const saved = parseStoredSession(record);
   if (saved)
     return {
@@ -241,4 +354,16 @@ export const resolveStoredSession = (
         lineage: nextSessionLineage(),
       }
     : null;
+};
+
+
+export const assertSyncConfiguration = (
+  api: string, ws: string, mode: string, issuer: string, client: string,
+) => {
+  if (mode !== "legacy" && mode !== "application") throw new Error("Invalid sync authentication mode");
+  if (issuer === "https://auth-staging.shocker.cl" || client === "balance-mobile-staging" || api === "https://balance-staging.shocker.cl/api") {
+    if (api !== "https://balance-staging.shocker.cl/api" ||
+        ws !== "wss://balance-staging.shocker.cl/api/ws/sync/application" || mode !== "application")
+      throw new Error("Staging requires its application-authenticated sync endpoint");
+  }
 };

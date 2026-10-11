@@ -1,5 +1,5 @@
 import { AppState, AppStateStatus } from 'react-native';
-import { WS_SYNC_URL } from '@/services/config';
+import { WS_SYNC_URL, WS_AUTH_MODE } from '@/services/config';
 import { accessTokenChanged } from '@/services/auth/session-state';
 import { storage } from '@/services/storage';
 import {
@@ -85,6 +85,9 @@ function isCollection(value: unknown): value is SyncCollection {
 
 export class SyncClient {
   private ws: WebSocket | null = null;
+  private ready = false;
+  private authTimer: ReturnType<typeof setTimeout> | null = null;
+  private expiredToken: string | null = null;
   private accessToken: string | null = null;
   private namespace = 'guest';
   private namespaceGeneration = 0;
@@ -115,6 +118,11 @@ export class SyncClient {
   setNamespace(namespace: string | null): void {
     const next = namespaceKey(namespace ?? 'guest');
     if (next === this.namespace) return;
+    this.clearAuthTimer();
+    this.ready = false;
+    const previousSocket = this.ws;
+    this.ws = null;
+    previousSocket?.close();
     this.namespace = next;
     this.namespaceGeneration += 1;
     this.cancelPending(new Error('SYNC_NAMESPACE_CHANGED'));
@@ -147,11 +155,14 @@ export class SyncClient {
   connect(accessToken?: string, namespace?: string): void {
     const reconnectForToken = accessTokenChanged(this.accessToken, accessToken);
     if (accessToken) this.accessToken = accessToken;
+    if (reconnectForToken) this.expiredToken = null;
     if (namespace) this.setNamespace(namespace);
     this.closedByUser = false;
-    if (!this.accessToken) return;
+    if (!this.accessToken || this.expiredToken === this.accessToken) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       if (reconnectForToken) {
+        this.clearAuthTimer();
+        this.ready = false;
         this.clearReconnectTimer();
         this.cancelPending(new Error('SYNC_ACCESS_TOKEN_CHANGED'));
         // A routine token rotation is not a failure: reconnect at once instead
@@ -165,34 +176,71 @@ export class SyncClient {
 
     this.clearReconnectTimer();
     try {
-      const socket = new WebSocket(WS_SYNC_URL, ['balance', `balance.bearer.${this.accessToken}`]);
+      const token = this.accessToken;
+      const generation = this.namespaceGeneration;
+      const socket = new WebSocket(WS_SYNC_URL, WS_AUTH_MODE === 'application' ? ['balance'] : ['balance', `balance.bearer.${token}`]);
       this.ws = socket;
-      socket.onopen = () => {
+      this.ready = false;
+      const current = () => this.ws === socket && this.namespaceGeneration === generation && this.accessToken === token;
+      const ready = () => {
+        this.clearAuthTimer();
+        this.ready = true;
         this.reconnectAttempt = 0;
         void this.resync();
         void this.flushOutbox();
       };
+      socket.onopen = () => {
+        if (!current()) return;
+        if (WS_AUTH_MODE === 'application') {
+          this.authTimer = setTimeout(() => {
+            if (!current() || this.ready) return;
+            this.authTimer = null;
+            socket.close();
+          }, REQUEST_TIMEOUT_MS);
+          try { socket.send(JSON.stringify({ event: 'authenticate', accessToken: token })); }
+          catch { socket.close(); }
+        } else ready();
+      };
       socket.onmessage = (event) => {
+        if (!current()) return;
+        if (WS_AUTH_MODE === 'application' && !this.ready) {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.event === 'authenticated' && Object.keys(message).length === 1) ready();
+          } catch { /* Untrusted non-ACK frames never enable sync. */ }
+          return;
+        }
         void this.handleMessage(event.data);
       };
       socket.onerror = () => {
-        // onclose schedules the reconnect; avoid logging tokens or payloads.
+        if (!current()) return;
+        // onclose schedules reconnect; never log credentials or payloads.
       };
-      socket.onclose = () => {
-        // A late close from a replaced socket must not erase its successor.
-        if (this.ws !== socket) return;
+      socket.onclose = (event) => {
+        // Token rotation has already replaced the captured token; socket identity
+        // still owns cleanup/reconnect, but never a new namespace's callbacks.
+        if (this.ws !== socket || this.namespaceGeneration !== generation) return;
+        this.clearAuthTimer();
+        this.ready = false;
+        this.cancelPending(new Error('SYNC_DISCONNECTED'));
         this.ws = null;
         const immediate = this.reconnectWithoutDelay;
         this.reconnectWithoutDelay = false;
+        if (WS_AUTH_MODE === 'application' && event.code === 4001 && this.accessToken === token) this.expiredToken = token;
         if (!this.closedByUser) this.scheduleReconnect(immediate ? 0 : undefined);
       };
     } catch {
       this.ws = null;
+      this.ready = false;
+      this.clearAuthTimer();
       this.scheduleReconnect();
     }
   }
 
   disconnect(): void {
+    this.clearAuthTimer();
+    this.ready = false;
+    this.expiredToken = null;
     this.closedByUser = true;
     this.reconnectWithoutDelay = false;
     this.accessToken = null;
@@ -210,7 +258,7 @@ export class SyncClient {
 
   async pull(collection: SyncCollection, checkpoint?: SyncCheckpoint, limit = 50, expected?: { namespace: string; generation: number }): Promise<PullResult> {
     if (this.disabledCollections.has(collection)) throw new Error('SYNC_COLLECTION_DISABLED');
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.isReady()) {
       throw new Error('SYNC_OFFLINE');
     }
     const requestId = nextRequestId();
@@ -256,7 +304,7 @@ export class SyncClient {
   async push(collection: SyncCollection, rows: { newDocumentState: SyncDocument }[]): Promise<PushResult> {
     if (this.disabledCollections.has(collection)) throw new Error('SYNC_COLLECTION_DISABLED');
     if (!rows.length) return { conflicts: [], invalidConflict: false, rejections: [] };
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('SYNC_OFFLINE');
+    if (!this.isReady()) throw new Error('SYNC_OFFLINE');
     const requestId = nextRequestId();
     return this.request<PushResult>(
       requestId,
@@ -336,7 +384,7 @@ export class SyncClient {
   }
 
   async resync(): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isReady()) return;
     await Promise.all(
       Array.from(this.handlers.keys())
         .filter((collection) => !this.disabledCollections.has(collection))
@@ -364,7 +412,7 @@ export class SyncClient {
 
   private async performResync(collection: SyncCollection, namespace: string, generation: number, ready?: Promise<void>): Promise<void> {
     if (ready) await ready;
-    if (!this.isCurrent(namespace, generation) || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isCurrent(namespace, generation) || !this.isReady()) return;
     const rawCheckpoint = await storage.getItem(checkpointStorageKey(namespace, collection));
     let checkpoint: SyncCheckpoint | undefined;
     if (rawCheckpoint) {
@@ -443,6 +491,7 @@ export class SyncClient {
     namespace = this.namespace,
     generation = this.namespaceGeneration,
   ): Promise<T> {
+    if (!this.isReady() || !this.isCurrent(namespace, generation)) return Promise.reject(new Error('SYNC_OFFLINE'));
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
@@ -461,7 +510,7 @@ export class SyncClient {
       fallback.push(requestId);
       this.collectionFallbackRequests.set(collection, fallback);
       try {
-        this.ws?.send(JSON.stringify(payload));
+        this.ws!.send(JSON.stringify(payload));
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(requestId);
@@ -531,7 +580,7 @@ export class SyncClient {
     const generation = this.namespaceGeneration;
     this.flushPromise = (async () => {
       await this.loadOutbox();
-      if (!this.isCurrent(namespace, generation) || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.outbox.size === 0) return;
+      if (!this.isCurrent(namespace, generation) || !this.isReady() || this.outbox.size === 0) return;
       for (const collection of SYNC_COLLECTIONS) {
         if (!this.isCurrent(namespace, generation)) return;
         if (this.disabledCollections.has(collection)) continue;
@@ -563,19 +612,28 @@ export class SyncClient {
       this.flushPromise = null;
       if (this.flushAfterCurrent) {
         this.flushAfterCurrent = false;
-        if (this.ws?.readyState === WebSocket.OPEN && this.outbox.size > 0) void this.flushOutbox();
+        if (this.isReady() && this.outbox.size > 0) void this.flushOutbox();
       }
     });
     return this.flushPromise;
   }
 
   private scheduleReconnect(delay?: number): void {
-    if (this.closedByUser || !this.accessToken || this.reconnectTimer) return;
+    if (this.closedByUser || !this.accessToken || this.expiredToken === this.accessToken || this.reconnectTimer) return;
     const wait = delay ?? Math.min(30_000, 1_000 * 2 ** this.reconnectAttempt++);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, wait);
+  }
+
+  private isReady(): boolean {
+    return !!this.ws && this.ws.readyState === WebSocket.OPEN && (WS_AUTH_MODE !== 'application' || this.ready);
+  }
+
+  private clearAuthTimer(): void {
+    if (this.authTimer) clearTimeout(this.authTimer);
+    this.authTimer = null;
   }
 
   private clearReconnectTimer(): void {

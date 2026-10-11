@@ -3,10 +3,16 @@ use config::openapi::ApiDoc;
 use connectors::{db::Database, gemini::GeminiClient};
 use modules::{
     ai::routes::ai_routes,
-    auth::{middleware::auth, oidc::OidcConfig, routes::auth_routes},
+    auth::{
+        middleware::auth,
+        oidc::{IdentityMode, OidcConfig},
+        routes::auth_routes,
+    },
     imports::import_routes,
     mcp::{mcp_metadata_routes, mcp_routes},
-    sync::routes::{public_template_routes, sync_routes},
+    sync::routes::{
+        WsAllowedOrigins, application_sync_routes, public_template_routes, sync_routes,
+    },
     user::routes::user_routes,
 };
 use server::server_bind::server_bind_addr_from_env;
@@ -29,6 +35,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
+    let mcp_oidc = oidc.mcp_config();
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db = Database::new(&database_url)
         .await
@@ -36,15 +44,19 @@ async fn main() -> anyhow::Result<()> {
 
     let shared_db = Arc::new(db);
     let sync_hub = modules::sync::hub::SyncHub::default();
-    let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
-
     let gemini_api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
     let gemini_client = Arc::new(GeminiClient::new(gemini_api_key));
 
+    let sync = if oidc.identity_mode() == IdentityMode::IssuerSubject {
+        application_sync_routes(oidc.clone(), WsAllowedOrigins::from_env()?)
+    } else {
+        sync_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth))
+    };
     let app = Router::new()
+        .route("/health", axum::routing::get(health))
         .merge(public_template_routes()) // Public Unauthenticated Endpoint
-        .merge(mcp_metadata_routes())
-        .merge(mcp_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)))
+        .merge(mcp_metadata_routes(&oidc, &mcp_oidc))
+        .merge(mcp_routes().route_layer(middleware::from_fn_with_state(mcp_oidc, auth)))
         .nest(
             "/me",
             user_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
@@ -55,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
             ai_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),
         )
         .merge(import_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)))
-        .merge(sync_routes().route_layer(middleware::from_fn_with_state(oidc, auth)))
+        .merge(sync)
         .nest_service("/mockups", ServeDir::new("static/mockups"))
         .layer(
             ServiceBuilder::new()
@@ -82,4 +94,49 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("Balance server stopped unexpectedly: {error}"))?;
 
     Ok(())
+}
+
+async fn health(axum::Extension(db): axum::Extension<Arc<Database>>) -> axum::http::StatusCode {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&db.user.pool),
+    )
+    .await
+    {
+        Ok(Ok(1)) => axum::http::StatusCode::NO_CONTENT,
+        _ => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn readiness_reports_fresh_database_failure_and_timeout() {
+        let Ok(url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
+            return;
+        };
+        let db = Arc::new(Database::new(&url).await.unwrap());
+        assert_eq!(
+            health(axum::Extension(db.clone())).await,
+            axum::http::StatusCode::NO_CONTENT
+        );
+        let mut held = Vec::new();
+        for _ in 0..5 {
+            held.push(db.user.pool.acquire().await.unwrap());
+        }
+        let start = std::time::Instant::now();
+        assert_eq!(
+            health(axum::Extension(db.clone())).await,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(3));
+        drop(held);
+        db.user.pool.close().await;
+        assert_eq!(
+            health(axum::Extension(db)).await,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
 }
