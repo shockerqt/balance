@@ -12,6 +12,10 @@ group = 'expo.modules.balancedailylog'
 version = '1.0.0'
 android {
   namespace "expo.modules.balancedailylog"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
   buildFeatures { compose true }
   compileOptions {
     coreLibraryDesugaringEnabled true

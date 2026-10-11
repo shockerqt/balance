@@ -3,6 +3,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 export type DailyLogEvent = {
   session: string;
   sequence: number;
+  commandRevision: number;
   action: 'date' | 'add' | 'edit' | 'weight' | 'delete' | 'move';
   date: string;
   ids?: string[];

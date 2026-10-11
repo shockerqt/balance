@@ -32,10 +32,10 @@ export function projectDays(logs: Record<string, DayLog>, weights: Record<string
 
 // The bridge is an input boundary: never trust queued native callbacks after
 // navigation, unmount, account replacement or removal of their target records.
-export function acceptDailyEvent(value: unknown, session: string, lastSequence: number, selected: string, logs: Record<string, DayLog>): value is DailyLogEvent {
+export function acceptDailyEvent(value: unknown, session: string, lastSequence: number, selected: string, logs: Record<string, DayLog>, commandRevision: number): value is DailyLogEvent {
   if (!value || typeof value !== 'object') return false;
   const e = value as DailyLogEvent;
-  if (e.session !== session || !Number.isSafeInteger(e.sequence) || e.sequence <= lastSequence || !isDateId(e.date)) return false;
+  if (e.commandRevision !== commandRevision || e.session !== session || !Number.isSafeInteger(e.sequence) || e.sequence <= lastSequence || !isDateId(e.date)) return false;
   if (e.action === 'date') return true;
   if (!['add', 'edit', 'weight', 'delete', 'move'].includes(e.action) || e.date !== selected) return false;
   if (e.time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(e.time)) return false;

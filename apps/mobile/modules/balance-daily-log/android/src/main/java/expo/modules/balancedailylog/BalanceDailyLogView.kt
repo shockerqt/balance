@@ -32,14 +32,14 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-internal data class DateCommand(val date: LocalDate, val fromNative: Boolean)
+internal data class DateCommand(val date: LocalDate, val fromNative: Boolean, val revision: Long)
 
 class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   override val shouldUseAndroidLayout = true
   private val onAction by EventDispatcher()
   internal val active = mutableStateOf(false)
   private val data = mutableStateOf(JSONObject())
-  private val command = mutableStateOf(DateCommand(LocalDate.now(), false))
+  private val command = mutableStateOf(DateCommand(LocalDate.now(), false, 0))
   private var sequence = 0L
   private var session = ""
 
@@ -79,12 +79,12 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoView(c
   fun setDateCommand(value: String) {
     val parsed = runCatching { JSONObject(value) }.getOrNull() ?: return
     val date = DailyLogDates.parse(parsed.optString("date")) ?: return
-    command.value = DateCommand(date, parsed.optBoolean("fromNative"))
+    command.value = DateCommand(date, parsed.optBoolean("fromNative"), parsed.optLong("revision"))
   }
-  private fun emit(action: String, date: LocalDate, ids: List<String>, time: String?) {
+  private fun emit(action: String, date: LocalDate, ids: List<String>, time: String?, revision: Long) {
     if (!active.value || session.isEmpty()) return
     sequence += 1
-    val event = mutableMapOf<String, Any>("session" to session, "sequence" to sequence, "action" to action, "date" to date.toString())
+    val event = mutableMapOf<String, Any>("session" to session, "sequence" to sequence, "commandRevision" to revision, "action" to action, "date" to date.toString())
     if (ids.isNotEmpty()) event["ids"] = ids
     if (time != null) event["time"] = time
     onAction(event)
@@ -105,11 +105,13 @@ private val weekdayFormat = DateTimeFormatter.ofPattern("EEEEE", spanish)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
-  emit: (String, LocalDate, List<String>, String?) -> Unit) {
+  emit: (String, LocalDate, List<String>, String?, Long) -> Unit) {
   val pager = rememberPagerState(initialPage = DailyLogDates.page(command.date)) { DailyLogDates.count }
   val scope = rememberCoroutineScope()
   val latestEmit by rememberUpdatedState(emit)
   val latestActive by rememberUpdatedState(active)
+  var appliedRevision by remember { mutableLongStateOf(command.revision) }
+  val latestCommand by rememberUpdatedState(command)
   val settled = DailyLogDates.date(pager.settledPage)
   val visible = DailyLogDates.date(pager.currentPage)
   val today = DailyLogDates.parse(data.optString("today")) ?: LocalDate.now()
@@ -122,19 +124,27 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   var moveTime by remember { mutableStateOf(false) }
   val settledDay = days.optJSONObject(settled.toString()) ?: empty
   val available = foods(settledDay).map { it.optString("id") }.toSet()
-  val locked = pager.isScrollInProgress || !active
+  val pendingCommand = !command.fromNative && command.revision != appliedRevision
+  val locked = pager.isScrollInProgress || pendingCommand || !active
 
   // Native acknowledgements never animate the pager backwards after a newer
   // swipe. Only an external date command controls it from JavaScript.
   LaunchedEffect(command) {
-    if (!command.fromNative && DailyLogDates.page(command.date) != pager.settledPage) {
+    if (!command.fromNative) {
       selected = emptySet()
-      pager.scrollToPage(DailyLogDates.page(command.date))
+      deleteConfirmation = false
+      moveTime = false
+      if (pager.isScrollInProgress || DailyLogDates.page(command.date) != pager.settledPage) {
+        pager.scrollToPage(DailyLogDates.page(command.date))
+      }
+      appliedRevision = command.revision
     }
   }
   LaunchedEffect(pager) {
-    snapshotFlow { pager.settledPage to pager.isScrollInProgress }.distinctUntilChanged().collect { (page, scrolling) ->
-      if (!scrolling && latestActive) latestEmit("date", DailyLogDates.date(page), emptyList(), null)
+    snapshotFlow { Triple(pager.settledPage, pager.isScrollInProgress, appliedRevision) }.distinctUntilChanged().collect { (page, scrolling, revision) ->
+      if (!scrolling && latestActive && revision == latestCommand.revision) {
+        latestEmit("date", DailyLogDates.date(page), emptyList(), null, revision)
+      }
     }
   }
   LaunchedEffect(settled, available, active) {
@@ -144,7 +154,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   }
   BackHandler(active && selected.isNotEmpty()) { selected = emptySet() }
   fun action(kind: String, ids: List<String> = emptyList(), time: String? = null) {
-    if (!locked && pager.currentPage == pager.settledPage) emit(kind, settled, ids, time)
+    if (!locked && pager.currentPage == pager.settledPage) emit(kind, settled, ids, time, appliedRevision)
   }
   fun go(date: LocalDate) {
     if (active && selected.isEmpty()) scope.launch { pager.animateScrollToPage(DailyLogDates.page(date)) }
@@ -186,7 +196,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       beyondViewportPageCount = 1, userScrollEnabled = active && selected.isEmpty(), key = { it }) { page ->
       val date = DailyLogDates.date(page)
       val day = days.optJSONObject(date.toString()) ?: empty
-      DayContent(date, day, data, today, selected, enabled = active && page == pager.settledPage && !pager.isScrollInProgress,
+      DayContent(date, day, data, today, selected, enabled = active && page == pager.settledPage && !locked,
         onFood = { id ->
           if (selected.isEmpty()) action("edit", listOf(id)) else selected = if (id in selected) selected - id else selected + id
         },

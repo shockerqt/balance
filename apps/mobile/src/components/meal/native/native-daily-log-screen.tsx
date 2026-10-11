@@ -30,7 +30,7 @@ function DailyLogSession() {
   const [session, setSession] = useState(freshSession);
   const [mounted, setMounted] = useState(false);
   const [today, setToday] = useState(todayId);
-  const live = useRef({ alive: true, focused: false, sequence: 0, nativeDate: '', session });
+  const live = useRef({ alive: true, focused: false, sequence: 0, nativeDate: '', session, applyingNative: false, commandRevision: logsDateStore.getRevision() });
   useFocusEffect(useCallback(() => {
     live.current.focused = true;
     live.current.session = freshSession();
@@ -43,10 +43,16 @@ function DailyLogSession() {
   useEffect(() => {
     live.current.alive = true;
     setMounted(true);
+    const unsubscribe = logsDateStore.subscribe(() => {
+      if (!live.current.applyingNative) {
+        live.current.commandRevision = logsDateStore.getRevision();
+        live.current.nativeDate = '';
+      }
+    });
     const updateToday = () => setToday(todayId());
     const subscription = AppState.addEventListener('change', updateToday);
     const timer = setInterval(updateToday, 60_000);
-    return () => { live.current.alive = false; subscription.remove(); clearInterval(timer); };
+    return () => { live.current.alive = false; unsubscribe(); subscription.remove(); clearInterval(timer); };
   }, []);
   const data = useMemo(() => JSON.stringify({
     session, today, colors: theme.colors,
@@ -55,14 +61,15 @@ function DailyLogSession() {
     days: mounted ? projectDays(meals.dayLogs, weight.weightsByDate) : {},
     empty: projectDays({ [today]: emptyDayLog(today) }, {})[today],
   }), [session, today, theme.colors, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, mounted]);
-  const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected });
+  const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision });
   return <Screen><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
-      if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, live.current.session, live.current.sequence, logsDateStore.get(), meals.dayLogs)) return;
+      if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, live.current.session, live.current.sequence, logsDateStore.get(), meals.dayLogs, live.current.commandRevision)) return;
       live.current.sequence = e.sequence;
       if (e.action === 'date') {
         live.current.nativeDate = e.date;
-        logsDateStore.set(e.date);
+        live.current.applyingNative = true;
+        try { logsDateStore.set(e.date); } finally { live.current.applyingNative = false; }
       } else if (e.action === 'add') router.push({ pathname: '/food-search', params: { dateId: e.date, time: e.time ?? currentTimeString() } });
       else if (e.action === 'edit') router.push({ pathname: '/food-edit', params: { dateId: e.date, foodId: e.ids![0] } });
       else if (e.action === 'weight' && preferences.weightTrackingEnabled && e.date <= todayId()) router.push({ pathname: '/weight-entry', params: { dateId: e.date } });

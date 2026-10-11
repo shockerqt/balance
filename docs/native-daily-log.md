@@ -20,7 +20,8 @@ native confirmation.
 The pager moves with the finger and reports only settled dates. That report
 updates `logsDateStore`, preserving compatibility with routes outside the screen.
 Acknowledgements marked `fromNative` cannot send an earlier swipe back into the
-pager. External date commands can jump the pager. Selection disables horizontal
+pager. External date commands can jump the pager. A command revision invalidates queued
+navigation and actions, including an external away-and-back date change. Selection disables horizontal
 paging and Back clears selection. All prepared pages show data, but only the
 settled page accepts food actions. Selection is intersected with current food IDs
 when data changes. The week starts Monday; the calendar interprets Material's
