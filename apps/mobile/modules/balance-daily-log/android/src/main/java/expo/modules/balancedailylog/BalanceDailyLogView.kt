@@ -61,7 +61,10 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoView(c
           background = background,
           error = color(colors, "danger", Color(0xFFFF6B6B))
         )) {
-          DailyLog(snapshot, command.value, active.value, ::emit)
+          Surface(modifier = Modifier.fillMaxSize(), color = background,
+            contentColor = MaterialTheme.colorScheme.onSurface) {
+            DailyLog(snapshot, command.value, active.value, ::emit)
+          }
         }
       }
     }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -285,7 +288,7 @@ private fun DayContent(date: LocalDate, day: JSONObject, data: JSONObject, today
         val id = food.optString("id")
         val chosen = id in selected
         Surface(shape = RoundedCornerShape(12.dp), color = if (chosen) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface,
-          modifier = Modifier.fillMaxWidth().combinedClickable(enabled = enabled, onClick = { onFood(id) }, onLongClick = { onLongFood(id) })
+          modifier = Modifier.fillMaxWidth().combinedClickable(enabled = enabled, onClick = { onFood(id) }, onLongClickLabel = "Seleccionar alimento", onLongClick = { onLongFood(id) })
             .semantics(mergeDescendants = true) { this.selected = chosen; if (selected.isNotEmpty()) role = Role.Checkbox }) {
           Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selected.isNotEmpty()) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.padding(end = 8.dp))
@@ -309,7 +312,7 @@ private fun DayContent(date: LocalDate, day: JSONObject, data: JSONObject, today
 @Composable
 private fun NutritionSummary(day: JSONObject, colors: JSONObject) {
   Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-    Row(verticalAlignment = Alignment.Bottom) {
+    FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
       Text(day.optString("calories", "0"), fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
       Text(" / ${day.optString("target", "2200")} kcal", Modifier.padding(start = 8.dp, bottom = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

@@ -26,7 +26,7 @@ settled page accepts food actions. Selection is intersected with current food ID
 when data changes. The week starts Monday; the calendar interprets Material's
 UTC milliseconds as calendar dates, avoiding Chilean timezone shifts.
 
-Each mounted account gets a fresh opaque UI session. Every event carries this
+Each mounted account and return to the screen gets a fresh opaque UI session. Every event carries this
 session and an increasing sequence; the adapter rejects stale/replayed events,
 inactive dates and missing food IDs. Focus/unmount guards prevent queued callbacks
 from executing after leaving the screen. Data projection preserves canonical

@@ -18,6 +18,7 @@ export default function NativeDailyLogScreen() {
   return <DailyLogSession key={user?.id ?? (isGuest ? 'guest' : 'anonymous')} />;
 }
 let sessionCounter = 0;
+const freshSession = () => `daily-${Date.now()}-${++sessionCounter}`;
 function DailyLogSession() {
   const router = useRouter();
   const meals = useMealStore();
@@ -26,12 +27,16 @@ function DailyLogSession() {
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   const [selected] = useLogsSelectedDate();
-  const [session] = useState(() => `daily-${Date.now()}-${++sessionCounter}`);
+  const [session, setSession] = useState(freshSession);
   const [mounted, setMounted] = useState(false);
   const [today, setToday] = useState(todayId);
-  const live = useRef({ alive: true, focused: false, sequence: 0, nativeDate: '' });
+  const live = useRef({ alive: true, focused: false, sequence: 0, nativeDate: '', session });
   useFocusEffect(useCallback(() => {
     live.current.focused = true;
+    live.current.session = freshSession();
+    live.current.sequence = 0;
+    live.current.nativeDate = '';
+    setSession(live.current.session);
     setFocused(true);
     return () => { live.current.focused = false; setFocused(false); };
   }, []));
@@ -53,7 +58,7 @@ function DailyLogSession() {
   const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected });
   return <Screen><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
-      if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, session, live.current.sequence, logsDateStore.get(), meals.dayLogs)) return;
+      if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, live.current.session, live.current.sequence, logsDateStore.get(), meals.dayLogs)) return;
       live.current.sequence = e.sequence;
       if (e.action === 'date') {
         live.current.nativeDate = e.date;
