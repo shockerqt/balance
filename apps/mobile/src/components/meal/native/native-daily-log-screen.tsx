@@ -61,7 +61,7 @@ function DailyLogSession() {
     days: mounted ? projectDays(meals.dayLogs, weight.weightsByDate) : {},
     empty: projectDays({ [today]: emptyDayLog(today) }, {})[today],
   }), [session, today, theme.colors, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, mounted]);
-  const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision });
+  const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision, session });
   return <Screen><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
       if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, live.current.session, live.current.sequence, logsDateStore.get(), meals.dayLogs, live.current.commandRevision)) return;
