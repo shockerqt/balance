@@ -10,6 +10,8 @@ import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
 import { chileDateParts, toDateId, todayId, displayDateFor } from '@/lib/dates';
 export { toDateId, todayId, displayDateFor };
+import { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
+export { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
 
 export interface LoggedFoodItem {
   id: string;
@@ -27,27 +29,12 @@ export interface LoggedFoodItem {
 
 type MealLogEditableFields = Pick<LoggedFoodItem, 'portion' | 'time'>;
 
-export interface DayTargets {
-  targetCalories: number;
-  targetProtein: number;
-  targetCarbs: number;
-  targetFat: number;
-  targetFiber: number;
-}
-
 export interface DayLog extends DayTargets {
   dateId: string;
   displayDate: string;
   foods: LoggedFoodItem[];
 }
 
-export const DEFAULT_TARGETS: DayTargets = {
-  targetCalories: 2200,
-  targetProtein: 150,
-  targetCarbs: 220,
-  targetFat: 65,
-  targetFiber: 30,
-};
 
 function uuid(): string {
   const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
