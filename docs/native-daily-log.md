@@ -3,7 +3,7 @@
 BAL-037 replaces the Android daily screen with a local Expo module implemented
 in Kotlin and Jetpack Compose. Other platforms retain the existing screen.
 The module is part of the APK; Expo Go and older Balance Development builds
-cannot load it. Compose dependencies are pinned through BOM `2026.04.00`, aligning Foundation/UI 1.10.6 with Expo SDK 57. Newer BOMs
+cannot load it. Compose dependencies are pinned through BOM `2026.03.01`, aligning Foundation/UI 1.10.6 with Expo SDK 57. Newer BOMs
 require API 37/AGP 9.1 and cannot be substituted into this API 36 app without a
 separate SDK/toolchain migration. SDK 57's transitive `@expo/ui` supplies its
 Material3 1.5 alpha dependency; this screen uses standard Material3 APIs. The
