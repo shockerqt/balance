@@ -19,6 +19,8 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
       - 'scripts/delivery/package-api.py'
+      - 'scripts/delivery/source_identity.py'
+      - 'scripts/delivery/test_packaging.py'
   pull_request:
     branches:
       - main
@@ -37,6 +39,8 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/build-arm.yml'
       - 'scripts/delivery/package-api.py'
+      - 'scripts/delivery/source_identity.py'
+      - 'scripts/delivery/test_packaging.py'
   workflow_dispatch:
 
 permissions:
@@ -67,6 +71,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Test artifact source provenance
+        run: python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -121,7 +128,7 @@ jobs:
 
       - name: Package source-bound API artifact
         env:
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BALANCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 scripts/delivery/package-api.py
 
       - name: Upload validated API artifact

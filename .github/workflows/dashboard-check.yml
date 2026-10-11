@@ -27,6 +27,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Test artifact source provenance
+        run: python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -50,7 +53,7 @@ jobs:
 
       - name: Package exact validated dashboard
         env:
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BALANCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 scripts/delivery/package-dashboard.py
 
       - uses: actions/upload-artifact@v4

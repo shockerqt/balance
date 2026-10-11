@@ -2,11 +2,11 @@
 import gzip
 import hashlib
 import json
-import os
 from pathlib import Path
 import tarfile
+from source_identity import verified_source_sha
 
-sha = os.environ['GITHUB_SHA']
+sha = verified_source_sha()
 root = Path('apps/dashboard/dist')
 (root / 'release.json').write_text(json.dumps({'source_sha': sha, 'component': 'dashboard'}) + '\n')
 with Path('dashboard.tar.gz').open('wb') as raw:
