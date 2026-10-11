@@ -18,3 +18,6 @@ export const OIDC_SCOPES: string[] = process.env.EXPO_PUBLIC_OIDC_SCOPES
 
 export const WS_AUTH_MODE = process.env.EXPO_PUBLIC_WS_AUTH_MODE ?? 'legacy';
 assertSyncConfiguration(API_BASE_URL, WS_SYNC_URL, WS_AUTH_MODE, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID);
+
+// Reviewed provider-local browser logout, opt-in and native staging only.
+export const OIDC_BROWSER_LOGOUT_URL = process.env.EXPO_PUBLIC_OIDC_BROWSER_LOGOUT_URL;

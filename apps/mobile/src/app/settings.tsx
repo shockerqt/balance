@@ -1,5 +1,5 @@
-import React from 'react';
-import { ScrollView, Switch, View } from 'react-native';
+import React, { useRef } from 'react';
+import { Alert, ScrollView, Switch, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button, Card, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
@@ -10,13 +10,21 @@ export default function SettingsScreen() {
   const styles = useStyles();
   const theme = useTheme();
   const router = useRouter();
-  const { user, isGuest, logout } = useAuth();
+  const { user, isGuest, isLoading, logout } = useAuth();
   const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled } =
     usePreferencesStore();
 
+  const logoutPending = useRef(false);
   const handleLogout = async () => {
-    await logout();
-    router.replace('/login');
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    try {
+      const status = await logout();
+      if (status === 'in_progress') return;
+      if (status === 'unconfirmed') Alert.alert('Sesión cerrada en Balance',
+        'No se confirmó el cierre de la sesión de Eri.');
+      router.replace('/login');
+    } finally { logoutPending.current = false; }
   };
 
   return (
@@ -87,6 +95,7 @@ export default function SettingsScreen() {
               <Button
                 title={isGuest ? 'Salir del modo invitado' : 'Cerrar sesión'}
                 variant="danger"
+                loading={isLoading}
                 onPress={handleLogout}
               />
             </View>

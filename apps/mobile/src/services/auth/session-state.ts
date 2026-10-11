@@ -367,3 +367,36 @@ export const assertSyncConfiguration = (
       throw new Error("Staging requires its application-authenticated sync endpoint");
   }
 };
+
+
+export type BrowserLogoutStatus = "confirmed" | "unconfirmed" | "not_requested" | "in_progress";
+
+export const browserLogoutRequest = (
+  binding: SessionBinding, endpoint: string, scheme: string, platform: string,
+  redirect: string, state: string,
+): string => {
+  if (endpoint !== "https://auth-staging.shocker.cl/logout" ||
+      binding.issuer !== "https://auth-staging.shocker.cl" ||
+      binding.clientId !== "balance-mobile-staging" ||
+      binding.apiBaseUrl !== "https://balance-staging.shocker.cl/api" ||
+      (binding.resource !== undefined && binding.resource !== binding.apiBaseUrl) ||
+      !["android", "ios"].includes(platform) || scheme !== "balance-dev" ||
+      redirect !== "balance-dev://logout-callback" || !/^[a-f0-9]{64}$/.test(state))
+    throw new Error("Browser logout requires the reviewed native staging context");
+  const url = new URL(endpoint);
+  url.searchParams.set("client_id", binding.clientId);
+  url.searchParams.set("post_logout_redirect_uri", redirect);
+  url.searchParams.set("state", state);
+  return url.toString();
+};
+
+export const isValidLogoutReturn = (value: string, redirect: string, state: string): boolean => {
+  try {
+    if (/[\u0000-\u0020\u007f]/.test(value) || value.includes("#") || value.split("?")[0] !== redirect) return false;
+    const url = new URL(value);
+    return !url.username && !url.password &&
+      url.searchParams.getAll("state").length === 1 &&
+      url.searchParams.get("state") === state &&
+      [...url.searchParams.keys()].every(key => key === "state");
+  } catch { return false; }
+};

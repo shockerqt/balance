@@ -1,18 +1,22 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL } from '@/services/config';
 import { storage } from '@/services/storage';
 import {
   assertAuthorizationResponseIssuer,
   assertStagingMobileRedirect,
   awaitCurrentAuthStep,
   authDataNamespace,
+  browserLogoutRequest,
+  BrowserLogoutStatus,
+  isValidLogoutReturn,
   retryUnauthorizedRequest,
   oauthResourceParams,
   sessionForAuthContext,
@@ -108,7 +112,7 @@ interface AuthContextType {
   isLoading: boolean;
   loginWithGoogle: () => Promise<void>;
   enableGuestMode: () => Promise<void>;
-  logout: () => Promise<void>;
+  logout: () => Promise<BrowserLogoutStatus>;
   setAuthToken: (token: string | null) => void;
   checkSession: (tokenOverride?: string) => Promise<void>;
   authorizedFetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -120,6 +124,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const browserOperationRef = useRef<{ kind: 'login' | 'logout'; owner: symbol } | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [refreshRetryAt, setRefreshRetryAt] = useState<number | null>(null);
   const sessionRef = useRef<StoredAuthSession | null>(null);
@@ -469,6 +475,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [clearAuthenticatedState]);
 
   const loginWithGoogle = useCallback(async () => {
+    // A generation guard cannot undo remote browser logout. Hold one owner
+    // synchronously until the browser operation ends; never queue another.
+    if (browserOperationRef.current) return;
+    const owner = Symbol('login');
+    browserOperationRef.current = { kind: 'login', owner };
+    setBrowserBusy(true);
     let loginEpoch = ++epochRef.current;
     const isCurrent = () => loginEpoch === epochRef.current;
     setIsLoading(true);
@@ -518,37 +530,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isCurrent()) console.warn('Fallo el login con Google');
     } finally {
       if (isCurrent()) setIsLoading(false);
+      if (browserOperationRef.current?.owner === owner) {
+        browserOperationRef.current = null;
+        setBrowserBusy(false);
+      }
     }
   }, [adoptSession, verifySession]);
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (): Promise<BrowserLogoutStatus> => {
+    if (browserOperationRef.current?.kind === 'logout') return 'in_progress';
+    const owner = OIDC_BROWSER_LOGOUT_URL === undefined || browserOperationRef.current
+      ? null : Symbol('logout');
+    if (owner) {
+      browserOperationRef.current = { kind: 'logout', owner };
+      setBrowserBusy(true);
+    }
     const active = sessionForAuthContext(sessionRef.current, AUTH_BINDING);
     const refreshToken = active?.refreshToken;
     setIsGuest(false);
-    await clearAuthenticatedState();
-    try {
-      await storage.removeItem(GUEST_KEY);
-    } catch (storageError) {
-      console.warn('No se pudo limpiar la marca de invitado', storageError);
-    }
-    // Nothing to revoke on web, where refresh tokens are never persisted, nor
-    // for migrated v1 sessions. Skip discovery so logout stays local and
-    // immediate instead of waiting on a network round-trip.
-    if (!refreshToken) return;
-    try {
-      const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
-      if (discovery.revocationEndpoint) {
-        await AuthSession.revokeAsync(
-          {
+    // Clear memory/credentials and disconnect sockets before the first await.
+    const clearing = clearAuthenticatedState();
+    const logoutEpoch = epochRef.current;
+    const isCurrent = () => logoutEpoch === epochRef.current;
+    const revokeCapturedRefresh = async () => {
+      if (!refreshToken) return;
+      try {
+        const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+        if (discovery.revocationEndpoint) {
+          await AuthSession.revokeAsync({
             clientId: OIDC_MOBILE_CLIENT_ID,
             token: refreshToken,
             tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken,
-          },
-          discovery,
-        );
+          }, discovery);
+        }
+      } catch { /* Local logout is independent of revocation availability. */ }
+    };
+    const revocation = revokeCapturedRefresh();
+    // Staging browser logout must not wait for an offline revocation request.
+    // This promise catches internally and only ever uses captured credentials.
+    if (OIDC_BROWSER_LOGOUT_URL !== undefined) void revocation;
+    try {
+      await clearing;
+      if (!isCurrent()) return 'unconfirmed';
+      try { await storage.removeItem(GUEST_KEY); }
+      catch { console.warn('No se pudo limpiar la marca de invitado'); }
+      if (!isCurrent()) return 'unconfirmed';
+      if (OIDC_BROWSER_LOGOUT_URL === undefined) {
+        await revocation;
+        return 'not_requested';
       }
+      // An in-progress login was invalidated above, but its browser still owns
+      // the cookie context. Never schedule logout behind that login.
+      if (!owner) return 'unconfirmed';
+      const configuredScheme = Constants.expoConfig?.scheme;
+      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
+      const redirect = AuthSession.makeRedirectUri({ scheme, path: 'logout-callback' });
+      const bytes = await Crypto.getRandomBytesAsync(32);
+      if (!isCurrent()) return 'unconfirmed';
+      const state = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+      const url = browserLogoutRequest(AUTH_BINDING, OIDC_BROWSER_LOGOUT_URL,
+        typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state);
+      const result = await WebBrowser.openAuthSessionAsync(url, redirect, { preferEphemeralSession: false });
+      if (!isCurrent() || result.type !== 'success' || !isValidLogoutReturn(result.url, redirect, state))
+        return 'unconfirmed';
+      return 'confirmed';
     } catch {
-      // Local logout must succeed even when revocation is unavailable/offline.
+      return 'unconfirmed';
+    } finally {
+      if (owner && browserOperationRef.current?.owner === owner) {
+        browserOperationRef.current = null;
+        setBrowserBusy(false);
+      }
     }
   }, [clearAuthenticatedState]);
 
@@ -590,7 +642,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       isAuthenticated: !!user,
       isGuest,
-      isLoading,
+      isLoading: isLoading || browserBusy,
       loginWithGoogle,
       enableGuestMode,
       logout,
@@ -598,7 +650,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       checkSession,
       authorizedFetch,
     }),
-    [user, isGuest, isLoading, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
+    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

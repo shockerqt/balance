@@ -196,3 +196,63 @@ Synthetic signed-token tests exercise the actual REST and MCP HTTP routes,
 including cross-resource rejection, verified-UserInfo failure, exact challenges,
 public metadata and Host independence. This is source evidence; it does not
 claim Spark acceptance, live MCP/REST/WSS activation or provider retirement.
+
+
+## Optional native staging browser logout
+
+The default logout still clears Balance credentials/profile, disconnects sync and
+best-effort revokes a captured native refresh token using discovered revocation.
+Production configuration has no browser-logout opt-in. Native staging can enable:
+
+```text
+EXPO_PUBLIC_OIDC_BROWSER_LOGOUT_URL=https://auth-staging.shocker.cl/logout
+```
+
+This is Eri's reviewed provider-local confirmation endpoint, **not** an advertised
+OIDC `end_session_endpoint`; no endpoint discovery or `id_token_hint` is invented.
+The only permitted context is the exact staging issuer/client/API with native
+Balance Dev scheme, returning exactly `balance-dev://logout-callback`. Infrastructure
+must separately register that URI in `balance-mobile-staging.post_logout_redirects`
+(the login redirects declaration alone does not register it), validate/review the
+Eri config artifact and apply it before real browser acceptance. This source change
+does not apply that provider configuration or claim browser runtime compatibility.
+
+Login and opt-in browser logout acquire one synchronous browser-operation owner
+before any await. Default production revocation-only logout does not acquire a
+browser owner or block a new login while the captured revocation is pending.
+A new login or duplicate logout cannot begin while logout owns the browser; owner
+release cannot release another operation. Logout during an already pending login
+invalidates its generation, clears local state and revokes the captured refresh
+family, but never queues a browser logout after that login. This matters because
+an epoch guard alone cannot prevent stale remote logout from revoking new SSO.
+Settings shows progress and ignores duplicate taps; the existing login progress
+state also reflects the browser owner.
+
+Local clearing happens before storage/network/browser awaits. Staging revocation
+runs independently with captured credentials and handled failures, so offline
+revocation cannot delay the browser flow; a revocation request completing later
+never updates local state. Browser logout also runs when no refresh token exists.
+The existing WebBrowser auth-session transport uses `preferEphemeralSession:false`
+to access the provider cookie context. A 32-byte cryptographic state comes from
+`Crypto.getRandomBytesAsync`, without its synchronous API's development random
+fallback. The exact return URI and singleton state must match; credentials, extra
+parameters, fragments, controls, missing/duplicate state and altered paths are
+rejected. The logout callback route reads/adopts/exchanges no credentials.
+
+A matching current return confirms the Eri logout callback; cancellation/error or
+superseded generation leaves SSO unconfirmed while keeping local logout. Settings
+states this plainly for an unconfirmed outcome. No outcome claims successful
+refresh revocation merely because the request was attempted. Nor does Eri logout
+sign out the user's Google account or invalidate already-issued access JWTs before
+expiry. Independent real tests must prove refresh `invalid_grant` and loss of the
+Eri SSO session in the same browser context; a separately live family avoids a
+false-positive cookie test caused solely by the explicit refresh revocation.
+
+Actual AuthProvider tests with mocked browser, storage and provider adapters cover
+pending login/logout overlap, duplicate logout, immediate clearing, logout without
+refresh, pending/offline revocation, generation changes during storage/browser
+completion, invalid returns, cancel/error and unchanged production behavior.
+[Expo57 WebBrowser](https://docs.expo.dev/versions/v57.0.0/sdk/webbrowser/) documents
+the authentication browser context; [Expo57 Crypto](https://docs.expo.dev/versions/v57.0.0/sdk/crypto/)
+documents cryptographic state generation. These tests do not replace device/SSO
+acceptance or provider runtime review.
