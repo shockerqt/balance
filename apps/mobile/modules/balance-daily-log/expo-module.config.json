@@ -1,0 +1,5 @@
+{
+  "platforms": ["android"],
+  "coreFeatures": ["compose"],
+  "android": { "modules": ["expo.modules.balancedailylog.BalanceDailyLogModule"] }
+}
