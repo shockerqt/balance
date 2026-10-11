@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '@/services/config';
+import { authDataNamespace } from '@/services/auth/session-state';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { storage } from '@/services/storage';
 import { useAuth } from './use-auth';
@@ -135,7 +137,7 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const namespace = user ? `user:${user.id}` : 'guest';
+  const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
 
   useEffect(() => {

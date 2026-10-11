@@ -1,0 +1,1 @@
+Public synthetic RSA fixture copied from Eri tests/fixtures/keys/active-private.pem. Intentionally public test data, never permitted for runtime, staging or production signing. Used only for controlled WebSocket expiry tests.
