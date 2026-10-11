@@ -40,3 +40,14 @@ test('an external calendar command invalidates queued native navigation, includi
   assert.equal(acceptDailyEvent(navigation, 'current', 2, date, logs, 1), false);
   assert.equal(acceptDailyEvent({ ...navigation, commandRevision: 2 }, 'current', 2, date, logs, 2), true);
 });
+
+import desugaring from '../plugins/with-daily-log-desugaring.js';
+test('consumer Gradle enables java.time on Android 24/25 idempotently and rejects incompatible templates', () => {
+  const input = 'android {\n defaultConfig { minSdkVersion 24 }\n}\ndependencies {\n implementation("com.facebook.react:react-android")\n}';
+  const patched = desugaring.enableDailyLogDesugaring(input);
+  assert.match(patched, /coreLibraryDesugaringEnabled true/);
+  assert.match(patched, /coreLibraryDesugaring\("com.android.tools:desugar_jdk_libs:2.1.5"\)/);
+  assert.equal(desugaring.enableDailyLogDesugaring(patched), patched);
+  assert.throws(() => desugaring.enableDailyLogDesugaring('unsupported template'));
+  assert.throws(() => desugaring.enableDailyLogDesugaring(input.replace('android {', 'android { coreLibraryDesugaringEnabled false')));
+});

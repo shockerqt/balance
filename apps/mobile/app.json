@@ -28,7 +28,8 @@
     "plugins": [
       "expo-router",
       "@react-native-vector-icons/lucide",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/with-daily-log-desugaring"
     ],
     "experiments": {
       "typedRoutes": true,
