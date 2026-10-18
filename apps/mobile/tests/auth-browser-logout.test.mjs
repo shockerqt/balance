@@ -35,7 +35,8 @@ async function harness(options = {}) {
     issuedAt: Math.floor(Date.now() / 1000), expiresIn: options.initialExpiresIn,
     lineage: 'synthetic-family', binding,
   }));
-  const calls = { discovery: [], refresh: [], revoke: [], browser: [], prompt: [], crypto: 0, sync: [], warnings: [], requests: [] };
+  else if (options.loggedOut) values.set(sessionState.SESSION_KEY, sessionState.LOGGED_OUT_MARKER);
+  const calls = { discovery: [], refresh: [], revoke: [], browser: [], prompt: [], crypto: 0, sync: [], templates: 0, warnings: [], requests: [], writes: [] };
   const timers = new Set();
   const scheduled = [];
   let appStateListener = () => {};
@@ -52,19 +53,25 @@ async function harness(options = {}) {
       calls.discovery.push(issuer);
       return options.discovery?.(index) ?? discovery;
     },
-    revokeAsync: async request => { calls.revoke.push(request); if (options.revoke) await options.revoke.promise; },
-    exchangeCodeAsync: async () => ({ accessToken: 'public-next-access', refreshToken: 'public-next-refresh', issuedAt: Date.now()/1000 }),
+    revokeAsync: async request => { calls.revoke.push(request); if (options.revoke) await options.revoke.promise;
+      if (options.revokeAsync) return options.revokeAsync(request,calls.revoke.length);
+      return options.revokeResult ?? true; },
+    exchangeCodeAsync: async request => options.exchangeCodeAsync
+      ? options.exchangeCodeAsync(request, calls.prompt.length)
+      : { accessToken: 'public-next-access', refreshToken: 'public-next-refresh', issuedAt: Date.now()/1000 },
     refreshAsync: async request => { calls.refresh.push(request.refreshToken); if (options.refreshAsync) return options.refreshAsync(request.refreshToken, calls.refresh.length); throw new Error('unexpected refresh'); },
     AuthRequest: class {
       codeVerifier = 'public-synthetic-code-verifier';
       constructor(request) { this.request = request; }
-      promptAsync() { calls.prompt.push(this.request); return prompt.promise; }
+      promptAsync(_discovery, promptOptions) { calls.prompt.push({ ...this.request, promptOptions });
+        return options.promptAsync ? options.promptAsync(this.request, calls.prompt.length) : prompt.promise; }
     },
   };
   const secure = {
     getItemAsync: async key => values.get(key) ?? null,
     setItemAsync: async (key, value) => {
       if (value === sessionState.LOGGED_OUT_MARKER && options.storage) await options.storage.promise;
+      calls.writes.push({key,value});
       values.set(key, value);
     },
     deleteItemAsync: async key => { values.delete(key); },
@@ -102,8 +109,8 @@ async function harness(options = {}) {
     if (name === 'expo-crypto') return { getRandomBytesAsync: async count => {
       calls.crypto++;
       if (options.crypto) throw new Error('synthetic crypto unavailable');
-      assert.equal(count, 32);
-      return new Uint8Array(count).fill(calls.crypto);
+      assert.equal(count, options.cryptoCount ?? 32);
+      return options.cryptoBytes ? Uint8Array.from({length:count},(_,index)=>index) : new Uint8Array(count).fill(calls.crypto);
     } };
     if (name === 'expo-secure-store') return secure;
     if (name === 'react-native') return { Platform: { OS: options.platform ?? 'android' }, AppState: { addEventListener: (_event, listener) => { appStateListener = listener; return { remove() {} }; } } };
@@ -112,19 +119,24 @@ async function harness(options = {}) {
     if (name === '@/services/auth/session-state') return authState;
     if (name === '@/services/storage') return { storage: {
       getItem: async key => values.get(key) ?? null,
-      setItem: async (key, value) => { values.set(key,value); }, removeItem: async key => { values.delete(key); },
+      setItem: async (key, value) => { if (key === '@balance_guest_v1' && options.guestStorage) await options.guestStorage.promise;
+        values.set(key,value); }, removeItem: async key => { values.delete(key); },
     } };
     if (name === '@/services/sync/sync-client') return { syncClient: {
       disconnect: () => calls.sync.push('disconnect'), setNamespace: namespace => calls.sync.push(namespace), connect: () => calls.sync.push('connect'),
     } };
-    if (name === '@/services/sync/official-templates') return { fetchOfficialTemplates: async () => {} };
+    if (name === '@/services/sync/official-templates') return { fetchOfficialTemplates: async () => {
+      calls.templates++; if (options.templatesPending) await options.templatesPending.promise;
+    } };
     throw new Error(`Unexpected module ${name}`);
   };
   runInNewContext(code, { module, exports: module.exports, require, URL, Uint8Array, Headers,
     __DEV__: options.dev ?? true, process: { env: { EXPO_PUBLIC_AUTH_DIAGNOSTICS: options.diagFlag ?? '1' } },
     console: { warn: (...values) => calls.warnings.push(values) },
     fetch: async (...args) => { calls.requests.push(args[0]); return options.fetch ? options.fetch(...args) : { ok: true, status: 200, json: async () => ({ data: { id: 7, email: 'synthetic@example.invalid' } }) }; },
-    setTimeout: (callback, delay) => { if (delay === 30000 && options.deadline) { options.deadline.callback = callback; return 0; } scheduled.push({callback,delay}); const timer = setTimeout(callback, delay); timers.add(timer); return timer; },
+    setTimeout: (callback, delay) => { if (delay === 30000 && options.deadline) { options.deadline.callback = callback; return 0; }
+      if (delay === 300000 && options.overallDeadline) { options.overallDeadline.callback = callback; return 0; }
+      scheduled.push({callback,delay}); const timer = setTimeout(callback, delay); timers.add(timer); return timer; },
     clearTimeout: timer => { clearTimeout(timer); timers.delete(timer); },
   });
   function Probe() { auth = module.exports.useAuth(); return null; }
@@ -147,7 +159,8 @@ async function harness(options = {}) {
     appState: state => appStateListener(state),
     validReturn: () => { const request=calls.browser.at(-1); return { type:'success',url:`${request.redirect}?state=${new URL(request.url).searchParams.get('state')}` }; },
     close: async () => { prompt.resolve({ type:'cancel' }); browser.resolve({ type:'cancel' });
-      options.revoke?.resolve(); options.storage?.resolve(); await act(async () => { renderer.unmount(); await flush(); });
+      options.revoke?.resolve(); options.storage?.resolve(); options.templatesPending?.resolve();
+      await act(async () => { renderer.unmount(); await flush(); });
       for (const timer of timers) clearTimeout(timer); },
   };
 }
@@ -530,4 +543,417 @@ test('refresh replay distinguishes typed rejection, generic failure and accepted
       assert.equal(JSON.stringify(h.calls.warnings).includes('secret'),false);
     } finally { await h.close(); }
   }
+});
+
+test('provider logout uses two fresh nonce-bound families, revokes A before browser, and leaves server proof pending', async () => {
+  let h;
+  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,
+    promptAsync:async (_request,count)=>({type:'success',params:{code:`synthetic-code-${count}`,iss:stage.issuer}}),
+    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,issuedAt:Date.now()/1000}),
+    refreshAsync:async (_token,count)=>{
+      if (count<=2) return {accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000};
+      throw Object.assign(new h.TokenError('secret rejection'),{code:'invalid_grant'});
+    }});
+  try {
+    assert.equal(h.auth.providerLogoutAvailable,true);
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.prompt.length,2);
+    assert.equal(h.calls.refresh.length,2);
+    assert.equal(h.calls.revoke.length,1);
+    assert.equal(h.calls.browser.length,1);
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.equal(h.calls.revoke[0].token,'secret-rotated-refresh-1');
+    await h.auth.loginWithGoogle();
+    assert.equal(await h.auth.logout(),'in_progress');
+    assert.equal(await h.auth.enableGuestMode(),false);
+    h.auth.setAuthToken('secret-manual');
+    await h.auth.checkSession('secret-callback');
+    await assert.rejects(h.auth.authorizedFetch('/private'));
+    h.appState('active');
+    for (const timer of h.scheduled) if (timer.delay !== 30000 && timer.delay !== 300000) timer.callback();
+    assert.equal(h.calls.prompt.length,2);
+    assert.equal(h.calls.refresh.length,2);
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    const reference='000102030405060708090a0b0c0d0e0f';
+    assert.equal(h.calls.prompt[0].extraParams.nonce,`bal033v1.${reference}.A.101112131415161718191a1b1c1d1e1f`);
+    assert.equal(h.calls.prompt[1].extraParams.nonce,`bal033v1.${reference}.B.202122232425262728292a2b2c2d2e2f`);
+    assert.equal(h.calls.prompt[0].promptOptions.preferEphemeralSession,false);
+    assert.equal(new URL(h.calls.browser[0].url).searchParams.get('state'),`${reference}303132333435363738393a3b3c3d3e3f`);
+    const callback=h.validReturn();
+    h.browser.resolve(callback);
+    let outcome;
+    await act(async()=>{outcome=await pending;await flush();});
+    assert.equal(outcome.status,'UNCONFIRMED');
+    assert.equal(outcome.reason,'provider_proof_pending');
+    assert.equal(outcome.revocationConfirmed,true);
+    assert.equal(outcome.reference,reference);
+    assert.equal(h.auth.providerLogoutNotice.reference,reference);
+    assert.equal(h.calls.refresh.length,3);
+    assert.equal(h.calls.refresh[2],'secret-rotated-refresh-2');
+    assert.equal(h.calls.revoke.length,1,'typed invalid_grant already proves B cannot be renewed');
+    assert.equal(h.auth.user,null);
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.deepEqual(h.calls.writes.filter(write=>write.key===sessionState.SESSION_KEY).map(write=>write.value),
+      [sessionState.LOGGED_OUT_MARKER], 'neither diagnostic family is ever persisted');
+    assert.equal(h.calls.requests.length,0,'diagnostic families are not used for the profile API');
+    assert.equal(h.calls.sync.includes('connect'),false);
+    assert.equal(JSON.stringify(outcome).includes('secret-'),false);
+  } finally {await h.close();}
+});
+
+async function providerHarness(options={}) {
+  let h;
+  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,
+    promptAsync:async (_request,count)=>({type:'success',params:{code:`synthetic-code-${count}`,iss:stage.issuer}}),
+    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,issuedAt:Date.now()/1000}),
+    refreshAsync:async (_token,count)=>{
+      if (count<=2) return {accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000};
+      throw Object.assign(new h.TokenError('secret rejection'),{code:'invalid_grant'});
+    },...options});
+  const close=h.close;
+  h.close=async()=>{
+    try {
+      if (options.assertDiagnosticWrites !== false)
+        assert.equal(h.calls.writes.filter(write=>write.key===sessionState.SESSION_KEY)
+          .every(write=>write.value===sessionState.LOGGED_OUT_MARKER),true,
+        'diagnostic A/B must stay in memory on every success and failure path');
+    } finally {await close();}
+  };
+  return h;
+}
+
+async function loginScreenFor(auth) {
+  const routes=[];
+  const module={exports:{}};
+  const code=ts.transpileModule(readFileSync(new URL('../src/app/login.tsx',import.meta.url),'utf8'),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
+  }).outputText;
+  const component=name=>({children,...props})=>React.createElement(name,props,children);
+  const nativeRequire=createRequire(import.meta.url);
+  const require=name=>{
+    if (name==='react') return nativeRequire('react');
+    if (name==='react-native') return {StyleSheet:{create:value=>value},TouchableOpacity:component('TouchableOpacity'),View:component('View')};
+    if (name==='expo-router') return {useRouter:()=>({replace:path=>routes.push(path)})};
+    if (name==='@/hooks/use-auth') return {useAuth:()=>auth};
+    if (name==='@/theme') return {useTheme:()=>({space:new Proxy({},{get:()=>1}),colors:new Proxy({},{get:()=>"black"}),border:{hairline:1},radius:{pill:1}})};
+    if (name==='@/components/ui') return Object.fromEntries(['Button','Card','Screen','Text'].map(key=>[key,component(key)]));
+    throw new Error(`Unexpected Login dependency ${name}`);
+  };
+  runInNewContext(code,{module,exports:module.exports,require});
+  let renderer;
+  await act(async()=>{renderer=TestRenderer.create(React.createElement(module.exports.default));await flush();});
+  return {routes,guestButton:()=>renderer.root.findByType('TouchableOpacity'),close:async()=>{await act(async()=>renderer.unmount());}};
+}
+
+test('Login guest control navigates only after actual provider confirms guest mode', async () => {
+  const busy=await providerHarness();
+  const {pending}=await busy.start(auth=>auth.runProviderLogoutDiagnostic());
+  const busyScreen=await loginScreenFor(busy.auth);
+  try {
+    assert.equal(busyScreen.guestButton().props.disabled,true);
+    await act(async()=>{await busyScreen.guestButton().props.onPress();await flush();});
+    assert.deepEqual(busyScreen.routes,[]);
+    assert.equal(busy.auth.isGuest,false);
+    busy.browser.resolve(busy.validReturn());
+    await act(async()=>{await pending;await flush();});
+  } finally {await busyScreen.close();await busy.close();}
+
+  const templatesPending=deferred();
+  const available=await providerHarness({templatesPending});
+  const availableScreen=await loginScreenFor(available.auth);
+  try {
+    assert.equal(availableScreen.guestButton().props.disabled,false);
+    await act(async()=>{await availableScreen.guestButton().props.onPress();await flush();});
+    assert.deepEqual(availableScreen.routes,['/(tabs)/logs']);
+    assert.equal(available.auth.isGuest,true);
+    assert.equal(available.calls.templates,1);
+  } finally {templatesPending.resolve();await availableScreen.close();await available.close();}
+});
+
+test('guest-mode completion reports false after a newer credential generation takes ownership', async () => {
+  const storage=deferred();
+  const h=await providerHarness({storage,assertDiagnosticWrites:false});
+  try {
+    const {pending}=await h.start(auth=>auth.enableGuestMode());
+    h.auth.setAuthToken('secret-replacement');
+    let entered;
+    await act(async()=>{storage.resolve();entered=await pending;await flush();});
+    assert.equal(entered,false);
+    assert.equal(h.auth.isGuest,false);
+    assert.equal(h.values.get('@balance_guest_v1'),undefined);
+  } finally {storage.resolve();await h.close();}
+});
+
+test('provider logout establishes the durable marker on first use before any authorization', async () => {
+  let h;
+  h=await providerHarness({loggedOut:false,promptAsync:async (_request,count)=>{
+    if (count === 1) assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.equal(h.calls.writes[0]?.value,sessionState.LOGGED_OUT_MARKER);
+    return {type:'success',params:{code:`synthetic-code-${count}`,iss:stage.issuer}};
+  }});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.prompt.length,2);
+    h.browser.resolve(h.validReturn());
+    let outcome;
+    await act(async()=>{outcome=await pending;await flush();});
+    assert.equal(outcome.reason,'provider_proof_pending');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+  } finally {await h.close();}
+});
+
+test('provider logout leaves an earlier guest transition waiting on marker storage intact', async () => {
+  const storage=deferred();
+  const h=await providerHarness({loggedOut:false,storage});
+  try {
+    const {pending:guest}=await h.start(auth=>auth.enableGuestMode());
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal((await pending).reason,'unavailable');
+    assert.equal(h.calls.prompt.length,0);
+    let guestResult;
+    await act(async()=>{storage.resolve();guestResult=await guest;await flush();});
+    assert.equal(guestResult,true);
+    assert.equal(h.auth.isGuest,true);
+    assert.equal(h.values.get('@balance_guest_v1'),'1');
+    assert.equal(h.calls.sync.includes('guest'),true);
+    assert.equal(h.calls.templates,1);
+    assert.equal(h.calls.prompt.length,0);
+  } finally {storage.resolve();await h.close();}
+});
+
+test('provider logout rejects a pending guest write and a completed guest seen through a stale closure', async () => {
+  const guestStorage=deferred();
+  const h=await providerHarness({guestStorage});
+  try {
+    const staleAuth=h.auth;
+    const {pending:guest}=await h.start(auth=>auth.enableGuestMode());
+    assert.equal((await staleAuth.runProviderLogoutDiagnostic()).reason,'unavailable');
+    assert.equal(h.calls.prompt.length,0);
+    await act(async()=>{guestStorage.resolve();await guest;await flush();});
+    assert.equal(h.auth.isGuest,true);
+    assert.equal(h.values.get('@balance_guest_v1'),'1');
+    assert.equal((await staleAuth.runProviderLogoutDiagnostic()).reason,'unavailable');
+    assert.equal(h.calls.prompt.length,0);
+    assert.equal(h.values.get('@balance_guest_v1'),'1');
+  } finally {guestStorage.resolve();await h.close();}
+});
+
+test('provider logout leaves an unexpected stored record untouched and enforces the exact Dev gate', async () => {
+  for (const options of [{production:true},{variant:'daily'},{platform:'web'},
+    {scheme:'balance'},{diagFlag:'0'},{dev:false}]) {
+    const h=await providerHarness(options);
+    try {
+      const before=h.values.get(sessionState.SESSION_KEY);
+      const result=await h.auth.runProviderLogoutDiagnostic();
+      assert.equal(result.reason,'unavailable');
+      assert.equal(h.calls.prompt.length,0);
+      assert.equal(h.calls.discovery.length,0);
+      assert.equal(h.calls.refresh.length,0);
+      assert.equal(h.values.get(sessionState.SESSION_KEY),before);
+    } finally {await h.close();}
+  }
+  const h=await providerHarness();
+  try {
+    h.values.set(sessionState.SESSION_KEY,'foreign-record');
+    const result=await h.auth.runProviderLogoutDiagnostic();
+    assert.equal(result.reason,'unavailable');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),'foreign-record');
+    assert.equal(h.calls.prompt.length,0);
+    assert.equal(h.calls.writes.length,0);
+  } finally {await h.close();}
+});
+
+test('provider logout cancellation or wrong callback cleans both captured families without probing B', async () => {
+  for (const callback of ['cancel','wrong']) {
+    const h=await providerHarness();
+    try {
+      const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+      h.browser.resolve(callback==='cancel' ? {type:'cancel'} : {type:'success',url:'balance-dev://logout-callback?state=wrong'});
+      let outcome;
+      await act(async()=>{outcome=await pending;await flush();});
+      assert.equal(outcome.status,'UNCONFIRMED');
+      assert.equal(outcome.reason,'cancelled');
+      assert.equal(h.calls.refresh.length,2);
+      assert.equal(h.calls.revoke.length,2);
+      assert.equal(h.calls.revoke[1].token,'secret-rotated-refresh-2');
+      assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    } finally {await h.close();}
+  }
+});
+
+test('post-logout B acceptance is a local failure and its successor is revoked without adoption', async () => {
+  const h=await providerHarness({refreshAsync:async (_token,count)=>({
+    accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000,
+  })});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    h.browser.resolve(h.validReturn());
+    let outcome;
+    await act(async()=>{outcome=await pending;await flush();});
+    assert.equal(outcome.status,'FAIL');
+    assert.equal(outcome.reason,'accepted');
+    assert.equal(h.calls.revoke.at(-1).token,'secret-rotated-refresh-3');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.equal(h.auth.user,null);
+  } finally {await h.close();}
+});
+
+test('B acceptance remains FAIL when cleanup revocation returns false or throws', async () => {
+  for (const cleanup of ['false','throw']) {
+    const h=await providerHarness({
+      refreshAsync:async (_token,count)=>({accessToken:`secret-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000}),
+      revokeAsync:async (_request,count)=>{
+        if (count===1) return true;
+        if (cleanup==='throw') throw new Error('secret cleanup error');
+        return false;
+      },
+    });
+    try {
+      const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+      h.browser.resolve(h.validReturn());
+      let outcome;
+      await act(async()=>{outcome=await pending;await flush();});
+      assert.equal(outcome.status,'FAIL');
+      assert.equal(outcome.reason,'accepted');
+      assert.equal(outcome.cleanupIssue,'revoke');
+      assert.equal(h.auth.providerLogoutNotice.status,'FAIL');
+      assert.equal(h.auth.providerLogoutNotice.cleanupIssue,'revoke');
+      assert.equal(JSON.stringify(outcome).includes('secret'),false);
+    } finally {await h.close();}
+  }
+});
+
+test('B acceptance stays visible during a timed-out cleanup, then reports its cleanup issue', async () => {
+  const cleanup=deferred();
+  const overallDeadline={};
+  const h=await providerHarness({overallDeadline,
+    refreshAsync:async (_token,count)=>({accessToken:`secret-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000}),
+    revokeAsync:async (_request,count)=>count===1 ? true : cleanup.promise,
+  });
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    h.browser.resolve(h.validReturn());
+    await act(async()=>{await flush();});
+    assert.equal(h.calls.revoke.length,2);
+    assert.equal(h.auth.providerLogoutNotice.status,'FAIL');
+    overallDeadline.callback();
+    assert.equal((await pending).status,'FAIL');
+    assert.equal(await h.auth.logout(),'in_progress');
+    cleanup.resolve(false);
+    await act(async()=>{await flush();});
+    assert.equal(h.auth.providerLogoutNotice.status,'FAIL');
+    assert.equal(h.auth.providerLogoutNotice.cleanupIssue,'revoke');
+  } finally {cleanup.resolve(false);await h.close();}
+});
+
+test('a late accepted B probe upgrades an earlier timeout notice to FAIL', async () => {
+  const lateProbe=deferred();
+  const overallDeadline={};
+  const h=await providerHarness({overallDeadline,
+    refreshAsync:async (_token,count)=>count===3 ? lateProbe.promise
+      : {accessToken:`secret-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000},
+  });
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    h.browser.resolve(h.validReturn());
+    await act(async()=>{await flush();});
+    assert.equal(h.calls.refresh.length,3);
+    await act(async()=>{overallDeadline.callback();await flush();});
+    assert.equal((await pending).reason,'expired');
+    assert.equal(h.auth.providerLogoutNotice.status,'UNCONFIRMED');
+    assert.equal(await h.auth.logout(),'in_progress');
+    lateProbe.resolve({accessToken:'secret-late',refreshToken:'secret-late-successor',issuedAt:Date.now()/1000});
+    await act(async()=>{await flush();});
+    assert.equal(h.auth.providerLogoutNotice.status,'FAIL');
+    assert.equal(h.auth.providerLogoutNotice.reason,'accepted');
+    assert.equal(h.calls.revoke.at(-1).token,'secret-late-successor');
+  } finally {lateProbe.resolve({});await h.close();}
+});
+
+test('provider logout late B rotation after SDK deadline is revoked, never followed by browser logout', async () => {
+  const pendingB=deferred();
+  const deadline={};
+  const h=await providerHarness({deadline,refreshAsync:async (_token,count)=>count===2
+    ? pendingB.promise : {accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000}});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.refresh.length,2);
+    deadline.callback();
+    const outcome=await pending;
+    assert.equal(outcome.reason,'expired');
+    assert.equal(outcome.step,'refresh_b');
+    assert.equal(await h.auth.logout(),'in_progress');
+    pendingB.resolve({accessToken:'secret-late-b',refreshToken:'secret-late-b-refresh'});
+    await act(async()=>{await flush();});
+    assert.equal(h.calls.browser.length,0);
+    assert.equal(h.calls.revoke.at(-1).token,'secret-late-b-refresh');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+  } finally {pendingB.resolve({});await h.close();}
+});
+
+test('provider logout waits for B exchange after deadline and revokes its late family', async () => {
+  const exchangeB=deferred();
+  const deadline={};
+  const h=await providerHarness({deadline,exchangeCodeAsync:async (_request,count)=>count===2
+    ? exchangeB.promise : {accessToken:'secret-a',refreshToken:'secret-a-refresh',issuedAt:Date.now()/1000}});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.prompt.length,2);
+    assert.equal(h.calls.refresh.length,0);
+    deadline.callback();
+    assert.equal((await pending).reason,'expired');
+    assert.equal(await h.auth.logout(),'in_progress');
+    exchangeB.resolve({accessToken:'secret-late-b',refreshToken:'secret-late-b-refresh',issuedAt:Date.now()/1000});
+    await act(async()=>{await flush();});
+    assert.equal(h.calls.browser.length,0);
+    assert.equal(h.calls.revoke.at(-1).token,'secret-late-b-refresh');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+  } finally {exchangeB.resolve({});await h.close();}
+});
+
+test('provider logout browser timeout holds owner and stops the B probe after callback', async () => {
+  const overallDeadline={};
+  const h=await providerHarness({overallDeadline});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.browser.length,1);
+    overallDeadline.callback();
+    assert.equal((await pending).reason,'expired');
+    assert.equal(await h.auth.logout(),'in_progress');
+    h.browser.resolve(h.validReturn());
+    await act(async()=>{await flush();});
+    assert.equal(h.calls.refresh.length,2);
+    assert.equal(h.calls.revoke.at(-1).token,'secret-rotated-refresh-2');
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+  } finally {await h.close();}
+});
+
+test('provider logout refuses browser transition when A revocation is unconfirmed', async () => {
+  const h=await providerHarness({revokeResult:false});
+  try {
+    let outcome;
+    await act(async()=>{outcome=await h.auth.runProviderLogoutDiagnostic();await flush();});
+    assert.equal(outcome.status,'UNCONFIRMED');
+    assert.equal(outcome.reason,'cleanup');
+    assert.equal(outcome.revocationConfirmed,false);
+    assert.equal(h.calls.browser.length,0);
+    assert.equal(h.calls.refresh.length,2);
+    assert.equal(h.calls.revoke.length,3);
+  } finally {await h.close();}
+});
+
+test('provider logout storage clear failure prevents browser and reports uncertain persistence', async () => {
+  const storage=deferred();
+  const h=await providerHarness({storage});
+  try {
+    const {pending}=await h.start(auth=>auth.runProviderLogoutDiagnostic());
+    assert.equal(h.calls.refresh.length,2);
+    storage.reject(new Error('secret storage failure'));
+    let outcome;
+    await act(async()=>{outcome=await pending;await flush();});
+    assert.equal(outcome.reason,'storage');
+    assert.equal(h.calls.browser.length,0);
+    assert.equal(h.calls.revoke.length,2);
+    assert.equal(JSON.stringify(h.calls.warnings).includes('secret storage'),false);
+  } finally {storage.resolve();await h.close();}
 });

@@ -1,6 +1,6 @@
 # Proposed real-client diagnostic contract (BAL-033)
 
-Status: refresh replay implemented locally; live execution and provider logout pending. This extends the existing
+Status: both diagnostic slices implemented locally; live execution and provider-side proof pending. This extends the existing
 mobile AuthProvider and AuthSession transport; it does not add another credential
 engine. Native Dev, exact staging issuer/client/resource/API binding and explicit
 opt-in are required. Production, Daily and web cannot invoke the diagnostic.
@@ -12,7 +12,8 @@ worktree, with an opt-in Settings control gated by `__DEV__`, native Android/iOS
 the development app variant and `balance-dev` scheme, exact staging binding,
 and `EXPO_PUBLIC_AUTH_DIAGNOSTICS=1`. This records source work only; no live Eri
 request or device acceptance has been executed. The independent two-family
-provider logout operation below remains unimplemented.
+provider logout operation below is also implemented locally but has not been
+executed against Eri.
 
 The provider owns all local auth entry points synchronously while replay runs.
 It drains an already-started refresh before reading its latest stored session,
@@ -51,14 +52,59 @@ credential cleanup must be reviewed before implementation.
 
 ## Independent provider logout operation
 
-Use a separate fresh login after the replay test invalidated its family. Obtain
-A and B as independently live renewable families in the same Eri provider browser
-session. Verify both can refresh before logout. Reuse the existing PKCE/browser
-request and exchange helpers; adopt A normally and keep B only transiently in
-memory. No separate provider adapter is introduced.
+The native Dev login screen exposes this operation only with the exact staging
+binding and explicit diagnostic opt-in. It starts from a durable local logout
+marker, or creates and verifies that marker from an absent record before the
+first PKCE request, with no current account or guest session. An unexpected
+stored record is left untouched. Its sole synchronous owner
+blocks every public authentication entry point and owns both browser requests
+and logout without a handoff gap. Two fresh PKCE authorizations carry separate
+random nonces with a shared random, nonsecret reference. Both families stay in
+operation memory; neither is adopted or written to the session store. Both
+refresh successfully with distinct new tokens. The existing writer verifies a
+durable logout marker before A revocation is confirmed. The same browser
+logout helper confirms the callback before B is probed. Only typed
+`invalid_grant` counts as B rejection. Cleanup revocations after a failed run
+are never counted as proof of provider logout.
 
-Normal mobile logout explicitly revokes A and opens Eri's browser confirmation.
-Then B must fail refresh with typed invalid_grant. Sanitized provider-side
+The client reports `UNCONFIRMED` with a local-checks-complete reason after that
+sequence, because provider association still needs independent evidence. The
+reference is an operator correlation value, not a token, token fingerprint,
+nonce, claim or user identifier. It is embedded in the two stored Eri nonces
+and the logout state, but only the reference appears in the Dev result. The
+result stays in root AuthProvider state for the Login screen after the logout
+callback navigates there. No diagnostic token or raw OAuth response is stored,
+shown or logged.
+An observed B refresh acceptance remains a local `FAIL` even if cleanup later
+fails or times out; cleanup has its own sanitized warning. A timeout reported
+before the SDK returns may later be upgraded in the persistent Dev notice if
+the late B probe succeeds. An in-progress guest transition takes precedence,
+and any stored guest marker prevents authorization.
+
+The provider-side proof must be run promptly in the authorized Eri staging
+context. A read-only query should return only booleans/counts: exactly two
+matching authorization codes with A/B tags; exactly one refresh family per
+code; distinct family IDs in the same provider session; both families rotated
+before logout; confirmed A revocation before one consumed logout challenge
+bound to that session; and B plus provider session revoked at that challenge.
+The provider session and B family must still be unexpired when proof is read.
+Any missing, ambiguous or expired association leaves the result unconfirmed.
+No live provider query has been run for this source slice.
+
+The browser/consent operation has a five-minute deadline, while individual SDK
+token and revocation requests have 30-second deadlines. A deadline stops later
+steps and reports unconfirmed but retains the owner until in-flight SDK/browser
+work and captured-family cleanup settle. A late refresh token is used only for
+cleanup revocation. Storage-clear or cleanup failure has a distinct sanitized
+result. The operation starts signed out and never persists diagnostic tokens,
+so a storage failure cannot leave A or B available on restart.
+
+The operation obtains A and B as independently live renewable families in the
+same Eri provider browser session and verifies both can refresh before logout.
+It reuses the existing PKCE/browser, exchange, revocation and logout helpers;
+no separate provider adapter is introduced. A revocation must be confirmed by
+the shared SDK helper before Eri's browser confirmation. Then B must fail
+refresh with typed invalid_grant. Sanitized provider-side
 association evidence must establish both families belonged to the same provider
 session; repeating Google login or merely observing a browser return is
 insufficient. Integrate the existing browser operation owner so there is no gap
@@ -101,14 +147,10 @@ Never start a second operation or adopt a late result after the diagnostic expir
 The installed AuthSession token transport exposes no request abort parameter;
 do not replace it with a parallel OAuth HTTP implementation to hide that limit.
 
-Implementation will proceed in bounded slices. First implement only terminal
-refresh replay and its staging Dev Settings entry, with actual AuthProvider race
-coverage and production gating. Keep independent two-family provider logout as
-an explicit remaining slice. Preconditions: __DEV__, native development variant
-and exact scheme/client/issuer/resource/API, explicit public opt-in, authenticated
-nonguest current bound session with a refresh token and no browser owner. Reject
-without local/session/network changes if unavailable. Block new auth operations
-before awaiting the refresh already in flight, then capture its completed result
-and terminally clear via the existing writer. Test the drain gap and timers,
-AppState, manual/guest/logout/login and 401 retries. No token, token fingerprint,
-ID claims, raw error or OAuth response appears in the UI or logs.
+The two implemented client slices are terminal refresh replay in Settings and
+memory-only two-family logout in Login. Both require native Dev, the exact
+staging scheme/client/issuer/resource/API and explicit public opt-in. Source
+tests cover owner races and sanitized outcomes; real provider evidence and the
+independent same-session query remain required before an end-to-end claim.
+No token, fingerprint, ID claim, raw error or OAuth response appears in the UI
+or logs.

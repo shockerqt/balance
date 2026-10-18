@@ -24,6 +24,7 @@ import {
   refreshDelayMs,
   refreshRetryDelayMs,
   isSessionFresh,
+  LOGGED_OUT_MARKER,
   LEGACY_TOKEN_KEY,
   LEGACY_WEB_TOKEN_KEY,
   mergeRefreshedSession,
@@ -111,13 +112,17 @@ interface AuthContextType {
   isGuest: boolean;
   isLoading: boolean;
   loginWithGoogle: () => Promise<void>;
-  enableGuestMode: () => Promise<void>;
+  enableGuestMode: () => Promise<boolean>;
   logout: () => Promise<BrowserLogoutStatus>;
   setAuthToken: (token: string | null) => void;
   checkSession: (tokenOverride?: string) => Promise<void>;
   authorizedFetch: (path: string, init?: RequestInit) => Promise<Response>;
   refreshReplayAvailable: boolean;
   runRefreshReplay: () => Promise<RefreshReplayResult>;
+  providerLogoutAvailable: boolean;
+  providerLogoutNotice: ProviderLogoutDiagnostic | null;
+  runProviderLogoutDiagnostic: () => Promise<ProviderLogoutDiagnostic>;
+  dismissProviderLogoutNotice: () => void;
 }
 
 export type RefreshReplayResult = {
@@ -141,6 +146,92 @@ export const REFRESH_REPLAY_AVAILABLE = replayBindingAllowed(
   Constants.expoConfig?.extra?.appVariant,
 );
 const DIAGNOSTIC_DEADLINE_MS = 30000;
+const PROVIDER_DIAGNOSTIC_DEADLINE_MS = 5 * 60 * 1000;
+const toHex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+
+type Discovery = Awaited<ReturnType<typeof AuthSession.fetchDiscoveryAsync>>;
+
+const requestRefresh = (refreshToken: string, discovery: Discovery) => AuthSession.refreshAsync({
+  clientId: OIDC_MOBILE_CLIENT_ID, refreshToken,
+  extraParams: oauthResourceParams(OIDC_RESOURCE),
+}, discovery);
+
+const requestAuthorization = async (
+  discovery: Discovery, isCurrent: () => boolean, nonce?: string,
+  onExchangeStart?: () => () => void,
+): Promise<AuthSession.TokenResponse | undefined> => {
+  const schemeValue = Constants.expoConfig?.scheme;
+  const scheme = Array.isArray(schemeValue) ? schemeValue[0] : schemeValue;
+  const redirectUrl = AuthSession.makeRedirectUri({
+    scheme: typeof scheme === 'string' ? scheme : 'balance', path: 'auth-callback',
+  });
+  assertStagingMobileRedirect(AUTH_BINDING, typeof scheme === 'string' ? scheme : 'balance', redirectUrl);
+  const request = new AuthSession.AuthRequest({
+    clientId: OIDC_MOBILE_CLIENT_ID,
+    responseType: AuthSession.ResponseType.Code,
+    redirectUri: redirectUrl,
+    scopes: OIDC_SCOPES,
+    extraParams: { ...oauthResourceParams(OIDC_RESOURCE), ...(nonce ? { nonce } : {}) },
+    usePKCE: true,
+  });
+  const result = await awaitCurrentAuthStep(
+    request.promptAsync(discovery, nonce ? { preferEphemeralSession: false } : undefined), isCurrent,
+  );
+  if (!result || result.type !== 'success' || !result.params.code || !request.codeVerifier) return;
+  const metadata = discovery.discoveryDocument as
+    { authorization_response_iss_parameter_supported?: boolean } | undefined;
+  assertAuthorizationResponseIssuer(OIDC_ISSUER, result.params.iss,
+    metadata?.authorization_response_iss_parameter_supported === true);
+  const finishExchange = onExchangeStart?.();
+  try {
+    return await AuthSession.exchangeCodeAsync({
+      clientId: OIDC_MOBILE_CLIENT_ID,
+      code: result.params.code,
+      redirectUri: redirectUrl,
+      extraParams: { ...oauthResourceParams(OIDC_RESOURCE), code_verifier: request.codeVerifier },
+    }, discovery);
+  } catch (error) {
+    if (isCurrent()) throw error;
+    return;
+  } finally { finishExchange?.(); }
+};
+
+const revokeRefresh = async (refreshToken: string, discovery?: Discovery): Promise<boolean> => {
+  try {
+    const resolved = discovery ?? await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+    if (!resolved.revocationEndpoint) return false;
+    const revoked = await AuthSession.revokeAsync({
+      clientId: OIDC_MOBILE_CLIENT_ID, token: refreshToken,
+      tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken,
+    }, resolved);
+    return revoked === true;
+  } catch { return false; }
+};
+
+const openProviderLogout = async (isCurrent: () => boolean, stateOverride?: string): Promise<BrowserLogoutStatus> => {
+  if (!OIDC_BROWSER_LOGOUT_URL) return 'not_requested';
+  try {
+    const schemeValue = Constants.expoConfig?.scheme;
+    const scheme = Array.isArray(schemeValue) ? schemeValue[0] : schemeValue;
+    const redirect = AuthSession.makeRedirectUri({ scheme, path: 'logout-callback' });
+    const state = stateOverride ?? toHex(await Crypto.getRandomBytesAsync(32));
+    if (!isCurrent()) return 'unconfirmed';
+    const url = browserLogoutRequest(AUTH_BINDING, OIDC_BROWSER_LOGOUT_URL,
+      typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state);
+    const result = await WebBrowser.openAuthSessionAsync(url, redirect, { preferEphemeralSession: false });
+    return isCurrent() && result.type === 'success' && isValidLogoutReturn(result.url, redirect, state)
+      ? 'confirmed' : 'unconfirmed';
+  } catch { return 'unconfirmed'; }
+};
+
+export type ProviderLogoutDiagnostic = {
+  status: 'UNCONFIRMED' | 'FAIL';
+  step: 'precondition' | 'authorize_a' | 'authorize_b' | 'refresh_a' | 'refresh_b' | 'clear' | 'logout' | 'probe_b' | 'cleanup';
+  reason: 'unavailable' | 'expired' | 'cancelled' | 'transport' | 'missing_rotation' | 'storage' | 'cleanup' | 'accepted' | 'provider_proof_pending';
+  reference?: string;
+  revocationConfirmed?: boolean;
+  cleanupIssue?: 'storage' | 'revoke';
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -149,8 +240,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [browserBusy, setBrowserBusy] = useState(false);
-  const browserOperationRef = useRef<{ kind: 'login' | 'logout'; owner: symbol } | null>(null);
+  const browserOperationRef = useRef<{ kind: 'login' | 'logout' | 'diagnostic'; owner: symbol } | null>(null);
   const diagnosticOwnerRef = useRef<symbol | null>(null);
+  const guestTransitionRef = useRef(false);
+  const [providerLogoutNotice, setProviderLogoutNotice] = useState<ProviderLogoutDiagnostic | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [refreshRetryAt, setRefreshRetryAt] = useState<number | null>(null);
   const sessionRef = useRef<StoredAuthSession | null>(null);
@@ -271,14 +364,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
           if (epoch !== epochRef.current) return null;
-          const response = await AuthSession.refreshAsync(
-            {
-              clientId: OIDC_MOBILE_CLIENT_ID,
-              refreshToken: session.refreshToken,
-              extraParams: oauthResourceParams(OIDC_RESOURCE),
-            },
-            discovery,
-          );
+          const response = await requestRefresh(session.refreshToken!, discovery);
           if (epoch !== epochRef.current) return null;
           const refreshed = fromTokenResponse(response, session);
           setRefreshRetryAt(null);
@@ -500,14 +586,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshRetryAt, sessionRevision, verifySession]);
 
   const enableGuestMode = useCallback(async () => {
-    if (diagnosticOwnerRef.current) return;
-    const epoch = await clearAuthenticatedState();
-    if (epoch !== epochRef.current) return;
-    setIsGuest(true);
-    syncClient.setNamespace('guest');
-    await storage.setItem(GUEST_KEY, '1');
-    if (epoch !== epochRef.current) return;
-    await fetchOfficialTemplates();
+    if (diagnosticOwnerRef.current || guestTransitionRef.current) return false;
+    guestTransitionRef.current = true;
+    try {
+      const epoch = await clearAuthenticatedState();
+      if (epoch !== epochRef.current || diagnosticOwnerRef.current) return false;
+      syncClient.setNamespace('guest');
+      await storage.setItem(GUEST_KEY, '1');
+      if (epoch !== epochRef.current || diagnosticOwnerRef.current) return false;
+      setIsGuest(true);
+      void fetchOfficialTemplates();
+      return true;
+    } finally { guestTransitionRef.current = false; }
   }, [clearAuthenticatedState]);
 
   const loginWithGoogle = useCallback(async () => {
@@ -521,38 +611,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isCurrent = () => loginEpoch === epochRef.current;
     setIsLoading(true);
     try {
-      const configuredScheme = Constants.expoConfig?.scheme;
-      const schemeValue = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
-      const scheme = typeof schemeValue === 'string' ? schemeValue : 'balance';
-      const redirectUrl = AuthSession.makeRedirectUri({ scheme, path: 'auth-callback' });
-      assertStagingMobileRedirect(AUTH_BINDING, scheme, redirectUrl);
       const discovery = await awaitCurrentAuthStep(AuthSession.fetchDiscoveryAsync(OIDC_ISSUER), isCurrent);
       if (!discovery) return;
-      const request = new AuthSession.AuthRequest({
-        clientId: OIDC_MOBILE_CLIENT_ID,
-        responseType: AuthSession.ResponseType.Code,
-        redirectUri: redirectUrl,
-        scopes: OIDC_SCOPES,
-        extraParams: oauthResourceParams(OIDC_RESOURCE),
-        usePKCE: true,
-      });
-      const result = await awaitCurrentAuthStep(request.promptAsync(discovery), isCurrent);
-      if (!result || result.type !== 'success' || !result.params.code || !request.codeVerifier) return;
-      const metadata = discovery.discoveryDocument as
-        { authorization_response_iss_parameter_supported?: boolean } | undefined;
-      assertAuthorizationResponseIssuer(
-        OIDC_ISSUER, result.params.iss,
-        metadata?.authorization_response_iss_parameter_supported === true,
-      );
-      const tokenResponse = await awaitCurrentAuthStep(AuthSession.exchangeCodeAsync(
-        {
-          clientId: OIDC_MOBILE_CLIENT_ID,
-          code: result.params.code,
-          redirectUri: redirectUrl,
-          extraParams: { ...oauthResourceParams(OIDC_RESOURCE), code_verifier: request.codeVerifier },
-        },
-        discovery,
-      ), isCurrent);
+      const tokenResponse = await requestAuthorization(discovery, isCurrent);
       if (!tokenResponse?.accessToken || !isCurrent()) return;
       const session = fromTokenResponse(tokenResponse);
       // Adoption starts a new credential generation, invalidating any refresh
@@ -589,20 +650,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const clearing = clearAuthenticatedState();
     const logoutEpoch = epochRef.current;
     const isCurrent = () => logoutEpoch === epochRef.current;
-    const revokeCapturedRefresh = async () => {
-      if (!refreshToken) return;
-      try {
-        const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
-        if (discovery.revocationEndpoint) {
-          await AuthSession.revokeAsync({
-            clientId: OIDC_MOBILE_CLIENT_ID,
-            token: refreshToken,
-            tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken,
-          }, discovery);
-        }
-      } catch { /* Local logout is independent of revocation availability. */ }
-    };
-    const revocation = revokeCapturedRefresh();
+    const revocation = refreshToken ? revokeRefresh(refreshToken) : Promise.resolve(false);
     // Staging browser logout must not wait for an offline revocation request.
     // This promise catches internally and only ever uses captured credentials.
     if (OIDC_BROWSER_LOGOUT_URL !== undefined) void revocation;
@@ -619,18 +667,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // An in-progress login was invalidated above, but its browser still owns
       // the cookie context. Never schedule logout behind that login.
       if (!owner) return 'unconfirmed';
-      const configuredScheme = Constants.expoConfig?.scheme;
-      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
-      const redirect = AuthSession.makeRedirectUri({ scheme, path: 'logout-callback' });
-      const bytes = await Crypto.getRandomBytesAsync(32);
-      if (!isCurrent()) return 'unconfirmed';
-      const state = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-      const url = browserLogoutRequest(AUTH_BINDING, OIDC_BROWSER_LOGOUT_URL,
-        typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state);
-      const result = await WebBrowser.openAuthSessionAsync(url, redirect, { preferEphemeralSession: false });
-      if (!isCurrent() || result.type !== 'success' || !isValidLogoutReturn(result.url, redirect, state))
-        return 'unconfirmed';
-      return 'confirmed';
+      return await openProviderLogout(isCurrent);
     } catch {
       return 'unconfirmed';
     } finally {
@@ -749,6 +786,198 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return Promise.race([run, deadline]);
   }, [clearAuthenticatedState, isGuest, user]);
 
+  const runProviderLogoutDiagnostic = useCallback((): Promise<ProviderLogoutDiagnostic> => {
+    const unavailable: ProviderLogoutDiagnostic = {
+      status: 'UNCONFIRMED', step: 'precondition', reason: 'unavailable',
+    };
+    if (!REFRESH_REPLAY_AVAILABLE || OIDC_BROWSER_LOGOUT_URL !== 'https://auth-staging.shocker.cl/logout' ||
+        isLoading || isGuest || guestTransitionRef.current || user || sessionRef.current || browserOperationRef.current || diagnosticOwnerRef.current)
+      return Promise.resolve(unavailable);
+
+    const owner = Symbol('provider-logout-diagnostic');
+    diagnosticOwnerRef.current = owner;
+    browserOperationRef.current = { kind: 'diagnostic', owner };
+    // Fence signed-out work that entered before this owner took control.
+    ++epochRef.current;
+    setBrowserBusy(true);
+    setProviderLogoutNotice(null);
+    let epoch = epochRef.current;
+    let expired = false;
+    let step: ProviderLogoutDiagnostic['step'] = 'precondition';
+    let reference: string | undefined;
+    let latestA: string | undefined;
+    let latestB: string | undefined;
+    let aCleared = false;
+    let aRevoked = false;
+    let bProvedInvalid = false;
+    let cleanupRevocationFailure = false;
+    let announced = false;
+    let observedFailure: ProviderLogoutDiagnostic | null = null;
+    let overallTimer: ReturnType<typeof setTimeout> | undefined;
+    let deadlineResolve: (result: ProviderLogoutDiagnostic) => void = () => {};
+    const deadline = new Promise<ProviderLogoutDiagnostic>(resolve => { deadlineResolve = resolve; });
+    const result = (reason: ProviderLogoutDiagnostic['reason'], status: ProviderLogoutDiagnostic['status'] = 'UNCONFIRMED'): ProviderLogoutDiagnostic =>
+      ({ status, step, reason, ...(reference ? { reference, revocationConfirmed: aRevoked } : {}) });
+    const announce = (value: ProviderLogoutDiagnostic) => {
+      const notice = observedFailure
+        ? { ...observedFailure, ...(value.cleanupIssue ? { cleanupIssue: value.cleanupIssue } : {}) }
+        : value;
+      if (!announced || notice.status === 'FAIL' || notice.cleanupIssue || value.reason === 'storage' || value.reason === 'cleanup') {
+        announced = true; setProviderLogoutNotice(notice);
+      }
+      return notice;
+    };
+    const expire = () => {
+      if (expired) return;
+      expired = true;
+      deadlineResolve(announce(result('expired')));
+    };
+    const sdkDeadline = () => {
+      const timer = setTimeout(expire, DIAGNOSTIC_DEADLINE_MS);
+      return () => clearTimeout(timer);
+    };
+    const owned = () => diagnosticOwnerRef.current === owner &&
+      browserOperationRef.current?.owner === owner && epochRef.current === epoch;
+    const current = () => owned() && !expired;
+
+    const run = (async (): Promise<ProviderLogoutDiagnostic> => {
+      try {
+        const oldRefresh = refreshRef.current?.promise;
+        if (oldRefresh) await oldRefresh;
+        if (!current()) return result(expired ? 'expired' : 'unavailable');
+        let saved = await readValue(SESSION_KEY);
+        if (!current() || sessionRef.current || user || isGuest)
+          return result(expired ? 'expired' : 'unavailable');
+        if (saved === null) {
+          try { await clearAuthenticatedState(true); }
+          catch { epoch = epochRef.current; return result('storage'); }
+          epoch = epochRef.current;
+          if (!current()) return result(expired ? 'expired' : 'unavailable');
+          saved = await readValue(SESSION_KEY);
+        }
+        if (!current() || saved !== LOGGED_OUT_MARKER)
+          return result(expired ? 'expired' : 'unavailable');
+        const savedGuest = await storage.getItem(GUEST_KEY);
+        if (!current() || savedGuest !== null)
+          return result(expired ? 'expired' : 'unavailable');
+
+        // The public reference is independent of tokens, claims and provider IDs.
+        const random = await Crypto.getRandomBytesAsync(64);
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        reference = toHex(random.slice(0, 16));
+        const nonceA = `bal033v1.${reference}.A.${toHex(random.slice(16, 32))}`;
+        const nonceB = `bal033v1.${reference}.B.${toHex(random.slice(32, 48))}`;
+        const logoutState = reference + toHex(random.slice(48, 64));
+        const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+        if (!current()) return result(expired ? 'expired' : 'transport');
+
+        step = 'authorize_a';
+        const tokenA = await requestAuthorization(discovery, current, nonceA, sdkDeadline);
+        latestA = tokenA?.refreshToken;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!tokenA?.accessToken || !latestA) return result('cancelled');
+
+        step = 'authorize_b';
+        const tokenB = await requestAuthorization(discovery, current, nonceB, sdkDeadline);
+        latestB = tokenB?.refreshToken;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!tokenB?.accessToken || !latestB || latestB === latestA) return result('cancelled');
+
+        step = 'refresh_a';
+        const beforeA = latestA;
+        const finishA = sdkDeadline();
+        let rotatedA: AuthSession.TokenResponse;
+        try { rotatedA = await requestRefresh(beforeA, discovery); }
+        finally { finishA(); }
+        if (rotatedA.refreshToken) latestA = rotatedA.refreshToken;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!latestA || latestA === beforeA) return result('missing_rotation');
+
+        step = 'refresh_b';
+        const beforeB = latestB;
+        const finishB = sdkDeadline();
+        let rotatedB: AuthSession.TokenResponse;
+        try { rotatedB = await requestRefresh(beforeB, discovery); }
+        finally { finishB(); }
+        if (rotatedB.refreshToken) latestB = rotatedB.refreshToken;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!latestB || latestB === beforeB) return result('missing_rotation');
+
+        step = 'clear';
+        try { await clearAuthenticatedState(true); }
+        catch { epoch = epochRef.current; return result('storage'); }
+        epoch = epochRef.current;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        aCleared = (await readValue(SESSION_KEY)) === LOGGED_OUT_MARKER;
+        if (!current() || !aCleared) return result(aCleared ? 'expired' : 'storage');
+
+        step = 'logout';
+        const finishRevoke = sdkDeadline();
+        try { aRevoked = await revokeRefresh(latestA, discovery); }
+        finally { finishRevoke(); }
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!aRevoked) return result('transport');
+        const browserStatus = await openProviderLogout(current, logoutState);
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (browserStatus !== 'confirmed') return result('cancelled');
+
+        step = 'probe_b';
+        const finishProbe = sdkDeadline();
+        let rejected = false;
+        try {
+          const probe = await requestRefresh(latestB, discovery);
+          if (probe.refreshToken) latestB = probe.refreshToken;
+          observedFailure = result('accepted', 'FAIL');
+          announce(observedFailure);
+        } catch (error) {
+          rejected = error instanceof AuthSession.TokenError && error.code === 'invalid_grant';
+          bProvedInvalid = rejected;
+          if (!rejected) return result(expired ? 'expired' : 'transport');
+        } finally { finishProbe(); }
+        if (observedFailure) return observedFailure;
+        if (!current()) return result(expired ? 'expired' : 'transport');
+        if (!rejected) return result('accepted', 'FAIL');
+        return result(aRevoked ? 'provider_proof_pending' : 'transport');
+      } catch {
+        return result(expired ? 'expired' : 'transport');
+      } finally {
+        // Only these captured families are cleaned up. A timed-out SDK call
+        // remains awaited above so its late successor can be revoked here.
+        step = 'cleanup';
+        if (diagnosticOwnerRef.current === owner && browserOperationRef.current?.owner === owner) {
+          if (latestA && !aRevoked) {
+            const finish = sdkDeadline();
+            try { if (!(await revokeRefresh(latestA))) cleanupRevocationFailure = true; }
+            finally { finish(); }
+          }
+          if (latestB && !bProvedInvalid) {
+            const finish = sdkDeadline();
+            try { if (!(await revokeRefresh(latestB))) cleanupRevocationFailure = true; }
+            finally { finish(); }
+          }
+          if (diagnosticOwnerRef.current === owner && browserOperationRef.current?.owner === owner) {
+            diagnosticOwnerRef.current = null;
+            browserOperationRef.current = null;
+            setBrowserBusy(false);
+          }
+        }
+        if (overallTimer) clearTimeout(overallTimer);
+      }
+    })();
+    overallTimer = setTimeout(expire, PROVIDER_DIAGNOSTIC_DEADLINE_MS);
+    const completed = run.then(value => {
+      const issue = cleanupRevocationFailure ? 'revoke' : null;
+      return announce(issue && value.status === 'FAIL'
+        ? { ...value, cleanupIssue: issue }
+        : issue
+          ? { ...value, status: 'UNCONFIRMED', step: 'cleanup', reason: 'cleanup' }
+          : value);
+    });
+    return Promise.race([completed, deadline]);
+  }, [clearAuthenticatedState, isGuest, isLoading, user]);
+
+  const dismissProviderLogoutNotice = useCallback(() => setProviderLogoutNotice(null), []);
+
   const value = useMemo<AuthContextType>(
     () => ({
       user,
@@ -763,8 +992,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authorizedFetch,
       refreshReplayAvailable: REFRESH_REPLAY_AVAILABLE,
       runRefreshReplay,
+      providerLogoutAvailable: REFRESH_REPLAY_AVAILABLE &&
+        OIDC_BROWSER_LOGOUT_URL === 'https://auth-staging.shocker.cl/logout',
+      providerLogoutNotice,
+      runProviderLogoutDiagnostic,
+      dismissProviderLogoutNotice,
     }),
-    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch, runRefreshReplay],
+    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch, runRefreshReplay, providerLogoutNotice, runProviderLogoutDiagnostic, dismissProviderLogoutNotice],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
