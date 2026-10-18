@@ -12,6 +12,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,6 +45,7 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
   @Composable
   override fun ComposableScope.Content() {
     val snapshot = data.value
+    val renderSession = snapshot.optString("session")
     val colors = snapshot.optJSONObject("colors") ?: JSONObject()
     val background = color(colors, "background", Color(0xFF12160F))
     MaterialTheme(colorScheme = darkColorScheme(
@@ -58,7 +61,9 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     )) {
       Surface(modifier = Modifier.fillMaxSize(), color = background,
         contentColor = MaterialTheme.colorScheme.onSurface) {
-        DailyLog(snapshot, command.value, active.value, ::emit)
+        DailyLog(snapshot, command.value, active.value,
+          { action, date, ids, time, revision -> if (session == renderSession) emit(action, date, ids, time, revision) },
+          { action, date, ids, time, revision, input -> if (session == renderSession) emitExtra(action, date, ids, time, revision, input) })
       }
     }
   }
@@ -75,11 +80,15 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     command.value = DateCommand(date, parsed.optBoolean("fromNative"), CommandToken(parsed.optString("session"), parsed.optLong("revision")))
   }
   private fun emit(action: String, date: LocalDate, ids: List<String>, time: String?, revision: Long) {
+    emitExtra(action, date, ids, time, revision, emptyMap())
+  }
+  private fun emitExtra(action: String, date: LocalDate, ids: List<String>, time: String?, revision: Long, input: Map<String, Any>) {
     if (!active.value || session.isEmpty() || command.value.token.session != session) return
     sequence += 1
     val event = mutableMapOf<String, Any>("session" to session, "sequence" to sequence, "commandRevision" to revision, "action" to action, "date" to date.toString())
     if (ids.isNotEmpty()) event["ids"] = ids
     if (time != null) event["time"] = time
+    if (input.isNotEmpty()) event["input"] = input
     onAction(event)
   }
 }
@@ -98,9 +107,15 @@ private val weekdayFormat = DateTimeFormatter.ofPattern("EEEEE", spanish)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
-  emit: (String, LocalDate, List<String>, String?, Long) -> Unit) {
+  emit: (String, LocalDate, List<String>, String?, Long) -> Unit,
+  emitExtra: (String, LocalDate, List<String>, String?, Long, Map<String, Any>) -> Unit) {
   val pager = rememberPagerState(initialPage = DailyLogDates.page(command.date)) { DailyLogDates.count }
   val scope = rememberCoroutineScope()
+  var destination by rememberSaveable { mutableIntStateOf(0) }
+  var registering by remember { mutableStateOf(false) }
+  var measurementDate by rememberSaveable { mutableStateOf(command.date.toString()) }
+  var weightDialog by remember { mutableStateOf(false) }
+  val destinations = rememberSaveableStateHolder()
   val latestEmit by rememberUpdatedState(emit)
   val latestActive by rememberUpdatedState(active)
   var appliedCommand by remember { mutableStateOf<CommandToken?>(null) }
@@ -143,8 +158,9 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   LaunchedEffect(settled, available, active) {
     selected = if (selectionDate != settled || !active) emptySet() else selected.intersect(available)
     selectionDate = settled
-    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false }
+    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false }
   }
+  BackHandler(active && destination != 0) { destination = 0 }
   BackHandler(active && selected.isNotEmpty()) { selected = emptySet() }
   fun action(kind: String, ids: List<String> = emptyList(), time: String? = null) {
     if (!locked && pager.currentPage == pager.settledPage) emit(kind, settled, ids, time, appliedCommand!!.revision)
@@ -154,9 +170,10 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   }
 
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    if (destination == 0) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
-        Text("REGISTRO DIARIO", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(visible.format(monthFormat).replaceFirstChar { it.titlecase(spanish) }, style = MaterialTheme.typography.titleLarge)
       }
       TextButton(onClick = { go(today) }, enabled = !locked && selected.isEmpty()) { Text("Hoy") }
@@ -168,20 +185,9 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       repeat(7) { offset ->
         val date = weekStart.plusDays(offset.toLong())
         val chosen = date == visible
-        Surface(modifier = Modifier.weight(1f).padding(2.dp),
-          color = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background,
-          shape = RoundedCornerShape(12.dp),
-          onClick = { go(date) }, enabled = !locked && selected.isEmpty()) {
-          Column(Modifier.padding(vertical = 10.dp).semantics(mergeDescendants = true) {
-            contentDescription = date.format(dayFormat)
-            this.selected = chosen
-          }, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(date.format(weekdayFormat).uppercase(spanish), fontSize = 11.sp)
-            Text(date.dayOfMonth.toString(), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            val hasFood = foods(days.optJSONObject(date.toString()) ?: empty).isNotEmpty()
-            Text(if (date == today) "HOY" else if (hasFood) "•" else " ", fontSize = 9.sp)
-          }
-        }
+        val day = days.optJSONObject(date.toString()) ?: empty
+        WireDateCell(date, chosen, day, !locked && selected.isEmpty()) { go(date) }
+
       }
     }
     HorizontalDivider(Modifier.padding(top = 8.dp))
@@ -198,17 +204,29 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
           selected = if (ids.all { it in selected }) selected - ids.toSet() else selected + ids
           selectionDate = date
         },
-        onAdd = { time -> action("add", time = time) }, onWeight = { action("weight") })
+        onAdd = { time -> action("add", time = time) },
+        onEdit = { food, quantity, mode, time ->
+          if (!locked) emitExtra("edit-save", date, listOf(food.optString("id")), time, appliedCommand!!.revision,
+            mapOf("quantity" to quantity, "mode" to mode, "revision" to food.optLong("revision")))
+        })
+    }
+    } else {
+      Box(Modifier.weight(1f).fillMaxWidth()) {
+        destinations.SaveableStateProvider(destination) {
+          WireDestination(destination, data, active && !locked, measurementDate,
+            onMeasurementDate = { measurementDate = it },
+            onWeight = { weightDialog = true },
+            onOpenDate = { date, body ->
+              if (body) { measurementDate = date.toString(); destination = 1 }
+              else { destination = 0; scope.launch { pager.scrollToPage(DailyLogDates.page(date)) } }
+            },
+            onAction = { kind, input -> if (!locked) emitExtra(kind, settled, emptyList(), null, appliedCommand!!.revision, input) })
+        }
+      }
     }
     Surface(color = MaterialTheme.colorScheme.surface) {
       if (selected.isEmpty()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-          IconButton(onClick = { go(settled.minusDays(1)) }, enabled = !locked,
-            modifier = Modifier.semantics { contentDescription = "Día anterior" }) { Text("‹", fontSize = 28.sp) }
-          FilledTonalButton(onClick = { action("add") }, enabled = !locked, modifier = Modifier.weight(1f)) { Text("+  Registrar alimento") }
-          IconButton(onClick = { go(settled.plusDays(1)) }, enabled = !locked,
-            modifier = Modifier.semantics { contentDescription = "Día siguiente" }) { Text("›", fontSize = 28.sp) }
-        }
+        WireNavigation(destination, !locked, onSelect = { destination = it }, onAdd = { registering = true })
       } else {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically) {
@@ -222,6 +240,25 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
         }
       }
     }
+  }
+  if (registering && active) ModalBottomSheet(onDismissRequest = { registering = false }) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+      Text("Registrar", style = MaterialTheme.typography.titleLarge)
+      Text(if (destination == 1) measurementDate else settled.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Button(onClick = { registering = false; if (destination == 1) {
+        destination = 0; scope.launch { pager.scrollToPage(DailyLogDates.page(LocalDate.parse(measurementDate))) }
+        // Registration uses the requested date directly, without waiting for paging acknowledgement.
+        emitExtra("register", LocalDate.parse(measurementDate), emptyList(), null, appliedCommand!!.revision, emptyMap())
+      } else action("add") }, modifier = Modifier.fillMaxWidth()) { Text("Alimento") }
+      OutlinedButton(onClick = { registering = false; if (destination != 1) measurementDate = settled.toString(); weightDialog = true },
+        enabled = data.optBoolean("showWeight"), modifier = Modifier.fillMaxWidth()) { Text("Peso") }
+      if (!data.optBoolean("showWeight")) Text("Activa el seguimiento de peso en Perfil.", style = MaterialTheme.typography.bodySmall)
+      Spacer(Modifier.height(24.dp))
+    }
+  }
+  if (weightDialog && active) WireWeightDialog(LocalDate.parse(measurementDate), data, onDismiss = { weightDialog = false }) { kind, input ->
+    if (!locked) emitExtra(kind, LocalDate.parse(measurementDate), emptyList(), null, appliedCommand!!.revision, input)
+    weightDialog = false
   }
   if (calendar) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(settled), yearRange = 1900..9999)
@@ -248,88 +285,5 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
         action("move", selected.toList(), String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
         selected = emptySet(); moveTime = false
       }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = { moveTime = false }) { Text("Cancelar") } })
-  }
-}
-
-@Composable
-private fun DayContent(date: LocalDate, day: JSONObject, data: JSONObject, today: LocalDate, selected: Set<String>, enabled: Boolean,
-  onFood: (String) -> Unit, onLongFood: (String) -> Unit, onGroup: (List<String>) -> Unit, onAdd: (String) -> Unit, onWeight: () -> Unit) {
-  val entries = remember(day) { foods(day) }
-  val groups = remember(entries) { entries.groupBy { it.optString("time").substringBefore(":") } }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    item("date") { Text(date.format(dayFormat).replaceFirstChar { it.titlecase(spanish) }, style = MaterialTheme.typography.titleMedium) }
-    item("summary") { NutritionSummary(day, data.optJSONObject("colors") ?: JSONObject()) }
-    if (data.optBoolean("showWeight")) item("weight") {
-      val hasWeight = !day.isNull("weight") && day.optString("weight").isNotEmpty()
-      OutlinedCard(onClick = onWeight, enabled = enabled && date <= today, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text("Peso del día", color = MaterialTheme.colorScheme.onSurfaceVariant)
-          Text(if (hasWeight) day.optString("weight") else if (date > today) "Fecha futura" else "+ Registrar", fontWeight = FontWeight.SemiBold)
-        }
-      }
-    }
-    val error = data.optJSONObject("weightError")
-    if (error?.optString("dateId") == date.toString()) item("weightError") { Text(error.optString("message"), color = MaterialTheme.colorScheme.error) }
-    if (entries.isEmpty()) item("empty") {
-      Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Un día por registrar", style = MaterialTheme.typography.titleLarge)
-        Text("Añade tu primera comida.", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-      }
-    }
-    groups.forEach { (hour, group) ->
-      item("hour-$hour") {
-        val ids = group.map { it.optString("id") }
-        Row(Modifier.fillMaxWidth().combinedClickable(enabled = enabled,
-          onClick = { if (selected.isNotEmpty()) onGroup(ids) }, onLongClick = { onGroup(ids) })
-          .padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-          Text("$hour:00", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-          if (selected.isNotEmpty()) TextButton(onClick = { onGroup(ids) }, enabled = enabled) { Text(if (ids.all { it in selected }) "Quitar grupo" else "Seleccionar grupo") }
-          else TextButton(onClick = { onAdd("$hour:00") }, enabled = enabled, modifier = Modifier.semantics { contentDescription = "Registrar alimento a las $hour horas" }) { Text("+ Añadir") }
-        }
-      }
-      items(group, key = { "food-${it.optString("id")}" }, contentType = { "food" }) { food ->
-        val id = food.optString("id")
-        val chosen = id in selected
-        Surface(shape = RoundedCornerShape(12.dp), color = if (chosen) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface,
-          modifier = Modifier.fillMaxWidth().combinedClickable(enabled = enabled, onClick = { onFood(id) }, onLongClickLabel = "Seleccionar alimento", onLongClick = { onLongFood(id) })
-            .semantics(mergeDescendants = true) { this.selected = chosen; if (selected.isNotEmpty()) role = Role.Checkbox }) {
-          Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (selected.isNotEmpty()) Checkbox(checked = chosen, onCheckedChange = null, modifier = Modifier.padding(end = 8.dp))
-            Column(Modifier.weight(1f)) {
-              Text(food.optString("name"), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-              Text("${food.optString("time")} · ${food.optString("portion")}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-              Text(food.optString("macros"), Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.End) {
-              Text(food.optString("calories"), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
-              Text("kcal", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-          }
-        }
-      }
-    }
-    item("hint") { if (entries.isNotEmpty()) Text("Mantén pulsado un alimento para seleccionar varios.", Modifier.padding(vertical = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-  }
-}
-
-@Composable
-private fun NutritionSummary(day: JSONObject, colors: JSONObject) {
-  Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-    FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-      Text(day.optString("calories", "0"), fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
-      Text(" / ${day.optString("target", "2200")} kcal", Modifier.padding(start = 8.dp, bottom = 6.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    LinearProgressIndicator(progress = { day.optDouble("progress", 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp))
-    val macros = day.optJSONArray("macros")
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      if (macros != null) repeat(macros.length()) { index ->
-        val macro = macros.getJSONObject(index)
-        Column(Modifier.weight(1f).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(8.dp)) {
-          Text(macro.optString("name"), style = MaterialTheme.typography.labelSmall, color = color(colors, macro.optString("color"), MaterialTheme.colorScheme.onSurfaceVariant))
-          Text("${macro.optString("value")} g", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-          Text("/${macro.optString("target")} g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-    }
   }
 }
