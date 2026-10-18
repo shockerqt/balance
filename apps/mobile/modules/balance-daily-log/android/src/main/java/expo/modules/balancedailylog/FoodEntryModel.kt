@@ -1,5 +1,6 @@
 package expo.modules.balancedailylog
 
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalTime
 import java.util.Locale
@@ -18,6 +19,7 @@ internal object FoodEntryModel {
   fun validDateTime(date: String, time: String): Boolean = runCatching {
     LocalDate.parse(date).year in 1970..9999 && Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]").matches(time) && LocalTime.parse(time) != null
   }.getOrDefault(false)
+  fun input(value: Double): String = BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
   fun display(value: Double?): String = if (value == null || !value.isFinite()) "—" else
     String.format(Locale.forLanguageTag("es-CL"), "%.2f", value).trimEnd('0').trimEnd(',').trimEnd('.')
 }

@@ -5,6 +5,8 @@ class FoodEntryModelTest {
  @Test fun localeDecimalAndConversion() {
    assertEquals(120.0, FoodEntryModel.canonical("1,5", 1.0, 80.0)!!, 0.0000001)
    assertEquals(0.125, FoodEntryModel.decimal(" 0,125 ")!!, 0.0000001)
+   assertEquals("0.00001", FoodEntryModel.input(0.00001))
+   assertEquals("100000000", FoodEntryModel.input(100000000.0))
    assertEquals(0.0, FoodEntryModel.decimal("0")!!, 0.0)
  }
  @Test fun invalidOrOverflowQuantity() {

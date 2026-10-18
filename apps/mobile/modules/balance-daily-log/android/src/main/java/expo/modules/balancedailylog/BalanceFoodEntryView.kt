@@ -191,8 +191,8 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
             OutlinedButton(onClick = { portionMenu = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(portion?.optString("name") ?: unit) }
             DropdownMenu(expanded = portionMenu, onDismissRequest = { portionMenu = false }) {
               val units = if (chosen == null) listOf("g", "ml") else listOf(unit)
-              units.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { if (chosen != null && portionId.isNotEmpty()) quantity = canonical?.toString() ?: "100"; unit = option; portionId = ""; portionMenu = false; dirty = true }) }
-              portions.forEach { option -> DropdownMenuItem(text = { Text(option.optString("name")) }, onClick = { portionId = option.optString("id"); quantity = option.optDouble("portionQuantity").toString(); portionMenu = false; dirty = true }) }
+              units.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { if (chosen != null && portionId.isNotEmpty()) quantity = canonical?.let { FoodEntryModel.input(it) } ?: "100"; unit = option; portionId = ""; portionMenu = false; dirty = true }) }
+              portions.forEach { option -> DropdownMenuItem(text = { Text(option.optString("name")) }, onClick = { portionId = option.optString("id"); quantity = FoodEntryModel.input(option.optDouble("portionQuantity")); portionMenu = false; dirty = true }) }
             }
           }
         }
@@ -213,8 +213,8 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-          OutlinedButton(onClick = { calendar = true }, enabled = enabled, modifier = Modifier.weight(1f)) { Text(date) }
-          OutlinedButton(onClick = { clock = true }, enabled = enabled, modifier = Modifier.weight(1f)) { Text(time) }
+          OutlinedButton(onClick = { calendar = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Fecha del consumo: $date" }) { Text(date) }
+          OutlinedButton(onClick = { clock = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Hora del consumo: $time" }) { Text(time) }
         }
         Text("Fecha y hora de Chile", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (chosen == null) {
