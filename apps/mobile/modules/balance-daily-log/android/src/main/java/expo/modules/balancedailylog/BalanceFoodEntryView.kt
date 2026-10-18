@@ -57,7 +57,8 @@ class BalanceFoodEntryView(context: Context, appContext: AppContext) : ExpoCompo
       onSurface = color("text", 0xFFEEF2E6), onSurfaceVariant = color("textSecondary", 0xFF9AA392),
       surfaceContainer = color("surfaceRaised", 0xFF232A1E), outlineVariant = color("border", 0xFF333C2C), error = color("danger", 0xFFFF6B6B)
     )) {
-      key(renderSession) {
+      // Focus nonces invalidate callbacks; the route draft survives focus changes.
+      key(snapshot.optString("draftId", renderSession)) {
         FoodEntryScreen(snapshot, status.value, active.value) { action, input ->
           if (active.value && session.isNotEmpty() && session == renderSession) {
             sequence += 1

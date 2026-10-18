@@ -35,7 +35,10 @@ this does not promise draft recovery after process death or a new account sessio
 One native save request is validated by the TypeScript input boundary. Template
 revision/existence and portion identity are checked against canonical documents;
 all nutrition and conversion are reconstructed rather than trusting native totals.
-Account/focus nonce, increasing sequence and a save lock reject stale/replayed
+A stable route draft ID preserves input across focus changes, while a fresh
+focus nonce and reset sequence invalidate old callbacks. Completion is explicit
+React state, so even a save batched into one render or completed while blurred
+returns correctly once focused. Account/focus nonce, sequence and a save lock reject stale/replayed
 callbacks. The existing meal store waits for hydration, durably enqueues through
 its existing sync owner, then merges the exact document into its cache. Late
 completion cannot populate another account's UI. Save errors preserve the editor;
