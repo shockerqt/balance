@@ -2,8 +2,8 @@
 # Balance database schema snapshot
 
 - PostgreSQL major: 17
-- Migration head: `20260821010000 canonical units portions checksum=ef2648844285279a99d117cd12f092c3243f080985028339f9974f837fff2a07b8daa712b2c14981b3b5844e2ace5492`
-- Schema fingerprint: `sha256:ad8389510f96661106d30ae0ffac2a04b6e1ce6de97da7bb12d4b35f49a8d3d4`
+- Migration head: `20261011010000 oidc user identities checksum=792859e88a932c5fadcb2e463066470c098e45bc2b53ba7a72368e0d19780056cde7894eaefbaa973908dbd8dc37c321`
+- Schema fingerprint: `sha256:a1e245ab4c1efe031d471abb64eee5a1afb7d4c5821c82bc625fdb344cfec05a`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
@@ -15,6 +15,7 @@ TABLE|food_import_rows
 TABLE|food_import_sessions
 TABLE|meal_logs
 TABLE|meal_templates
+TABLE|oidc_user_identities
 TABLE|user_preferences
 TABLE|users
 TABLE|weight_logs
@@ -52,6 +53,9 @@ COLUMN|meal_templates|6|deleted_at|bigint|nullable|identity=none|default=
 COLUMN|meal_templates|7|is_official|boolean|not-null|identity=none|default=false
 COLUMN|meal_templates|8|source_provider|character varying(32)|nullable|identity=none|default=
 COLUMN|meal_templates|9|external_id|character varying(128)|nullable|identity=none|default=
+COLUMN|oidc_user_identities|1|issuer|text|not-null|identity=none|default=
+COLUMN|oidc_user_identities|2|subject|text|not-null|identity=none|default=
+COLUMN|oidc_user_identities|3|user_id|integer|not-null|identity=none|default=
 COLUMN|user_preferences|1|id|integer|not-null|identity=none|default=
 COLUMN|user_preferences|2|preferences|jsonb|not-null|identity=none|default='{}'::jsonb
 COLUMN|user_preferences|3|updated_at|bigint|not-null|identity=none|default=
@@ -81,6 +85,10 @@ CONSTRAINT|meal_logs|meal_logs_template_id_fkey|f|FOREIGN KEY (template_id) REFE
 CONSTRAINT|meal_logs|meal_logs_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|meal_templates|meal_templates_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|meal_templates|meal_templates_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+CONSTRAINT|oidc_user_identities|oidc_user_identities_issuer_check|c|CHECK (length(issuer) >= 1 AND length(issuer) <= 2048)
+CONSTRAINT|oidc_user_identities|oidc_user_identities_pkey|p|PRIMARY KEY (issuer, subject)
+CONSTRAINT|oidc_user_identities|oidc_user_identities_subject_check|c|CHECK (length(subject) >= 1 AND length(subject) <= 255 AND subject = btrim(subject))
+CONSTRAINT|oidc_user_identities|oidc_user_identities_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|user_preferences|user_preferences_id_fkey|f|FOREIGN KEY (id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|user_preferences|user_preferences_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|users|users_email_key|u|UNIQUE (email)
@@ -99,6 +107,8 @@ INDEX|meal_templates|idx_meal_templates_import_identity|CREATE UNIQUE INDEX idx_
 INDEX|meal_templates|idx_meal_templates_official|CREATE INDEX idx_meal_templates_official ON public.meal_templates USING btree (is_official, deleted_at)
 INDEX|meal_templates|idx_meal_templates_sync|CREATE INDEX idx_meal_templates_sync ON public.meal_templates USING btree (user_id, updated_at, id)
 INDEX|meal_templates|meal_templates_pkey|CREATE UNIQUE INDEX meal_templates_pkey ON public.meal_templates USING btree (id)
+INDEX|oidc_user_identities|oidc_user_identities_pkey|CREATE UNIQUE INDEX oidc_user_identities_pkey ON public.oidc_user_identities USING btree (issuer, subject)
+INDEX|oidc_user_identities|oidc_user_identities_user_id_idx|CREATE INDEX oidc_user_identities_user_id_idx ON public.oidc_user_identities USING btree (user_id)
 INDEX|user_preferences|idx_user_preferences_sync|CREATE INDEX idx_user_preferences_sync ON public.user_preferences USING btree (id, updated_at)
 INDEX|user_preferences|user_preferences_pkey|CREATE UNIQUE INDEX user_preferences_pkey ON public.user_preferences USING btree (id)
 INDEX|users|users_email_key|CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)
@@ -109,6 +119,7 @@ OWNER|TABLE|food_import_rows|migration-role
 OWNER|TABLE|food_import_sessions|migration-role
 OWNER|TABLE|meal_logs|migration-role
 OWNER|TABLE|meal_templates|migration-role
+OWNER|TABLE|oidc_user_identities|migration-role
 OWNER|TABLE|user_preferences|migration-role
 OWNER|TABLE|users|migration-role
 OWNER|SEQUENCE|users_id_seq|migration-role
