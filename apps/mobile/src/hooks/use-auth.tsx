@@ -116,7 +116,31 @@ interface AuthContextType {
   setAuthToken: (token: string | null) => void;
   checkSession: (tokenOverride?: string) => Promise<void>;
   authorizedFetch: (path: string, init?: RequestInit) => Promise<Response>;
+  refreshReplayAvailable: boolean;
+  runRefreshReplay: () => Promise<RefreshReplayResult>;
 }
+
+export type RefreshReplayResult = {
+  status: 'PASS' | 'FAIL' | 'UNCONFIRMED';
+  step: 'precondition' | 'rotation' | 'replay' | 'family';
+  reason: 'unavailable' | 'busy' | 'expired' | 'transport' | 'storage' | 'missing_rotation' | 'accepted' | 'invalid_grant';
+};
+
+const replayBindingAllowed = (scheme: unknown, variant: unknown) =>
+  __DEV__ && (Platform.OS === 'android' || Platform.OS === 'ios') &&
+  variant === 'development' && scheme === 'balance-dev' &&
+  process.env.EXPO_PUBLIC_AUTH_DIAGNOSTICS === '1' &&
+  OIDC_ISSUER === 'https://auth-staging.shocker.cl' &&
+  OIDC_MOBILE_CLIENT_ID === 'balance-mobile-staging' &&
+  OIDC_RESOURCE === 'https://balance-staging.shocker.cl/api' &&
+  API_BASE_URL === 'https://balance-staging.shocker.cl/api';
+
+const configuredScheme = Constants.expoConfig?.scheme;
+export const REFRESH_REPLAY_AVAILABLE = replayBindingAllowed(
+  Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme,
+  Constants.expoConfig?.extra?.appVariant,
+);
+const DIAGNOSTIC_DEADLINE_MS = 30000;
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -126,6 +150,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
   const [browserBusy, setBrowserBusy] = useState(false);
   const browserOperationRef = useRef<{ kind: 'login' | 'logout'; owner: symbol } | null>(null);
+  const diagnosticOwnerRef = useRef<symbol | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [refreshRetryAt, setRefreshRetryAt] = useState<number | null>(null);
   const sessionRef = useRef<StoredAuthSession | null>(null);
@@ -162,7 +187,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         return await commitSession(session, expectedEpoch);
       } catch (error) {
-        console.warn('La sesion sigue activa pero no pudo persistirse', error);
+        if (!diagnosticOwnerRef.current) console.warn('La sesion sigue activa pero no pudo persistirse', error);
         if (expectedEpoch !== epochRef.current) return false;
         sessionRef.current = session;
         setSessionRevision((revision) => revision + 1);
@@ -187,7 +212,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [persistSession],
   );
 
-  const clearAuthenticatedState = useCallback(async () => {
+  const clearAuthenticatedState = useCallback(async (diagnostic = false) => {
     const epoch = ++epochRef.current;
     setIsLoading(false);
     setUser(null);
@@ -199,6 +224,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await commitSession(null, epoch);
     } catch (error) {
+      if (diagnostic) throw new Error('diagnostic_storage');
       console.warn('No se pudo limpiar la sesion del almacenamiento', error);
     }
     return epoch;
@@ -206,6 +232,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setAuthToken = useCallback(
     (token: string | null) => {
+      if (diagnosticOwnerRef.current) return;
       if (!token) {
         void clearAuthenticatedState();
         return;
@@ -234,6 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshSession = useCallback(
     async (session: StoredAuthSession, epoch: number) => {
+      if (diagnosticOwnerRef.current) return null;
       if (epoch !== epochRef.current) return null;
       if (!sessionForAuthContext(session, AUTH_BINDING)) return null;
       if (!session.refreshToken) return null;
@@ -293,7 +321,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const verifySession = useCallback(
     async (candidate: StoredAuthSession) => {
+      if (diagnosticOwnerRef.current) return;
       const epoch = epochRef.current;
+      const isCurrent = () => epoch === epochRef.current && !diagnosticOwnerRef.current;
       let active = sessionForAuthContext(candidate, AUTH_BINDING);
       if (!active) {
         await clearAuthenticatedState();
@@ -303,6 +333,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!isSessionFresh(active)) {
         const next = await refreshSession(active, epoch);
+        if (!isCurrent()) return;
         if (!next) {
           if (!active.refreshToken && epoch === epochRef.current) await clearAuthenticatedState();
           return;
@@ -321,8 +352,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
       try {
+        if (!isCurrent()) return;
         let response = await fetchProfile(active.accessToken);
-        if (epoch !== epochRef.current) return;
+        if (!isCurrent()) return;
         if (response.status === 401 && active.refreshToken && !refreshed) {
           const latest = sessionForUnauthorizedResponse(active, sessionRef.current);
           if (latest.accessToken !== active.accessToken) {
@@ -334,8 +366,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!next) return;
             active = next;
           }
+          if (!isCurrent()) return;
           response = await fetchProfile(active.accessToken);
-          if (epoch !== epochRef.current) return;
+          if (!isCurrent()) return;
         }
 
         if (!response.ok) {
@@ -344,7 +377,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const payload = (await response.json()) as ApiResponse<UserProfile>;
-        if (epoch !== epochRef.current) return;
+        if (!isCurrent()) return;
         if (!payload.data) {
           // The token went unvalidated: drop the cached identity so hydration
           // cannot present a stale profile as an authenticated session.
@@ -361,6 +394,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // must not inherit this identity.
         const verified = { ...sessionForVerifiedProfile(active, sessionRef.current), user: payload.data };
         if (!(await persistSession(verified, epoch))) return;
+        if (!isCurrent()) return;
         setUser(payload.data);
         setIsGuest(false);
         try {
@@ -368,13 +402,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (storageError) {
           console.warn('No se pudo limpiar la marca de invitado', storageError);
         }
-        if (epoch !== epochRef.current) return;
+        if (!isCurrent()) return;
         syncClient.setNamespace(authDataNamespace(API_BASE_URL, payload.data.id));
         syncClient.connect(verified.accessToken, authDataNamespace(API_BASE_URL, payload.data.id));
       } catch (error) {
         // Offline startup keeps the securely cached identity and tokens. A later
         // foreground transition retries validation and refresh.
-        console.warn('No se pudo verificar la sesion (sin conexion)', error);
+        if (!diagnosticOwnerRef.current) console.warn('No se pudo verificar la sesion (sin conexion)', error);
       }
     },
     [clearAuthenticatedState, persistSession, refreshSession],
@@ -382,6 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const checkSession = useCallback(
     async (tokenOverride?: string) => {
+      if (diagnosticOwnerRef.current) return;
       const candidate = tokenOverride
         ? // Reuse the chain `setAuthToken` just installed for this same token,
           // so a rotation started meanwhile is still recognised as its own.
@@ -418,7 +453,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     (async () => {
       try {
         const [rawSession, savedGuest] = await Promise.all([readSession(), storage.getItem(GUEST_KEY)]);
-        if (cancelled || hydrationEpoch !== epochRef.current) return;
+        if (cancelled || diagnosticOwnerRef.current || hydrationEpoch !== epochRef.current) return;
         const savedSession = sessionForAuthContext(rawSession, AUTH_BINDING);
         if (rawSession && !savedSession) {
           // Discard credentials/profile before any provider or backend request.
@@ -448,7 +483,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && sessionRef.current) void verifySession(sessionRef.current);
+      if (state === 'active' && !diagnosticOwnerRef.current && sessionRef.current) void verifySession(sessionRef.current);
     });
     return () => subscription.remove();
   }, [verifySession]);
@@ -459,12 +494,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const delay = refreshDelayMs(session, Date.now(), refreshRetryAt);
     if (delay === null) return;
     const timer = setTimeout(() => {
-      if (sessionRef.current) void verifySession(sessionRef.current);
+      if (!diagnosticOwnerRef.current && sessionRef.current) void verifySession(sessionRef.current);
     }, delay);
     return () => clearTimeout(timer);
   }, [refreshRetryAt, sessionRevision, verifySession]);
 
   const enableGuestMode = useCallback(async () => {
+    if (diagnosticOwnerRef.current) return;
     const epoch = await clearAuthenticatedState();
     if (epoch !== epochRef.current) return;
     setIsGuest(true);
@@ -477,7 +513,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = useCallback(async () => {
     // A generation guard cannot undo remote browser logout. Hold one owner
     // synchronously until the browser operation ends; never queue another.
-    if (browserOperationRef.current) return;
+    if (browserOperationRef.current || diagnosticOwnerRef.current) return;
     const owner = Symbol('login');
     browserOperationRef.current = { kind: 'login', owner };
     setBrowserBusy(true);
@@ -538,6 +574,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [adoptSession, verifySession]);
 
   const logout = useCallback(async (): Promise<BrowserLogoutStatus> => {
+    if (diagnosticOwnerRef.current) return 'in_progress';
     if (browserOperationRef.current?.kind === 'logout') return 'in_progress';
     const owner = OIDC_BROWSER_LOGOUT_URL === undefined || browserOperationRef.current
       ? null : Symbol('logout');
@@ -606,12 +643,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const authorizedFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
+      if (diagnosticOwnerRef.current) throw new Error('Operación temporalmente no disponible');
       const epoch = epochRef.current;
       let session = sessionRef.current;
       if (!session || !sessionForAuthContext(session, AUTH_BINDING))
         throw new Error('Debes iniciar sesión para importar al servidor');
       if (!isSessionFresh(session)) {
         const refreshed = await refreshSession(session, epoch);
+        if (diagnosticOwnerRef.current || epoch !== epochRef.current)
+          throw new Error('Operación temporalmente no disponible');
         if (!refreshed) throw new Error('No se pudo renovar la sesión');
         session = refreshed;
       }
@@ -624,18 +664,90 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       const response = await request(session.accessToken);
+      if (diagnosticOwnerRef.current) return response;
       if (response.status !== 401 || epoch !== epochRef.current) return response;
       const latest = sessionForUnauthorizedResponse(session, sessionRef.current);
       return retryUnauthorizedRequest(
         response,
-        async () => latest.accessToken !== session.accessToken ? latest : refreshSession(session, epoch),
-        () => epoch === epochRef.current,
+        async () => diagnosticOwnerRef.current ? null : latest.accessToken !== session.accessToken ? latest : refreshSession(session, epoch),
+        () => !diagnosticOwnerRef.current && epoch === epochRef.current,
         request,
         clearAuthenticatedState,
       );
     },
     [clearAuthenticatedState, refreshSession],
   );
+
+  const runRefreshReplay = useCallback((): Promise<RefreshReplayResult> => {
+    const unavailable: RefreshReplayResult = { status: 'UNCONFIRMED', step: 'precondition', reason: 'unavailable' };
+    if (!REFRESH_REPLAY_AVAILABLE || isGuest || !user || browserOperationRef.current || diagnosticOwnerRef.current ||
+        !sessionForAuthContext(sessionRef.current, AUTH_BINDING)?.refreshToken) return Promise.resolve(unavailable);
+    // Own every auth entry point before waiting for an older refresh. That
+    // refresh may rotate remotely and must finish adopting before R0 is read.
+    const owner = Symbol('refresh-replay');
+    diagnosticOwnerRef.current = owner;
+    let expired = false;
+    let phase: RefreshReplayResult['step'] = 'precondition';
+    let timeout: ReturnType<typeof setTimeout>;
+    const run = (async (): Promise<RefreshReplayResult> => {
+      try {
+        const previousRefresh = refreshRef.current?.promise;
+        if (previousRefresh) await previousRefresh;
+        if (expired) return { status: 'UNCONFIRMED', step: 'precondition', reason: 'expired' };
+        const current = sessionForAuthContext(sessionRef.current, AUTH_BINDING);
+        if (browserOperationRef.current || isGuest || !user || !current?.refreshToken)
+          return unavailable;
+        const r0 = current.refreshToken;
+        try { await clearAuthenticatedState(true); }
+        catch { return { status: 'UNCONFIRMED', step: 'precondition', reason: 'storage' }; }
+        phase = 'rotation';
+        if (expired) return { status: 'UNCONFIRMED', step: 'rotation', reason: 'expired' };
+        const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+        if (expired) return { status: 'UNCONFIRMED', step: 'rotation', reason: 'expired' };
+        const refresh = (refreshToken: string) => AuthSession.refreshAsync({
+          clientId: OIDC_MOBILE_CLIENT_ID, refreshToken,
+          extraParams: oauthResourceParams(OIDC_RESOURCE),
+        }, discovery);
+        let rotated: AuthSession.TokenResponse;
+        try { rotated = await refresh(r0); }
+        catch { return { status: 'UNCONFIRMED', step: 'rotation', reason: 'transport' }; }
+        if (expired) return { status: 'UNCONFIRMED', step: 'rotation', reason: 'expired' };
+        const r1 = rotated.refreshToken;
+        if (!r1 || !r1.trim() || r1 === r0)
+          return { status: 'UNCONFIRMED', step: 'rotation', reason: 'missing_rotation' };
+        const expectInvalidGrant = async (token: string, step: 'replay' | 'family'): Promise<RefreshReplayResult | null> => {
+          try { await refresh(token); return { status: 'FAIL', step, reason: 'accepted' }; }
+          catch (error) {
+            if (expired) return { status: 'UNCONFIRMED', step, reason: 'expired' };
+            return error instanceof AuthSession.TokenError && error.code === 'invalid_grant'
+              ? null : { status: 'UNCONFIRMED', step, reason: 'transport' };
+          }
+        };
+        phase = 'replay';
+        const replay = await expectInvalidGrant(r0, 'replay');
+        if (expired) return { status: 'UNCONFIRMED', step: 'replay', reason: 'expired' };
+        if (replay) return replay;
+        phase = 'family';
+        const family = await expectInvalidGrant(r1, 'family');
+        if (expired) return { status: 'UNCONFIRMED', step: 'family', reason: 'expired' };
+        return family ?? { status: 'PASS', step: 'family', reason: 'invalid_grant' };
+      } catch {
+        return { status: 'UNCONFIRMED', step: phase, reason: expired ? 'expired' : 'transport' };
+      } finally {
+        // A timed-out SDK request has no abort transport. Keep ownership until
+        // it settles, then discard every late credential without adoption.
+        if (diagnosticOwnerRef.current === owner) diagnosticOwnerRef.current = null;
+      }
+    })();
+    const deadline = new Promise<RefreshReplayResult>(resolve => {
+      timeout = setTimeout(() => {
+        expired = true;
+        resolve({ status: 'UNCONFIRMED', step: phase, reason: 'expired' });
+      }, DIAGNOSTIC_DEADLINE_MS);
+    });
+    void run.finally(() => clearTimeout(timeout));
+    return Promise.race([run, deadline]);
+  }, [clearAuthenticatedState, isGuest, user]);
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -649,8 +761,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthToken,
       checkSession,
       authorizedFetch,
+      refreshReplayAvailable: REFRESH_REPLAY_AVAILABLE,
+      runRefreshReplay,
     }),
-    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
+    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch, runRefreshReplay],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
