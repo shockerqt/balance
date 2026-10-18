@@ -150,7 +150,13 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
     selectionDate = settled
     if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false }
   }
-  BackHandler(active && destination != 0) { destination = 0 }
+  // Calendar and food pages represent one selected day. The pager stays native;
+  // a hidden calendar selection is applied when the food destination is shown.
+  LaunchedEffect(settled) { measurementDate = settled.toString() }
+  BackHandler(active && destination != 0) {
+    destination = 0
+    scope.launch { pager.scrollToPage(DailyLogDates.page(LocalDate.parse(measurementDate))) }
+  }
   BackHandler(active && selected.isNotEmpty()) { selected = emptySet() }
   fun action(kind: String, ids: List<String> = emptyList(), time: String? = null) {
     if (!locked && pager.currentPage == pager.settledPage) emit(kind, settled, ids, time, appliedCommand!!.revision)
@@ -209,7 +215,8 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
             onMeasurementDate = { measurementDate = it },
             onWeight = { weightDialog = true },
             onOpenDate = { date, body ->
-              if (body) { measurementDate = date.toString(); destination = 1 }
+              measurementDate = date.toString()
+              if (body) { destination = 1 }
               else { destination = 0; scope.launch { pager.scrollToPage(DailyLogDates.page(date)) } }
             },
             onAction = { kind, input -> if (!locked) emitExtra(kind, settled, emptyList(), null, appliedCommand!!.revision, input) })
@@ -218,7 +225,10 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
     }
     Surface(color = MaterialTheme.colorScheme.surface) {
       if (selected.isEmpty()) {
-        WireNavigation(destination, !locked, onSelect = { destination = it }, onAdd = { registering = true })
+        WireNavigation(destination, !locked, onSelect = {
+          destination = it
+          if (it == 0) scope.launch { pager.scrollToPage(DailyLogDates.page(LocalDate.parse(measurementDate))) }
+        }, onAdd = { registering = true })
       } else {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
           Row(verticalAlignment = Alignment.CenterVertically) {
@@ -236,13 +246,14 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   if (registering && active) ModalBottomSheet(onDismissRequest = { registering = false }) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Registrar", style = MaterialTheme.typography.titleLarge)
-      Text(if (destination == 1) measurementDate else settled.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-      Button(onClick = { registering = false; if (destination == 1) {
-        destination = 0; scope.launch { pager.scrollToPage(DailyLogDates.page(LocalDate.parse(measurementDate))) }
-        // Registration uses the requested date directly, without waiting for paging acknowledgement.
-        emitExtra("register", LocalDate.parse(measurementDate), emptyList(), null, appliedCommand!!.revision, emptyMap())
-      } else action("add") }, modifier = Modifier.fillMaxWidth()) { Text("Alimento") }
-      OutlinedButton(onClick = { registering = false; if (destination != 1) measurementDate = settled.toString(); weightDialog = true },
+      Text(measurementDate, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Button(onClick = {
+        registering = false; destination = 0
+        val target = LocalDate.parse(measurementDate)
+        scope.launch { pager.scrollToPage(DailyLogDates.page(target)) }
+        emitExtra("register", target, emptyList(), null, appliedCommand!!.revision, emptyMap())
+      }, modifier = Modifier.fillMaxWidth()) { Text("Alimento") }
+      OutlinedButton(onClick = { registering = false; weightDialog = true },
         enabled = data.optBoolean("showWeight"), modifier = Modifier.fillMaxWidth()) { Text("Peso") }
       if (!data.optBoolean("showWeight")) Text("Activa el seguimiento de peso en Perfil.", style = MaterialTheme.typography.bodySmall)
       Spacer(Modifier.height(24.dp))

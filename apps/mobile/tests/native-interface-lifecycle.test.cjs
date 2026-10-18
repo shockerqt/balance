@@ -11,7 +11,7 @@ const daily = local('./src/components/meal/native/daily-log-contract.ts');
 const dates = local('./src/lib/dates.ts');
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const date = '2026-10-18';
-let user = { id: 'a', name: 'Cuenta A' }, focus, blur, updates = [], saves = [], pushes = [];
+let user = { id: 'a', name: 'Cuenta A' }, focus, blur, updates = [], saves = [], pushes = [], selections = [];
 const doc = { id: 'food', nameSnapshot: 'Histórico', nutritionSnapshot: { schemaVersion: 2, canonicalUnit: 'g', nutritionPer100: { calories: 100, protein: 3, carbs: 20, fat: 1 } }, canonicalQuantity: 50, entry: { enteredQuantity: 1, portionSnapshot: { portionId: 'cup', name: 'taza', portionQuantity: 1, canonicalQuantity: 50 } }, consumedAt: dates.epochForChileDateTime(date, '08:15'), updatedAt: 10, _deleted: false };
 const mealStore = {
   dayLogs: { [date]: { dateId: date, targetCalories: 2200, targetProtein: 160, targetCarbs: 220, targetFat: 70, targetFiber: 30, foods: [{ id: 'food', name: 'Histórico', portion: '1 taza', time: '08:15', calories: 50, protein: 1.5, carbs: 10, fat: .5 }] } }, mealDocuments: [doc],
@@ -29,7 +29,7 @@ const stub = {
   '@/hooks/use-meal-store': { useMealStore: () => mealStore, emptyDayLog: id => ({ ...mealStore.dayLogs[date], dateId: id, foods: [] }) },
   '@/hooks/use-weight-store': { useWeightStore: () => ({ weightsByDate: {}, syncError: null, saveWeight: (...args) => saves.push(args) }) },
   '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true, syncError: null }) },
-  '@/hooks/use-logs-date': { useLogsSelectedDate: () => [date], logsDateStore: { get: () => date, getRevision: () => 4, subscribe: () => () => {} } },
+  '@/hooks/use-logs-date': { useLogsSelectedDate: () => [date], logsDateStore: { get: () => date, getRevision: () => 4, subscribe: () => () => {}, set: value => selections.push(value) } },
   '@/theme': { useTheme: () => ({ colors: {} }) },
   '@/lib/dates': { ...dates, todayId: () => date },
   './daily-log-contract': daily, './interface-contract': contract,
@@ -54,6 +54,7 @@ test('real shell maps native records to canonical stores and rejects callbacks a
   assert.equal(doc.nutritionSnapshot.nutritionPer100.calories, 100);
   await renderer.act(async () => { p.onAction(event(p, 'register', 3, { date: '2026-10-17' })); });
   assert.equal(pushes[0].params.dateId, '2026-10-17', 'measurement-date registration must not use the visible food date');
+  assert.deepEqual(selections, ['2026-10-17'], 'calendar registration must commit its return date before the form can blur or cancel');
   await renderer.act(async () => blur());
   await renderer.act(async () => { p.onAction(event(p, 'weight-save', 4, { input: { quantity: '80' } })); });
   assert.equal(saves.length, 1);

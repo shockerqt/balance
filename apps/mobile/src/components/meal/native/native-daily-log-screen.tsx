@@ -78,7 +78,12 @@ function DailyLogSession() {
         live.current.nativeDate = e.date;
         live.current.applyingNative = true;
         try { logsDateStore.set(e.date); } finally { live.current.applyingNative = false; }
-      } else if (e.action === 'add' || e.action === 'register') router.push({ pathname: '/food-search', params: { dateId: e.date, time: e.time ?? currentTimeString() } });
+      } else if (e.action === 'add' || e.action === 'register') {
+        // A calendar selection may be ahead of the hidden pager. Commit that
+        // explicit navigation before blur, including when the draft is cancelled.
+        if (e.action === 'register') logsDateStore.set(e.date);
+        router.push({ pathname: '/food-search', params: { dateId: e.date, time: e.time ?? currentTimeString() } });
+      }
       else if (e.action === 'edit') router.push({ pathname: '/food-edit', params: { dateId: e.date, foodId: e.ids![0] } });
       else if (e.action === 'weight' && preferences.weightTrackingEnabled && e.date <= todayId()) router.push({ pathname: '/weight-entry', params: { dateId: e.date } });
       else if (e.action === 'delete') meals.deleteMultipleFoods(e.date, e.ids!);
