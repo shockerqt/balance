@@ -23,9 +23,13 @@ export function projectInterfaceDays(logs: Record<string, DayLog>, weights: Reco
     });
     const totals = Object.fromEntries(['calories', 'protein', 'carbs', 'fat'].map(key => [key,
       foods.reduce((sum, food) => sum + food[key as 'calories' | 'protein' | 'carbs' | 'fat'], 0)]));
+    const extendedKeys = new Set(nutrients.flatMap(n => Object.keys((n as { extendedNutrition?: Record<string, unknown> }).extendedNutrition ?? {})));
+    // Keep core unknowns explicit without sending dozens of empty micronutrient
+    // rows per historical day through the native bridge.
+    const detailFields = nutrientFields.filter((field, index) => index < 7 || ['sugarsG', 'saturatedFatG'].includes(field.key) || extendedKeys.has(field.key));
     return [date, { ...day, totals, recorded: foods.length > 0,
       weightKg: weights[date] ? weights[date].weightGrams / 1000 : null,
-      details: nutrientFields.map(field => {
+      details: detailFields.map(field => {
         const values = nutrients.map(n => {
           const flat = n as unknown as Record<string, unknown>;
           const extended = flat.extendedNutrition as Record<string, unknown> | undefined;

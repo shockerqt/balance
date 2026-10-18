@@ -38,6 +38,9 @@ test('projection distinguishes empty, weight-only, unknown, partial and explicit
   assert.equal(days[date].foods[0].revision, 10);
   assert.equal(days[date].foods[0].canonicalQuantity, 150);
   assert.equal(projectInterfaceDays(logs, {}, [doc])[date].details.find(f => f.label === 'Fibra').value, null);
+  assert.equal(days[date].details.length, 9, 'unknown micronutrients must not inflate every historical day');
+  const caffeinated = createFoodEntry({ ...manual, nutrients: { ...manual.nutrients, caffeineMg: '40' } }, [], 'one', 10);
+  assert.equal(projectInterfaceDays(logs, {}, [caffeinated])[date].details.find(f => f.label === 'Cafeína').value, 60);
 });
 
 test('native edits require a live historical revision, valid conversion and existing Chilean time', () => {
