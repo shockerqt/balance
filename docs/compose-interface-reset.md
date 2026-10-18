@@ -7,8 +7,9 @@ it does not claim visual approval of the draft or modify Sandbox.
 
 The existing BalanceDailyLog Expo Compose host now owns the four Android
 destinations and five equal navigation positions: Alimentos, Mediciones, +,
-Resumen, Perfil. Android's tab layout hosts a Slot so a second tab bar is not
-rendered. Other platforms keep their current routes. Canonical stores, auth,
+Resumen, Perfil. Android's tab layout hosts a native Stack so a second tab bar
+is not rendered and the shell remains mounted beneath catalog tools. Other
+platforms keep their current routes. Canonical stores, auth,
 outbox, data namespaces and shared TypeScript domain retain ownership.
 
 The diary preserves its native pager and acknowledgement protocol. The week
