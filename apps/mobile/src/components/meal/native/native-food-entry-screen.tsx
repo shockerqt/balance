@@ -33,7 +33,7 @@ function FoodEntrySession() {
   useEffect(() => {
     live.current.mounted = true;
     return () => { live.current.mounted = false; };
-  }, []));
+  }, []);
   useFocusEffect(useCallback(() => {
     live.current.session = randomUUID(); live.current.sequence = 0; setSession(live.current.session);
     live.current.active = true; setActive(true);
