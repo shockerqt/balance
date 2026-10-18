@@ -57,7 +57,7 @@
     "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
     "test:feed": "tsx --test tests/hour-rail.test.mjs tests/food-selection.test.mjs tests/prepared-day-window.test.mjs",
-    "test:native-daily": "tsx --test tests/native-daily-log.test.mjs"
+    "test:native-daily": "tsx --test tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs"
   },
   "private": true
 }

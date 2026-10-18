@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { storage } from '@/services/storage';
 import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
@@ -8,7 +8,7 @@ import { updateMealLogQuantityAndTime } from '@/lib/food-portions';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
 import { recoverGuestImport } from '@/services/import/guest-import';
-import { chileDateParts, toDateId, todayId, displayDateFor } from '@/lib/dates';
+import { epochForChileDateTime, toDateId, todayId, displayDateFor } from '@/lib/dates';
 export { toDateId, todayId, displayDateFor };
 import { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
 export { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
@@ -48,24 +48,6 @@ export function emptyDayLog(dateId: string): DayLog {
   return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
 }
 
-function chileOffsetAt(epochMs: number): number {
-  const p = chileDateParts(epochMs);
-  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;
-}
-
-function epochForChileDateTime(dateId: string, time: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateId) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
-  const [year, month, day] = dateId.split('-').map(Number);
-  const [hour, minute] = time.split(':').map(Number);
-  const dateOnly = new Date(Date.UTC(year, month - 1, day));
-  if (dateOnly.getUTCFullYear() !== year || dateOnly.getUTCMonth() !== month - 1 || dateOnly.getUTCDate() !== day) return null;
-  const desired = Date.UTC(year, month - 1, day, Number.isFinite(hour) ? hour : 12, Number.isFinite(minute) ? minute : 0);
-  let epoch = desired - chileOffsetAt(desired);
-  epoch = desired - chileOffsetAt(epoch);
-  const resolved = chileDateParts(epoch);
-  if (resolved.year !== year || resolved.month !== month || resolved.day !== day || resolved.hour !== hour || resolved.minute !== minute) return null;
-  return epoch;
-}
 
 function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[]): MealLogDoc[] {
   const byId = new Map(previous.map((doc) => [doc.id, doc]));
@@ -109,6 +91,7 @@ function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: strin
 interface MealStoreContextType {
   dayLogs: Record<string, DayLog>;
   mealDocuments: MealLogDoc[];
+  registerMealLog: (document: MealLogDoc) => Promise<void>;
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => void;
@@ -123,6 +106,9 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const namespace = user ? `user:${user.id}` : 'guest';
+  const readyRef = useRef<Promise<void>>(Promise.resolve());
+  const currentNamespace = useRef(namespace);
+  currentNamespace.current = namespace;
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
 
   useEffect(() => {
@@ -139,6 +125,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Ignore corrupt cache; PostgreSQL is authoritative after reconnect.
       }
     })();
+    readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
       onDocuments: (documents) => {
         if (cancelled) return;
@@ -179,6 +166,22 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setLogs(next);
     persistLogs(namespace, next);
     return next;
+  }, [namespace]);
+
+  // Outbox persistence owns durability; only acknowledge the native editor
+  // after enqueue succeeds. Never publish a late save into a different account.
+  const registerMealLog = useCallback(async (document: MealLogDoc) => {
+    if (!isMealLogDoc(document) || document._deleted) throw new Error('INVALID_MEAL_LOG');
+    if (currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
+    await readyRef.current;
+    if (currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
+    await syncClient.enqueue('mealLogs', document);
+    if (currentNamespace.current !== namespace) return;
+    setLogs((previous) => {
+      const next = mergeLogs(previous, [document]);
+      persistLogs(namespace, next);
+      return next;
+    });
   }, [namespace]);
 
   const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
@@ -287,6 +290,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const value = useMemo<MealStoreContextType>(() => ({
     dayLogs,
     mealDocuments: logs,
+    registerMealLog,
     addFood,
     addMultipleFoods,
     updateFood,
@@ -294,7 +298,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteMultipleFoods,
     moveMultipleFoodsTime,
     replaceMealDocuments,
-  }), [dayLogs, logs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  }), [dayLogs, logs, registerMealLog, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 

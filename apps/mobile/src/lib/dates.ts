@@ -237,3 +237,22 @@ export function currentTimeString(): string {
   const now = new Date();
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
+
+function chileOffsetAt(epochMs: number): number {
+  const p = chileDateParts(epochMs);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;
+}
+
+export function epochForChileDateTime(dateId: string, time: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateId) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+  const [year, month, day] = dateId.split('-').map(Number);
+  const [hour, minute] = time.split(':').map(Number);
+  const dateOnly = new Date(Date.UTC(year, month - 1, day));
+  if (dateOnly.getUTCFullYear() !== year || dateOnly.getUTCMonth() !== month - 1 || dateOnly.getUTCDate() !== day) return null;
+  const desired = Date.UTC(year, month - 1, day, Number.isFinite(hour) ? hour : 12, Number.isFinite(minute) ? minute : 0);
+  let epoch = desired - chileOffsetAt(desired);
+  epoch = desired - chileOffsetAt(epoch);
+  const resolved = chileDateParts(epoch);
+  if (resolved.year !== year || resolved.month !== month || resolved.day !== day || resolved.hour !== hour || resolved.minute !== minute) return null;
+  return epoch;
+}
