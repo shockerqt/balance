@@ -19,7 +19,13 @@ use crate::{
             PortionDefinition, WeightLogRow, WeightUpsertStatus,
         },
     },
-    modules::{auth::middleware::CurrentUser, sync::hub::SyncHub},
+    modules::{
+        auth::{
+            middleware::CurrentUser,
+            oidc::{IdentityMode, OidcConfig},
+        },
+        sync::hub::SyncHub,
+    },
     shared::error::AppError,
 };
 
@@ -32,11 +38,40 @@ pub fn mcp_routes() -> Router {
     Router::new().route("/mcp", post(mcp_post_handler))
 }
 
-pub fn mcp_metadata_routes() -> Router {
+pub fn mcp_metadata_routes(api: &OidcConfig, mcp: &OidcConfig) -> Router {
+    if api.identity_mode() == IdentityMode::IssuerSubject {
+        return Router::new()
+            .route(
+                "/.well-known/oauth-protected-resource",
+                strict_resource_metadata(api),
+            )
+            .route(
+                "/.well-known/oauth-protected-resource/mcp",
+                strict_resource_metadata(mcp),
+            );
+    }
     Router::new().route(
         "/.well-known/oauth-protected-resource/mcp",
         get(oauth_protected_resource_metadata),
     )
+}
+
+fn strict_resource_metadata(oidc: &OidcConfig) -> axum::routing::MethodRouter {
+    let metadata = json!({
+        "resource": oidc.resource().expect("strict resource"),
+        "authorization_servers": [oidc.issuer()],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": ["openid", "profile", "email", "offline_access"]
+    });
+    get(move || {
+        let metadata = metadata.clone();
+        async move {
+            (
+                [(axum::http::header::CACHE_CONTROL, "no-store")],
+                Json(metadata),
+            )
+        }
+    })
 }
 
 async fn oauth_protected_resource_metadata() -> impl IntoResponse {
@@ -1661,5 +1696,76 @@ mod tests {
 
         assert!(parse_args::<UpdateFoodLogArgs>(json!({ "logId": "invalid-uuid" })).is_err());
         assert!(parse_args::<DeleteFoodLogArgs>(json!({ "logId": "" })).is_err());
+    }
+}
+
+#[cfg(test)]
+mod resource_metadata_tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn public_resource_metadata_is_configured_no_store_and_host_independent() {
+        let api = OidcConfig::test_cached_subject_config();
+        let mcp = api.mcp_config();
+        let app = mcp_metadata_routes(&api, &mcp);
+        for (path, resource) in [
+            (
+                "/.well-known/oauth-protected-resource",
+                "https://api.example.invalid/api",
+            ),
+            (
+                "/.well-known/oauth-protected-resource/mcp",
+                "https://api.example.invalid/api/mcp",
+            ),
+        ] {
+            for host in ["api.example.invalid", "attacker.example.invalid"] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header("Host", host)
+                            .header("X-Forwarded-Host", "attacker.example.invalid")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(axum::http::header::CACHE_CONTROL)
+                        .unwrap(),
+                    "no-store"
+                );
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(axum::http::header::CONTENT_TYPE)
+                        .unwrap(),
+                    "application/json"
+                );
+                let metadata: Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
+                        .unwrap();
+                assert_eq!(metadata["resource"], resource);
+                assert_eq!(
+                    metadata["authorization_servers"],
+                    json!(["https://issuer.example.invalid"])
+                );
+                assert_eq!(metadata["bearer_methods_supported"], json!(["header"]));
+                assert_eq!(
+                    metadata["scopes_supported"],
+                    json!(["openid", "profile", "email", "offline_access"])
+                );
+                assert_eq!(metadata.as_object().unwrap().len(), 4);
+            }
+        }
     }
 }

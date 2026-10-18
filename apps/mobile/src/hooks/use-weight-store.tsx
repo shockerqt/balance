@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '@/services/config';
+import { authDataNamespace } from '@/services/auth/session-state';
 import React, {
   createContext,
   useCallback,
@@ -27,7 +29,7 @@ const WeightContext = createContext<WeightContextValue | undefined>(undefined);
 export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
-  const namespace = user ? `user:${user.id}` : 'guest';
+  const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const [logs, setLogs] = useState<WeightLogDoc[]>([]);
   const logsRef = useRef<WeightLogDoc[]>([]);
   const [syncError, setSyncError] = useState<{ dateId: string; message: string } | null>(null);

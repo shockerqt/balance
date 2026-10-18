@@ -1,14 +1,26 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL } from '@/services/config';
 import { storage } from '@/services/storage';
 import {
+  assertAuthorizationResponseIssuer,
+  assertStagingMobileRedirect,
+  awaitCurrentAuthStep,
+  authDataNamespace,
+  browserLogoutRequest,
+  BrowserLogoutStatus,
+  isValidLogoutReturn,
+  retryUnauthorizedRequest,
+  oauthResourceParams,
+  sessionForAuthContext,
+  SessionBinding,
   refreshDelayMs,
   refreshRetryDelayMs,
   isSessionFresh,
@@ -35,7 +47,12 @@ interface ApiResponse<T> {
 }
 
 const GUEST_KEY = '@balance_guest_v1';
-const AUTH_SCOPES = ['openid', 'profile', 'email'];
+const AUTH_BINDING: SessionBinding = {
+  issuer: OIDC_ISSUER,
+  clientId: OIDC_MOBILE_CLIENT_ID,
+  resource: OIDC_RESOURCE,
+  apiBaseUrl: API_BASE_URL,
+};
 
 const readValue = (key: string) => (Platform.OS === 'web' ? storage.getItem(key) : SecureStore.getItemAsync(key));
 
@@ -74,6 +91,7 @@ const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: Store
       accessToken: response.accessToken,
       issuedAt: response.issuedAt,
       lineage: nextSessionLineage(),
+      binding: { ...AUTH_BINDING },
     },
     {
       accessToken: response.accessToken,
@@ -84,6 +102,7 @@ const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: Store
       issuedAt: response.issuedAt,
       scope: response.scope,
     },
+    Platform.OS === 'web',
   );
 
 interface AuthContextType {
@@ -93,7 +112,7 @@ interface AuthContextType {
   isLoading: boolean;
   loginWithGoogle: () => Promise<void>;
   enableGuestMode: () => Promise<void>;
-  logout: () => Promise<void>;
+  logout: () => Promise<BrowserLogoutStatus>;
   setAuthToken: (token: string | null) => void;
   checkSession: (tokenOverride?: string) => Promise<void>;
   authorizedFetch: (path: string, init?: RequestInit) => Promise<Response>;
@@ -105,6 +124,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const browserOperationRef = useRef<{ kind: 'login' | 'logout'; owner: symbol } | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
   const [refreshRetryAt, setRefreshRetryAt] = useState<number | null>(null);
   const sessionRef = useRef<StoredAuthSession | null>(null);
@@ -158,6 +179,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // persist that back over this one.
   const adoptSession = useCallback(
     (session: StoredAuthSession, expectedEpoch: number) => {
+      if (expectedEpoch !== epochRef.current) return Promise.resolve(false);
       sessionRef.current = session;
       setSessionRevision((revision) => revision + 1);
       return persistSession(session, expectedEpoch);
@@ -167,6 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearAuthenticatedState = useCallback(async () => {
     const epoch = ++epochRef.current;
+    setIsLoading(false);
     setUser(null);
     sessionRef.current = null;
     setSessionRevision((revision) => revision + 1);
@@ -178,6 +201,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.warn('No se pudo limpiar la sesion del almacenamiento', error);
     }
+    return epoch;
   }, [commitSession]);
 
   const setAuthToken = useCallback(
@@ -187,6 +211,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
       const epoch = ++epochRef.current;
+      setIsLoading(false);
+      setUser(null);
+      syncClient.disconnect();
       // A token arriving from a deep link starts its own credential chain: it
       // may belong to a different account than the one currently cached.
       // Adopting it before the I/O also lets the `checkSession` that follows
@@ -197,6 +224,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           accessToken: token,
           issuedAt: Math.floor(Date.now() / 1000),
           lineage: nextSessionLineage(),
+          binding: { ...AUTH_BINDING },
         },
         epoch,
       );
@@ -207,16 +235,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshSession = useCallback(
     async (session: StoredAuthSession, epoch: number) => {
       if (epoch !== epochRef.current) return null;
+      if (!sessionForAuthContext(session, AUTH_BINDING)) return null;
       if (!session.refreshToken) return null;
       if (refreshRef.current?.epoch === epoch) return refreshRef.current.promise;
 
       const promise = (async () => {
         try {
           const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+          if (epoch !== epochRef.current) return null;
           const response = await AuthSession.refreshAsync(
             {
               clientId: OIDC_MOBILE_CLIENT_ID,
               refreshToken: session.refreshToken,
+              extraParams: oauthResourceParams(OIDC_RESOURCE),
             },
             discovery,
           );
@@ -238,7 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ) {
             await clearAuthenticatedState();
           } else {
-            console.warn('No se pudo renovar la sesion', error);
+            console.warn('No se pudo renovar la sesion');
             // Backs off so an offline device does not retry discovery and the
             // token endpoint every five seconds for as long as it stays offline.
             if (epoch === epochRef.current) {
@@ -263,7 +294,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const verifySession = useCallback(
     async (candidate: StoredAuthSession) => {
       const epoch = epochRef.current;
-      let active = candidate;
+      let active = sessionForAuthContext(candidate, AUTH_BINDING);
+      if (!active) {
+        await clearAuthenticatedState();
+        return;
+      }
       let refreshed = false;
 
       if (!isSessionFresh(active)) {
@@ -333,8 +368,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (storageError) {
           console.warn('No se pudo limpiar la marca de invitado', storageError);
         }
-        syncClient.setNamespace(`user:${payload.data.id}`);
-        syncClient.connect(verified.accessToken, `user:${payload.data.id}`);
+        if (epoch !== epochRef.current) return;
+        syncClient.setNamespace(authDataNamespace(API_BASE_URL, payload.data.id));
+        syncClient.connect(verified.accessToken, authDataNamespace(API_BASE_URL, payload.data.id));
       } catch (error) {
         // Offline startup keeps the securely cached identity and tokens. A later
         // foreground transition retries validation and refresh.
@@ -356,15 +392,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               accessToken: tokenOverride,
               issuedAt: Math.floor(Date.now() / 1000),
               lineage: nextSessionLineage(),
+              binding: { ...AUTH_BINDING },
             }
         : sessionRef.current;
       if (!candidate) {
         setUser(null);
         return;
       }
+      if (tokenOverride && sessionRef.current?.accessToken !== tokenOverride) {
+        const epoch = ++epochRef.current;
+        setIsLoading(false);
+        setUser(null);
+        syncClient.disconnect();
+        if (!(await adoptSession(candidate, epoch))) return;
+      }
       await verifySession(candidate);
     },
-    [verifySession],
+    [adoptSession, verifySession],
   );
 
   useEffect(() => {
@@ -373,12 +417,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     (async () => {
       try {
-        const [savedSession, savedGuest] = await Promise.all([readSession(), storage.getItem(GUEST_KEY)]);
+        const [rawSession, savedGuest] = await Promise.all([readSession(), storage.getItem(GUEST_KEY)]);
         if (cancelled || hydrationEpoch !== epochRef.current) return;
-
+        const savedSession = sessionForAuthContext(rawSession, AUTH_BINDING);
+        if (rawSession && !savedSession) {
+          // Discard credentials/profile before any provider or backend request.
+          await commitSession(null, hydrationEpoch);
+          if (cancelled || hydrationEpoch !== epochRef.current) return;
+        }
         if (savedSession) {
-          sessionRef.current = savedSession;
-          setSessionRevision((revision) => revision + 1);
+          if (!(await adoptSession(savedSession, hydrationEpoch))) return;
+          if (cancelled || hydrationEpoch !== epochRef.current) return;
           if (savedSession.user) setUser(savedSession.user);
           await verifySession(savedSession);
         } else if (savedGuest === '1') {
@@ -387,7 +436,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         console.warn('No se pudo leer la sesion guardada', error);
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled && hydrationEpoch === epochRef.current) setIsLoading(false);
       }
     })();
 
@@ -395,7 +444,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cancelled = true;
       epochRef.current += 1;
     };
-  }, [verifySession]);
+  }, [adoptSession, commitSession, verifySession]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -416,80 +465,142 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshRetryAt, sessionRevision, verifySession]);
 
   const enableGuestMode = useCallback(async () => {
-    await clearAuthenticatedState();
+    const epoch = await clearAuthenticatedState();
+    if (epoch !== epochRef.current) return;
     setIsGuest(true);
     syncClient.setNamespace('guest');
     await storage.setItem(GUEST_KEY, '1');
+    if (epoch !== epochRef.current) return;
     await fetchOfficialTemplates();
   }, [clearAuthenticatedState]);
 
   const loginWithGoogle = useCallback(async () => {
+    // A generation guard cannot undo remote browser logout. Hold one owner
+    // synchronously until the browser operation ends; never queue another.
+    if (browserOperationRef.current) return;
+    const owner = Symbol('login');
+    browserOperationRef.current = { kind: 'login', owner };
+    setBrowserBusy(true);
+    let loginEpoch = ++epochRef.current;
+    const isCurrent = () => loginEpoch === epochRef.current;
     setIsLoading(true);
     try {
-      const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
       const configuredScheme = Constants.expoConfig?.scheme;
-      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
-      const redirectUrl = AuthSession.makeRedirectUri({
-        scheme: typeof scheme === 'string' ? scheme : 'balance',
-        path: 'auth-callback',
-      });
+      const schemeValue = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
+      const scheme = typeof schemeValue === 'string' ? schemeValue : 'balance';
+      const redirectUrl = AuthSession.makeRedirectUri({ scheme, path: 'auth-callback' });
+      assertStagingMobileRedirect(AUTH_BINDING, scheme, redirectUrl);
+      const discovery = await awaitCurrentAuthStep(AuthSession.fetchDiscoveryAsync(OIDC_ISSUER), isCurrent);
+      if (!discovery) return;
       const request = new AuthSession.AuthRequest({
         clientId: OIDC_MOBILE_CLIENT_ID,
         responseType: AuthSession.ResponseType.Code,
         redirectUri: redirectUrl,
-        scopes: AUTH_SCOPES,
+        scopes: OIDC_SCOPES,
+        extraParams: oauthResourceParams(OIDC_RESOURCE),
         usePKCE: true,
       });
-      const result = await request.promptAsync(discovery);
-      if (result.type !== 'success' || !result.params.code || !request.codeVerifier) return;
-      const tokenResponse = await AuthSession.exchangeCodeAsync(
+      const result = await awaitCurrentAuthStep(request.promptAsync(discovery), isCurrent);
+      if (!result || result.type !== 'success' || !result.params.code || !request.codeVerifier) return;
+      const metadata = discovery.discoveryDocument as
+        { authorization_response_iss_parameter_supported?: boolean } | undefined;
+      assertAuthorizationResponseIssuer(
+        OIDC_ISSUER, result.params.iss,
+        metadata?.authorization_response_iss_parameter_supported === true,
+      );
+      const tokenResponse = await awaitCurrentAuthStep(AuthSession.exchangeCodeAsync(
         {
           clientId: OIDC_MOBILE_CLIENT_ID,
           code: result.params.code,
           redirectUri: redirectUrl,
-          extraParams: { code_verifier: request.codeVerifier },
+          extraParams: { ...oauthResourceParams(OIDC_RESOURCE), code_verifier: request.codeVerifier },
         },
         discovery,
-      );
-      if (!tokenResponse.accessToken) return;
+      ), isCurrent);
+      if (!tokenResponse?.accessToken || !isCurrent()) return;
       const session = fromTokenResponse(tokenResponse);
-      const epoch = ++epochRef.current;
-      if (!(await adoptSession(session, epoch))) return;
+      // Adoption starts a new credential generation, invalidating any refresh
+      // of the previous account that began while the browser was open.
+      loginEpoch = ++epochRef.current;
+      setUser(null);
+      syncClient.disconnect();
+      if (!(await adoptSession(session, loginEpoch)) || !isCurrent()) return;
       await verifySession(session);
-    } catch (error) {
-      console.error('Fallo el login con Google', error);
+    } catch {
+      if (isCurrent()) console.warn('Fallo el login con Google');
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
+      if (browserOperationRef.current?.owner === owner) {
+        browserOperationRef.current = null;
+        setBrowserBusy(false);
+      }
     }
   }, [adoptSession, verifySession]);
 
-  const logout = useCallback(async () => {
-    const refreshToken = sessionRef.current?.refreshToken;
-    setIsGuest(false);
-    await clearAuthenticatedState();
-    try {
-      await storage.removeItem(GUEST_KEY);
-    } catch (storageError) {
-      console.warn('No se pudo limpiar la marca de invitado', storageError);
+  const logout = useCallback(async (): Promise<BrowserLogoutStatus> => {
+    if (browserOperationRef.current?.kind === 'logout') return 'in_progress';
+    const owner = OIDC_BROWSER_LOGOUT_URL === undefined || browserOperationRef.current
+      ? null : Symbol('logout');
+    if (owner) {
+      browserOperationRef.current = { kind: 'logout', owner };
+      setBrowserBusy(true);
     }
-    // Nothing to revoke on web, where refresh tokens are never persisted, nor
-    // for migrated v1 sessions. Skip discovery so logout stays local and
-    // immediate instead of waiting on a network round-trip.
-    if (!refreshToken) return;
-    try {
-      const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
-      if (discovery.revocationEndpoint) {
-        await AuthSession.revokeAsync(
-          {
+    const active = sessionForAuthContext(sessionRef.current, AUTH_BINDING);
+    const refreshToken = active?.refreshToken;
+    setIsGuest(false);
+    // Clear memory/credentials and disconnect sockets before the first await.
+    const clearing = clearAuthenticatedState();
+    const logoutEpoch = epochRef.current;
+    const isCurrent = () => logoutEpoch === epochRef.current;
+    const revokeCapturedRefresh = async () => {
+      if (!refreshToken) return;
+      try {
+        const discovery = await AuthSession.fetchDiscoveryAsync(OIDC_ISSUER);
+        if (discovery.revocationEndpoint) {
+          await AuthSession.revokeAsync({
             clientId: OIDC_MOBILE_CLIENT_ID,
             token: refreshToken,
             tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken,
-          },
-          discovery,
-        );
+          }, discovery);
+        }
+      } catch { /* Local logout is independent of revocation availability. */ }
+    };
+    const revocation = revokeCapturedRefresh();
+    // Staging browser logout must not wait for an offline revocation request.
+    // This promise catches internally and only ever uses captured credentials.
+    if (OIDC_BROWSER_LOGOUT_URL !== undefined) void revocation;
+    try {
+      await clearing;
+      if (!isCurrent()) return 'unconfirmed';
+      try { await storage.removeItem(GUEST_KEY); }
+      catch { console.warn('No se pudo limpiar la marca de invitado'); }
+      if (!isCurrent()) return 'unconfirmed';
+      if (OIDC_BROWSER_LOGOUT_URL === undefined) {
+        await revocation;
+        return 'not_requested';
       }
+      // An in-progress login was invalidated above, but its browser still owns
+      // the cookie context. Never schedule logout behind that login.
+      if (!owner) return 'unconfirmed';
+      const configuredScheme = Constants.expoConfig?.scheme;
+      const scheme = Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme;
+      const redirect = AuthSession.makeRedirectUri({ scheme, path: 'logout-callback' });
+      const bytes = await Crypto.getRandomBytesAsync(32);
+      if (!isCurrent()) return 'unconfirmed';
+      const state = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+      const url = browserLogoutRequest(AUTH_BINDING, OIDC_BROWSER_LOGOUT_URL,
+        typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state);
+      const result = await WebBrowser.openAuthSessionAsync(url, redirect, { preferEphemeralSession: false });
+      if (!isCurrent() || result.type !== 'success' || !isValidLogoutReturn(result.url, redirect, state))
+        return 'unconfirmed';
+      return 'confirmed';
     } catch {
-      // Local logout must succeed even when revocation is unavailable/offline.
+      return 'unconfirmed';
+    } finally {
+      if (owner && browserOperationRef.current?.owner === owner) {
+        browserOperationRef.current = null;
+        setBrowserBusy(false);
+      }
     }
   }, [clearAuthenticatedState]);
 
@@ -497,7 +608,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (path: string, init: RequestInit = {}) => {
       const epoch = epochRef.current;
       let session = sessionRef.current;
-      if (!session) throw new Error('Debes iniciar sesión para importar al servidor');
+      if (!session || !sessionForAuthContext(session, AUTH_BINDING))
+        throw new Error('Debes iniciar sesión para importar al servidor');
       if (!isSessionFresh(session)) {
         const refreshed = await refreshSession(session, epoch);
         if (!refreshed) throw new Error('No se pudo renovar la sesión');
@@ -511,17 +623,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return fetch(`${API_BASE_URL}${path}`, { ...init, headers });
       };
 
-      let response = await request(session.accessToken);
+      const response = await request(session.accessToken);
       if (response.status !== 401 || epoch !== epochRef.current) return response;
       const latest = sessionForUnauthorizedResponse(session, sessionRef.current);
-      const refreshed = latest.accessToken !== session.accessToken ? latest : await refreshSession(session, epoch);
-      if (!refreshed) {
-        await clearAuthenticatedState();
-        return response;
-      }
-      response = await request(refreshed.accessToken);
-      if (response.status === 401 && epoch === epochRef.current) await clearAuthenticatedState();
-      return response;
+      return retryUnauthorizedRequest(
+        response,
+        async () => latest.accessToken !== session.accessToken ? latest : refreshSession(session, epoch),
+        () => epoch === epochRef.current,
+        request,
+        clearAuthenticatedState,
+      );
     },
     [clearAuthenticatedState, refreshSession],
   );
@@ -531,7 +642,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       isAuthenticated: !!user,
       isGuest,
-      isLoading,
+      isLoading: isLoading || browserBusy,
       loginWithGoogle,
       enableGuestMode,
       logout,
@@ -539,7 +650,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       checkSession,
       authorizedFetch,
     }),
-    [user, isGuest, isLoading, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
+    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

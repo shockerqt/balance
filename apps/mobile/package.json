@@ -48,7 +48,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "npm run test:auth && npm run test:dates && npm run test:navigation && npm run test:feed && npm run test:domain && npm run test:food-library && npm run test:macrofactor && npm run test:nutrition && npm run test:weight",
-    "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs",
+    "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs tests/auth-browser-logout.test.mjs",
     "test:navigation": "tsx --test tests/log-navigation.test.mjs tests/log-performance.test.mjs",
     "test:dates": "node --experimental-strip-types --test tests/dates-navigation.test.mjs",
     "test:domain": "tsx --test tests/shared-domain.test.mjs",

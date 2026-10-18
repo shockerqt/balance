@@ -1,7 +1,7 @@
 use axum::{
     Extension, Router,
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    http::StatusCode,
+    extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
+    http::{HeaderMap, StatusCode, Uri},
     response::IntoResponse,
     routing::get,
 };
@@ -18,7 +18,13 @@ use crate::{
             FoodDetails, MealLogEntry, MealLogMutation, NutritionSnapshot, validate_weight_grams,
         },
     },
-    modules::{auth::middleware::CurrentUser, sync::hub::SyncHub},
+    modules::{
+        auth::{
+            middleware::{CurrentUser, authenticate_token},
+            oidc::OidcConfig,
+        },
+        sync::hub::SyncHub,
+    },
     shared::error::AppError,
 };
 
@@ -122,6 +128,151 @@ pub fn sync_routes() -> Router {
     Router::new().route("/ws/sync", get(ws_handler))
 }
 
+#[derive(Clone)]
+pub struct WsAllowedOrigins(Vec<String>);
+
+impl WsAllowedOrigins {
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::parse(&std::env::var("WS_ALLOWED_ORIGINS").unwrap_or_default())
+    }
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        let mut origins = Vec::new();
+        for origin in value.split_whitespace() {
+            let url = reqwest::Url::parse(origin)?;
+            anyhow::ensure!(
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.path() == "/"
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+                    && url.origin().ascii_serialization() == origin,
+                "invalid WS origin"
+            );
+            origins.push(origin.to_owned());
+        }
+        Ok(Self(origins))
+    }
+    fn allows(&self, headers: &HeaderMap) -> bool {
+        let mut values = headers.get_all(axum::http::header::ORIGIN).iter();
+        match (values.next(), values.next()) {
+            (None, None) => true,
+            (Some(origin), None) => origin
+                .to_str()
+                .is_ok_and(|origin| self.0.iter().any(|allowed| allowed == origin)),
+            _ => false,
+        }
+    }
+}
+
+pub fn application_sync_routes(oidc: OidcConfig, origins: WsAllowedOrigins) -> Router {
+    Router::new()
+        .route("/ws/sync/application", get(application_ws_handler))
+        .layer(Extension(oidc))
+        .layer(Extension(origins))
+}
+
+async fn application_ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    uri: Uri,
+    Extension(oidc): Extension<OidcConfig>,
+    Extension(origins): Extension<WsAllowedOrigins>,
+    Extension(db): Extension<Arc<Database>>,
+    Extension(hub): Extension<SyncHub>,
+) -> axum::response::Response {
+    let protocols: Vec<_> = headers
+        .get_all(axum::http::header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .collect();
+    if !origins.allows(&headers)
+        || uri.query().is_some()
+        || headers.contains_key(axum::http::header::AUTHORIZATION)
+        || protocols.len() != 1
+        || protocols[0].to_str().ok() != Some("balance")
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    ws.protocols(["balance"])
+        .max_message_size(2 * 1024 * 1024)
+        .max_frame_size(2 * 1024 * 1024)
+        .on_upgrade(move |socket| authenticate_socket(socket, oidc, db, hub))
+        .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "event", rename_all = "camelCase", deny_unknown_fields)]
+enum AuthenticationFrame {
+    Authenticate {
+        #[serde(rename = "accessToken")]
+        access_token: String,
+    },
+}
+
+async fn close_auth(socket: &mut WebSocket, code: u16) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: "Authentication required".into(),
+        })))
+        .await;
+}
+
+async fn authenticate_socket(
+    mut socket: WebSocket,
+    oidc: OidcConfig,
+    db: Arc<Database>,
+    hub: SyncHub,
+) {
+    let authentication = async {
+        loop {
+            match socket.recv().await {
+                Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
+                Some(Ok(Message::Text(text))) if text.len() <= 16 * 1024 => {
+                    let AuthenticationFrame::Authenticate { access_token } =
+                        serde_json::from_str::<AuthenticationFrame>(&text).ok()?;
+                    if access_token.is_empty() {
+                        return None;
+                    }
+                    return Some(authenticate_token(&oidc, &db, &access_token).await);
+                }
+                _ => return None,
+            }
+        }
+    };
+    let (user, expiry) =
+        match tokio::time::timeout(std::time::Duration::from_secs(10), authentication).await {
+            Ok(Some(Ok(identity))) => identity,
+            Ok(Some(Err(error))) => {
+                close_auth(&mut socket, if error.is_expired() { 4001 } else { 4003 }).await;
+                return;
+            }
+            _ => {
+                close_auth(&mut socket, 4003).await;
+                return;
+            }
+        };
+    if i64::try_from(expiry)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(1000)
+        <= chrono::Utc::now().timestamp_millis()
+    {
+        close_auth(&mut socket, 4001).await;
+        return;
+    }
+    if socket
+        .send(Message::Text(
+            json!({"event":"authenticated"}).to_string().into(),
+        ))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    handle_socket(socket, user, db, hub, Some(expiry)).await;
+}
+
 pub fn public_template_routes() -> Router {
     Router::new().route("/templates/official", get(get_official_templates_handler))
 }
@@ -166,7 +317,7 @@ async fn ws_handler(
     Extension(sync_hub): Extension<SyncHub>,
 ) -> impl IntoResponse {
     ws.protocols(["balance"])
-        .on_upgrade(move |socket| handle_socket(socket, current_user, db, sync_hub))
+        .on_upgrade(move |socket| handle_socket(socket, current_user, db, sync_hub, None))
 }
 
 async fn handle_socket(
@@ -174,15 +325,42 @@ async fn handle_socket(
     user: CurrentUser,
     db: Arc<Database>,
     sync_hub: SyncHub,
+    expiry: Option<usize>,
 ) {
-    tracing::info!("RxDB WebSocket connected for user_id={}", user.id);
+    if expiry.is_some() {
+        tracing::info!("Authenticated sync WebSocket connected");
+    } else {
+        tracing::info!("RxDB WebSocket connected for user_id={}", user.id);
+    }
     let mut invalidations = sync_hub.subscribe();
 
+    let deadline = expiry.map(|exp| {
+        let remaining = i64::try_from(exp)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(1000)
+            .saturating_sub(chrono::Utc::now().timestamp_millis())
+            .max(0) as u64;
+        tokio::time::Instant::now()
+            .checked_add(std::time::Duration::from_millis(remaining))
+            .unwrap_or_else(tokio::time::Instant::now)
+    });
     loop {
+        if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) {
+            close_auth(&mut socket, 4001).await;
+            break;
+        }
         tokio::select! {
+            biased;
+            _ = async { match deadline { Some(end) => tokio::time::sleep_until(end).await, None => std::future::pending().await } } => {
+                close_auth(&mut socket, 4001).await; break;
+            }
             message = socket.recv() => {
                 let Some(Ok(msg)) = message else { break };
+                if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) { close_auth(&mut socket, 4001).await; break; }
                 if let Message::Text(text) = msg {
+                    if expiry.is_some() && serde_json::from_str::<Value>(&text).ok().and_then(|value| value.get("event").and_then(Value::as_str).map(str::to_owned)).as_deref() == Some("authenticate") {
+                        close_auth(&mut socket, 4003).await; break;
+                    }
                     match serde_json::from_str::<IncomingMessage>(&text) {
                         Ok(IncomingMessage::Pull(req)) => {
                             handle_pull(&mut socket, &user, &db, req).await;
@@ -191,13 +369,14 @@ async fn handle_socket(
                             handle_push(&mut socket, &user, &db, &sync_hub, req).await;
                         }
                         Err(error) => {
-                            tracing::warn!(?error, "Failed to parse sync message");
+                            if expiry.is_none() { tracing::warn!(?error, "Failed to parse sync message"); }
                             send_sync_error(&mut socket, "", "invalid_message", "Invalid sync message").await;
                         }
                     }
                 }
             }
             invalidation = invalidations.recv() => {
+                if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) { close_auth(&mut socket, 4001).await; break; }
                 match invalidation {
                     Ok(invalidation) if invalidation.user_id == user.id => {
                         let response = json!({
@@ -215,7 +394,11 @@ async fn handle_socket(
         }
     }
 
-    tracing::info!("RxDB WebSocket disconnected for user_id={}", user.id);
+    if expiry.is_some() {
+        tracing::info!("Authenticated sync WebSocket disconnected");
+    } else {
+        tracing::info!("RxDB WebSocket disconnected for user_id={}", user.id);
+    }
 }
 
 async fn handle_pull(
@@ -1142,5 +1325,308 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(duplicated.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod application_tests {
+    use super::*;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::{
+        connect_async,
+        tungstenite::{Message as ClientMessage, client::IntoClientRequest},
+    };
+
+    fn token(subject: &str, expiry: i64) -> String {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("public-test-only".into());
+        jsonwebtoken::encode(
+            &header,
+            &json!({
+                "sub":subject,"iss":"https://issuer.example.invalid",
+                "aud":"https://api.example.invalid/api","exp":expiry
+            }),
+            &jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
+                "../auth/fixtures/PUBLIC-TEST-ONLY-active-private.pem"
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    type ClientSocket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+    async fn connect(url: &str) -> ClientSocket {
+        let mut request = url.into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert("Sec-WebSocket-Protocol", "balance".parse().unwrap());
+        connect_async(request).await.unwrap().0
+    }
+    async fn next(socket: &mut ClientSocket) -> ClientMessage {
+        tokio::time::timeout(std::time::Duration::from_secs(3), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+    }
+    async fn authenticate(socket: &mut ClientSocket, jwt: &str) {
+        socket
+            .send(ClientMessage::Text(
+                json!({"event":"authenticate","accessToken":jwt})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            next(socket).await.into_text().unwrap(),
+            "{\"event\":\"authenticated\"}"
+        );
+    }
+    fn close_code(message: ClientMessage) -> u16 {
+        match message {
+            ClientMessage::Close(Some(frame)) => frame.code.into(),
+            other => panic!("expected close, received {other:?}"),
+        }
+    }
+
+    #[test]
+    fn origins_are_exact_https_and_never_accept_null_or_lists() {
+        let origins = WsAllowedOrigins::parse("https://balance-staging.shocker.cl").unwrap();
+        let mut headers = HeaderMap::new();
+        assert!(origins.allows(&headers));
+        for value in [
+            "null",
+            "https://unlisted.example",
+            "https://balance-staging.shocker.cl,https://other.example",
+            "https://balance-staging.shocker.cl/",
+            "malformed",
+        ] {
+            headers.insert("Origin", value.parse().unwrap());
+            assert!(!origins.allows(&headers));
+        }
+        headers.insert(
+            "Origin",
+            "https://balance-staging.shocker.cl".parse().unwrap(),
+        );
+        assert!(origins.allows(&headers));
+        headers.append(
+            "Origin",
+            "https://balance-staging.shocker.cl".parse().unwrap(),
+        );
+        assert!(!origins.allows(&headers));
+        assert!(!WsAllowedOrigins::parse("").unwrap().allows(&headers));
+        for value in [
+            "http://example.com",
+            "https://example.com/",
+            "https://example.com/path",
+            "https://user@example.com",
+            "null",
+        ] {
+            assert!(WsAllowedOrigins::parse(value).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_application_socket_authentication_bounds_expiry_and_user_isolation() {
+        let Some((db, schema)) = crate::connectors::user::isolated_identity_test_database().await
+        else {
+            return;
+        };
+        for subject in ["first", "second"] {
+            let user = db
+                .user
+                .provision_identity(
+                    "https://issuer.example.invalid",
+                    subject,
+                    &crate::connectors::user::NewUser {
+                        email: format!("{subject}@example.invalid"),
+                        name: None,
+                        family_name: None,
+                        given_name: None,
+                        picture: None,
+                    },
+                )
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO user_preferences (id, preferences, updated_at) VALUES ($1, $2, 1)",
+            )
+            .bind(user.id)
+            .bind(json!({"weightTrackingEnabled":subject == "first"}))
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        }
+        let db = Arc::new(db);
+        let app = application_sync_routes(
+            OidcConfig::test_cached_subject_config(),
+            WsAllowedOrigins::parse("https://balance-staging.shocker.cl").unwrap(),
+        )
+        .layer(Extension(db.clone()))
+        .layer(Extension(SyncHub::default()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "ws://{}/ws/sync/application",
+            listener.local_addr().unwrap()
+        );
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        for origin in [
+            "null",
+            "https://unlisted.example",
+            "https://balance-staging.shocker.cl, https://other.example",
+        ] {
+            let mut request = url.as_str().into_client_request().unwrap();
+            request
+                .headers_mut()
+                .insert("Sec-WebSocket-Protocol", "balance".parse().unwrap());
+            request
+                .headers_mut()
+                .insert("Origin", origin.parse().unwrap());
+            assert!(connect_async(request).await.is_err());
+        }
+        for protocols in [
+            "balance, balance.bearer.synthetic",
+            "balance.bearer.synthetic",
+            "other",
+        ] {
+            let mut request = url.as_str().into_client_request().unwrap();
+            request
+                .headers_mut()
+                .insert("Sec-WebSocket-Protocol", protocols.parse().unwrap());
+            assert!(connect_async(request).await.is_err());
+        }
+        let mut request = format!("{url}?token=synthetic")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("Sec-WebSocket-Protocol", "balance".parse().unwrap());
+        assert!(connect_async(request).await.is_err());
+        let mut allowed = url.as_str().into_client_request().unwrap();
+        allowed
+            .headers_mut()
+            .insert("Sec-WebSocket-Protocol", "balance".parse().unwrap());
+        allowed.headers_mut().insert(
+            "Origin",
+            "https://balance-staging.shocker.cl".parse().unwrap(),
+        );
+        let (mut allowed, _) = connect_async(allowed).await.unwrap();
+        allowed.close(None).await.unwrap();
+        let mut oversized = connect(&url).await;
+        oversized
+            .send(ClientMessage::Binary(vec![0; 2 * 1024 * 1024 + 1].into()))
+            .await
+            .unwrap();
+        let rejected = tokio::time::timeout(std::time::Duration::from_secs(3), oversized.next())
+            .await
+            .unwrap();
+        assert!(matches!(
+            rejected,
+            None | Some(Err(_)) | Some(Ok(ClientMessage::Close(_)))
+        ));
+        use tower::ServiceExt;
+        let strict = Router::new()
+            .route("/strict", get(|| async { StatusCode::NO_CONTENT }))
+            .route_layer(axum::middleware::from_fn_with_state(
+                OidcConfig::test_cached_subject_config(),
+                crate::modules::auth::middleware::auth,
+            ))
+            .layer(Extension(db.clone()));
+        let request = axum::http::Request::builder()
+            .uri("/strict")
+            .header(
+                "Sec-WebSocket-Protocol",
+                format!(
+                    "balance.bearer.{}",
+                    token("first", chrono::Utc::now().timestamp() + 60)
+                ),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            strict.oneshot(request).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        for frame in [
+            ClientMessage::Text(json!({"event":"pull","requestId":"preauth","collection":"userPreferences"}).to_string().into()),
+            ClientMessage::Text(json!({"event":"push","requestId":"preauth","collection":"userPreferences","rows":[]}).to_string().into()),
+            ClientMessage::Text("x".repeat(16 * 1024 + 1).into()),
+            ClientMessage::Binary(vec![1,2,3].into()),
+            ClientMessage::Text(json!({"event":"authenticate","accessToken":"bad","extra":true}).to_string().into()),
+        ] {
+            let mut socket = connect(&url).await;
+            socket.send(frame).await.unwrap();
+            assert_eq!(close_code(next(&mut socket).await), 4003);
+        }
+        let mut expired = connect(&url).await;
+        expired.send(ClientMessage::Text(json!({"event":"authenticate","accessToken":token("first", chrono::Utc::now().timestamp()-1)}).to_string().into())).await.unwrap();
+        assert_eq!(close_code(next(&mut expired).await), 4001);
+        for subject in ["first", "second"] {
+            let mut socket = connect(&url).await;
+            authenticate(
+                &mut socket,
+                &token(subject, chrono::Utc::now().timestamp() + 60),
+            )
+            .await;
+            socket.send(ClientMessage::Text(json!({"event":"pull","requestId":"read","collection":"userPreferences","checkpoint":null,"limit":50}).to_string().into())).await.unwrap();
+            let response: Value =
+                serde_json::from_str(&next(&mut socket).await.into_text().unwrap()).unwrap();
+            assert_eq!(response["documents"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                response["documents"][0]["preferences"]["weightTrackingEnabled"],
+                subject == "first"
+            );
+            socket.send(ClientMessage::Text(json!({"event":"authenticate","accessToken":token("second",chrono::Utc::now().timestamp()+60)}).to_string().into())).await.unwrap();
+            assert_eq!(close_code(next(&mut socket).await), 4003);
+        }
+        for traffic in [false, true] {
+            let mut socket = connect(&url).await;
+            authenticate(
+                &mut socket,
+                &token("first", chrono::Utc::now().timestamp() + 2),
+            )
+            .await;
+            if traffic {
+                loop {
+                    socket
+                        .send(ClientMessage::Ping(vec![1].into()))
+                        .await
+                        .unwrap();
+                    let message = next(&mut socket).await;
+                    if let ClientMessage::Close(_) = message {
+                        assert_eq!(close_code(message), 4001);
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            } else {
+                assert_eq!(close_code(next(&mut socket).await), 4001);
+            }
+        }
+        let mut unauthenticated = connect(&url).await;
+        let start = std::time::Instant::now();
+        loop {
+            unauthenticated
+                .send(ClientMessage::Ping(vec![1].into()))
+                .await
+                .unwrap();
+            match next(&mut unauthenticated).await {
+                message @ ClientMessage::Close(_) => {
+                    assert_eq!(close_code(message), 4003);
+                    break;
+                }
+                _ => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+            }
+        }
+        assert!(start.elapsed() >= std::time::Duration::from_secs(9));
+        assert!(start.elapsed() < std::time::Duration::from_secs(12));
+        task.abort();
+        crate::connectors::user::cleanup_identity_test_database(&db, &schema).await;
     }
 }

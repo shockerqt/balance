@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '@/services/config';
+import { authDataNamespace } from '@/services/auth/session-state';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './use-auth';
 import { storage } from '@/services/storage';
@@ -86,7 +88,7 @@ const FoodLibraryContext = createContext<FoodLibraryContextType | undefined>(und
 
 export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isGuest } = useAuth();
-  const namespace = user ? `user:${user.id}` : 'guest';
+  const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const [templates, setTemplates] = useState<MealTemplateDoc[]>([]);
   const [frequencies, setFrequencies] = useState<Record<string, number>>({});
   const [isLibraryReady, setIsLibraryReady] = useState(false);

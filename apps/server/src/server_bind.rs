@@ -12,9 +12,11 @@ fn parse_server_bind_addr(value: Option<&str>) -> anyhow::Result<SocketAddr> {
         )
     })?;
 
-    if bind_addr.port() != SERVER_PORT {
+    if bind_addr.port() != SERVER_PORT
+        && bind_addr != "127.0.0.1:8093".parse::<SocketAddr>().unwrap()
+    {
         anyhow::bail!(
-            "{SERVER_BIND_ADDR_ENV} must use port {SERVER_PORT} to preserve the Balance API routes; got {value:?}"
+            "{SERVER_BIND_ADDR_ENV} must use port {SERVER_PORT} or the isolated staging bind 127.0.0.1:8093; got {value:?}"
         );
     }
 
@@ -50,6 +52,14 @@ mod tests {
             .expect("explicit LAN bind address should be valid");
 
         assert_eq!(bind_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn staging_bind_is_loopback_only() {
+        assert!(parse_server_bind_addr(Some("127.0.0.1:8093")).is_ok());
+        for value in ["0.0.0.0:8093", "[::]:8093", "[::1]:8093", "127.0.0.1:8094"] {
+            assert!(parse_server_bind_addr(Some(value)).is_err());
+        }
     }
 
     #[test]
