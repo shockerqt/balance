@@ -10,7 +10,7 @@ export default function SettingsScreen() {
   const styles = useStyles();
   const theme = useTheme();
   const router = useRouter();
-  const { user, isGuest, isLoading, logout } = useAuth();
+  const { user, isGuest, isLoading, logout, refreshReplayAvailable, runRefreshReplay } = useAuth();
   const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled } =
     usePreferencesStore();
 
@@ -25,6 +25,30 @@ export default function SettingsScreen() {
         'No se confirmó el cierre de la sesión de Eri.');
       router.replace('/login');
     } finally { logoutPending.current = false; }
+  };
+  const diagnosticPending = useRef(false);
+  const handleRefreshReplay = async () => {
+    if (diagnosticPending.current) return;
+    diagnosticPending.current = true;
+    try {
+      const result = await runRefreshReplay();
+      const title = result.status === 'PASS' ? 'Comprobación correcta' :
+        result.status === 'FAIL' ? 'Comprobación fallida' : 'No se pudo confirmar';
+      const detail = result.status === 'PASS'
+        ? 'La sesión anterior dejó de funcionar después de renovarla. Inicia sesión de nuevo para continuar.'
+        : result.status === 'FAIL'
+          ? result.step === 'replay'
+            ? 'La sesión anterior siguió funcionando después de renovarla. Inicia sesión de nuevo para continuar.'
+            : 'La sesión renovada siguió funcionando tras reutilizar la anterior. Inicia sesión de nuevo para continuar.'
+        : result.reason === 'unavailable' || result.reason === 'busy'
+          ? 'La comprobación no está disponible ahora.'
+          : result.reason === 'storage'
+            ? 'No se pudo borrar la sesión guardada. Intenta cerrar sesión de nuevo.'
+          : result.reason === 'expired'
+            ? 'La comprobación tardó demasiado. Espera antes de iniciar sesión de nuevo.'
+            : 'No se pudo confirmar el resultado. Inicia sesión de nuevo para continuar.';
+      Alert.alert(title, detail);
+    } finally { diagnosticPending.current = false; }
   };
 
   return (
@@ -101,6 +125,15 @@ export default function SettingsScreen() {
             </View>
           </Card>
         </View>
+        {refreshReplayAvailable ? <View style={styles.section}>
+          <Text variant="label" tone="muted">COMPROBACIÓN</Text>
+          <Card>
+            <Text variant="body" tone="secondary">
+              Comprueba cómo se cierra una sesión tras renovarla. Tendrás que iniciar sesión de nuevo.
+            </Text>
+            <Button title="Comprobar sesión" variant="secondary" onPress={handleRefreshReplay} />
+          </Card>
+        </View> : null}
         <View style={{ height: theme.space.xl }} />
       </ScrollView>
     </Screen>
