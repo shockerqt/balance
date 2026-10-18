@@ -29,6 +29,9 @@ Resumen derives 7/30/90-day calorie/macronutrient/weight plots from those same
 records. Missing food days break curves; measured weight points connect over
 elapsed dates. Touch inspection and explicit previous/next date buttons expose
 values and links to editable dates. Analysis filters survive destination changes.
+Calendar selection follows into the food week; registration commits that return
+date before leaving, including when cancelled. External date commands reveal the
+pager before awaiting layout, avoiding a locked hidden destination after tool saves.
 
 Food registration remains a full-screen native route with Bibliotecas/Etiquetas,
 personal/official filters and accent-insensitive search. Labels accept values

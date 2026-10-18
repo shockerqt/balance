@@ -133,6 +133,10 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       deleteConfirmation = false
       moveTime = false
       if (pager.isScrollInProgress || DailyLogDates.page(command.date) != pager.settledPage) {
+        // A save from a secondary tool may return while another destination is
+        // shown. Attach the pager before awaiting its first layout/scroll.
+        measurementDate = command.date.toString()
+        destination = 0
         pager.scrollToPage(DailyLogDates.page(command.date))
       }
       appliedCommand = command.token
