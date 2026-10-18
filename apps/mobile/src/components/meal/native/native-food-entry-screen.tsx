@@ -61,7 +61,7 @@ function FoodEntrySession() {
   const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: interfaceColors,
     templates: library.templateDocuments.filter(t => !t._deleted), ready: library.isLibraryReady, nutrientFields,
   }), [session, documentId, initial, theme.colors, library.templateDocuments, library.isLibraryReady]);
-  return <Screen edges={['top', 'bottom']}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
+  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: interfaceColors.background }}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
     onAction={async ({ nativeEvent: event }) => {
       if (!live.current.active || live.current.saving || live.current.saved || !acceptFoodEntryEvent(event, live.current.session, live.current.sequence)) return;
       live.current.sequence = event.sequence;

@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import kotlin.math.roundToInt
 
 internal object WireframeModel {
   fun hour(time: String): String {
@@ -14,7 +15,7 @@ internal object WireframeModel {
     progress.coerceIn(0.0, 1.0).toFloat() to (progress - 1).coerceIn(0.0, 1.0).toFloat()
   fun weightGrams(value: String): Int? {
     val number = FoodEntryModel.decimal(value) ?: return null
-    val grams = (number * 1000).toInt()
+    val grams = (number * 1000).roundToInt()
     return grams.takeIf { number in 1.0..500.0 && kotlin.math.abs(number * 1000 - grams) < 0.00001 && grams % 100 == 0 }
   }
   fun validTime(date: LocalDate, time: String): Boolean = runCatching {

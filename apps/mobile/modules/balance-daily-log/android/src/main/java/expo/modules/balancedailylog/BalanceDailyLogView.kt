@@ -48,17 +48,7 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     val renderSession = snapshot.optString("session")
     val colors = snapshot.optJSONObject("colors") ?: JSONObject()
     val background = color(colors, "background", Color(0xFF12160F))
-    MaterialTheme(colorScheme = darkColorScheme(
-      primary = color(colors, "primary", Color(0xFFEEF2E6)),
-      onPrimary = color(colors, "onPrimary", Color(0xFF12160F)),
-      surface = color(colors, "surface", Color(0xFF1A1F16)),
-      surfaceContainer = color(colors, "surfaceRaised", Color(0xFF232A1E)),
-      onSurface = color(colors, "text", Color(0xFFEEF2E6)),
-      onSurfaceVariant = color(colors, "textSecondary", Color(0xFF9AA392)),
-      outlineVariant = color(colors, "border", Color(0xFF333C2C)),
-      background = background,
-      error = color(colors, "danger", Color(0xFFFF6B6B))
-    )) {
+    WireframeTheme(colors) {
       Surface(modifier = Modifier.fillMaxSize(), color = background,
         contentColor = MaterialTheme.colorScheme.onSurface) {
         DailyLog(snapshot, command.value, active.value,
@@ -171,6 +161,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
 
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     if (destination == 0) {
+    destinations.SaveableStateProvider(0) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
         Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -209,6 +200,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
           if (!locked) emitExtra("edit-save", date, listOf(food.optString("id")), time, appliedCommand!!.revision,
             mapOf("quantity" to quantity, "mode" to mode, "revision" to food.optLong("revision")))
         })
+    }
     }
     } else {
       Box(Modifier.weight(1f).fillMaxWidth()) {

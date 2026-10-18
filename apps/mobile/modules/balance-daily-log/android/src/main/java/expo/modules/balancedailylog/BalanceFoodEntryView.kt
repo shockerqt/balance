@@ -51,13 +51,7 @@ class BalanceFoodEntryView(context: Context, appContext: AppContext) : ExpoCompo
     val snapshot = data.value
     val renderSession = snapshot.optString("session")
     val colors = snapshot.optJSONObject("colors") ?: JSONObject()
-    fun color(name: String, fallback: Long): Color = runCatching { Color(android.graphics.Color.parseColor(colors.getString(name))) }.getOrDefault(Color(fallback))
-    MaterialTheme(colorScheme = darkColorScheme(
-      background = color("background", 0xFF12160F), surface = color("surface", 0xFF1A1F16),
-      primary = color("primary", 0xFFEEF2E6), onPrimary = color("onPrimary", 0xFF12160F),
-      onSurface = color("text", 0xFFEEF2E6), onSurfaceVariant = color("textSecondary", 0xFF9AA392),
-      surfaceContainer = color("surfaceRaised", 0xFF232A1E), outlineVariant = color("border", 0xFF333C2C), error = color("danger", 0xFFFF6B6B)
-    )) {
+    WireframeTheme(colors) {
       // Focus nonces invalidate callbacks; the route draft survives focus changes.
       key(snapshot.optString("draftId", renderSession)) {
         FoodEntryScreen(snapshot, status.value, active.value) { action, input ->
@@ -218,7 +212,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       }
     } else {
       Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        TextButton(onClick = { if (dirty) { discardToSearch = true; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
+        TextButton(onClick = { if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
         if (chosen == null) OutlinedTextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
           label = { Text("Nombre del alimento") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
