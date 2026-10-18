@@ -38,7 +38,9 @@ all nutrition and conversion are reconstructed rather than trusting native total
 A stable route draft ID preserves input across focus changes, while a fresh
 focus nonce and reset sequence invalidate old callbacks. Completion is explicit
 React state, so even a save batched into one render or completed while blurred
-returns correctly once focused. Account/focus nonce, sequence and a save lock reject stale/replayed
+returns correctly once focused. Each status acknowledgement carries the focus
+session and request sequence, so repeated errors and rejected old-focus requests
+cannot leave native controls locked. Account/focus nonce, sequence and a save lock reject stale/replayed
 callbacks. The existing meal store waits for hydration, durably enqueues through
 its existing sync owner, then merges the exact document into its cache. Late
 completion cannot populate another account's UI. Save errors preserve the editor;
