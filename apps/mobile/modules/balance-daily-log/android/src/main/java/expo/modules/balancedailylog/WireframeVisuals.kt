@@ -36,8 +36,8 @@ internal object WireIcons {
     moveTo(8f, 15f); lineTo(12f, 10f); lineTo(16f, 13f); lineTo(21f, 6f)
   }
   val Profile = wireVector("Profile") {
-    moveTo(16f, 7f); cubicTo(16f, 12.3f, 8f, 12.3f, 8f, 7f)
-    cubicTo(8f, 1.7f, 16f, 1.7f, 16f, 7f); close()
+    moveTo(16f, 7f); curveTo(16f, 12.3f, 8f, 12.3f, 8f, 7f)
+    curveTo(8f, 1.7f, 16f, 1.7f, 16f, 7f); close()
     moveTo(4f, 21f); lineTo(4f, 19f); quadTo(4f, 14f, 9f, 14f)
     lineTo(15f, 14f); quadTo(20f, 14f, 20f, 19f); lineTo(20f, 21f)
   }
@@ -58,8 +58,8 @@ internal object WireIcons {
     moveTo(12f, 5f); lineTo(5f, 12f); lineTo(12f, 19f); moveTo(5f, 12f); lineTo(20f, 12f)
   }
   val Search = wireVector("Search") {
-    moveTo(17f, 10f); cubicTo(17f, 19.3f, 3f, 19.3f, 3f, 10f)
-    cubicTo(3f, 0.7f, 17f, 0.7f, 17f, 10f); close(); moveTo(15f, 15f); lineTo(21f, 21f)
+    moveTo(17f, 10f); curveTo(17f, 19.3f, 3f, 19.3f, 3f, 10f)
+    curveTo(3f, 0.7f, 17f, 0.7f, 17f, 10f); close(); moveTo(15f, 15f); lineTo(21f, 21f)
   }
   val Calendar = wireVector("Calendar") {
     moveTo(5f, 5f); lineTo(19f, 5f); quadTo(21f, 5f, 21f, 7f)
@@ -69,8 +69,8 @@ internal object WireIcons {
     moveTo(3f, 11f); lineTo(21f, 11f)
   }
   val Clock = wireVector("Clock") {
-    moveTo(21f, 12f); cubicTo(21f, 24f, 3f, 24f, 3f, 12f)
-    cubicTo(3f, 0f, 21f, 0f, 21f, 12f); close()
+    moveTo(21f, 12f); curveTo(21f, 24f, 3f, 24f, 3f, 12f)
+    curveTo(3f, 0f, 21f, 0f, 21f, 12f); close()
     moveTo(12f, 7f); lineTo(12f, 12f); lineTo(15f, 14f)
   }
 }
