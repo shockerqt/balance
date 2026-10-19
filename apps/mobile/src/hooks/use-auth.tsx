@@ -7,11 +7,12 @@ import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL, OIDC_REDIRECT_URI } from '@/services/config';
 import { storage } from '@/services/storage';
 import {
   assertAuthorizationResponseIssuer,
   assertStagingMobileRedirect,
+  chosenMobileRedirect,
   awaitCurrentAuthStep,
   authDataNamespace,
   browserLogoutRequest,
@@ -162,10 +163,12 @@ const requestAuthorization = async (
 ): Promise<AuthSession.TokenResponse | undefined> => {
   const schemeValue = Constants.expoConfig?.scheme;
   const scheme = Array.isArray(schemeValue) ? schemeValue[0] : schemeValue;
-  const redirectUrl = AuthSession.makeRedirectUri({
+  const chosenRedirect = chosenMobileRedirect(AUTH_BINDING, typeof scheme === 'string' ? scheme : 'balance',
+    Platform.OS, Constants.expoConfig?.extra?.appVariant, OIDC_REDIRECT_URI);
+  const redirectUrl = chosenRedirect ?? AuthSession.makeRedirectUri({
     scheme: typeof scheme === 'string' ? scheme : 'balance', path: 'auth-callback',
   });
-  assertStagingMobileRedirect(AUTH_BINDING, typeof scheme === 'string' ? scheme : 'balance', redirectUrl);
+  assertStagingMobileRedirect(AUTH_BINDING, typeof scheme === 'string' ? scheme : 'balance', redirectUrl, chosenRedirect);
   const request = new AuthSession.AuthRequest({
     clientId: OIDC_MOBILE_CLIENT_ID,
     responseType: AuthSession.ResponseType.Code,

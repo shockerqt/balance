@@ -69,18 +69,43 @@ export const assertAuthorizationResponseIssuer = (
     throw new Error("Authorization response issuer rejected");
 };
 
+export const STAGING_ANDROID_REDIRECT = "https://balance-staging.shocker.cl/auth-callback";
+
+// A public opt-in for the reviewed Android development binary only.
+export const chosenMobileRedirect = (
+  binding: SessionBinding, scheme: string, platform: string, variant: unknown,
+  configured?: string,
+): string | undefined => {
+  if (configured === undefined) return undefined;
+  if (configured !== STAGING_ANDROID_REDIRECT || platform !== "android" ||
+      variant !== "development" || scheme !== "balance-dev" ||
+      binding.issuer !== "https://auth-staging.shocker.cl" ||
+      binding.clientId !== "balance-mobile-staging" ||
+      binding.apiBaseUrl !== "https://balance-staging.shocker.cl/api" ||
+      binding.resource !== binding.apiBaseUrl)
+    throw new Error("HTTPS redirect requires the reviewed Android staging context");
+  return configured;
+};
+
+// Strict staging never accepts credentials delivered directly in a URL.
+export const allowsLegacyCallbackToken = (issuer: string, clientId: string) =>
+  issuer !== "https://auth-staging.shocker.cl" && clientId !== "balance-mobile-staging";
+
 export const assertStagingMobileRedirect = (
   binding: SessionBinding,
   scheme: string,
   redirect: string,
+  chosenRedirect?: string,
 ) => {
+  if (chosenRedirect !== undefined && chosenRedirect !== STAGING_ANDROID_REDIRECT)
+    throw new Error("Unregistered mobile redirect");
   if (binding.issuer === "https://auth-staging.shocker.cl" ||
       binding.clientId === "balance-mobile-staging") {
     if (binding.issuer !== "https://auth-staging.shocker.cl" ||
         binding.clientId !== "balance-mobile-staging" ||
         binding.apiBaseUrl !== "https://balance-staging.shocker.cl/api" ||
         (binding.resource !== undefined && binding.resource !== "https://balance-staging.shocker.cl/api") ||
-        scheme !== "balance-dev" || redirect !== "balance-dev://auth-callback")
+        scheme !== "balance-dev" || redirect !== (chosenRedirect ?? "balance-dev://auth-callback"))
       throw new Error("Staging requires the registered Balance Dev redirect");
   }
 };

@@ -693,3 +693,33 @@ test("actual application SyncClient waits for ACK and isolates socket generation
   assert(client.reconnectTimer);
   client.disconnect();
 });
+
+test('claimed HTTPS redirect is exact and restricted to Android staging development', async () => {
+  const { chosenMobileRedirect, STAGING_ANDROID_REDIRECT, allowsLegacyCallbackToken } = await import('../src/services/auth/session-state.ts');
+  const binding = { issuer: 'https://auth-staging.shocker.cl', clientId: 'balance-mobile-staging', apiBaseUrl: 'https://balance-staging.shocker.cl/api', resource: 'https://balance-staging.shocker.cl/api' };
+  const choose = (url, platform = 'android', variant = 'development', context = binding) => chosenMobileRedirect(context, 'balance-dev', platform, variant, url);
+  assert.equal(choose(undefined), undefined);
+  assert.equal(choose(STAGING_ANDROID_REDIRECT), STAGING_ANDROID_REDIRECT);
+  assert.doesNotThrow(() => assertStagingMobileRedirect(binding, 'balance-dev', STAGING_ANDROID_REDIRECT, choose(STAGING_ANDROID_REDIRECT)));
+  for (const url of ['https://evil.test/auth-callback', STAGING_ANDROID_REDIRECT + '/', STAGING_ANDROID_REDIRECT + '?x=1', 'balance-dev://auth-callback']) assert.throws(() => choose(url));
+  for (const platform of ['ios', 'web']) assert.throws(() => choose(STAGING_ANDROID_REDIRECT, platform));
+  for (const variant of ['daily', 'production', null]) assert.throws(() => choose(STAGING_ANDROID_REDIRECT, 'android', variant));
+  assert.throws(() => choose(STAGING_ANDROID_REDIRECT, 'android', 'development', { ...binding, resource: undefined }));
+  assert.throws(() => choose(STAGING_ANDROID_REDIRECT, 'android', 'development', { ...binding, issuer: 'https://auth.shocker.cl/realms/balance' }));
+  assert.equal(allowsLegacyCallbackToken(binding.issuer, binding.clientId), false);
+  assert.equal(allowsLegacyCallbackToken('https://auth.shocker.cl/realms/balance', 'balance-mobile'), true);
+});
+
+test('only development declares the exact verified Android callback', () => {
+  const require = createRequire(import.meta.url);
+  const config = require('../app.config.js');
+  const previous = process.env.APP_VARIANT;
+  try {
+    for (const variant of ['development', 'daily', 'production']) {
+      process.env.APP_VARIANT = variant;
+      const filters = config().android.intentFilters;
+      if (variant === 'development') assert.deepEqual(filters, [{ action: 'VIEW', autoVerify: true, category: ['BROWSABLE','DEFAULT'], data: [{ scheme: 'https', host: 'balance-staging.shocker.cl', path: '/auth-callback' }] }]);
+      else assert.equal(filters, undefined);
+    }
+  } finally { if (previous === undefined) delete process.env.APP_VARIANT; else process.env.APP_VARIANT = previous; }
+});
