@@ -21,3 +21,5 @@ assertSyncConfiguration(API_BASE_URL, WS_SYNC_URL, WS_AUTH_MODE, OIDC_ISSUER, OI
 
 // Reviewed provider-local browser logout, opt-in and native staging only.
 export const OIDC_BROWSER_LOGOUT_URL = process.env.EXPO_PUBLIC_OIDC_BROWSER_LOGOUT_URL;
+
+export const OIDC_REDIRECT_URI = process.env.EXPO_PUBLIC_OIDC_REDIRECT_URI;

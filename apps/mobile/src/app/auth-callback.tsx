@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/use-auth';
+import { OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID } from '@/services/config';
+import { allowsLegacyCallbackToken } from '@/services/auth/session-state';
 import { useTheme } from '@/theme';
 import { Text } from '@/components/ui';
 
@@ -14,7 +16,7 @@ export default function AuthCallbackScreen() {
   useEffect(() => {
     (async () => {
       const value = Array.isArray(token) ? token[0] : token;
-      if (value) {
+      if (value && allowsLegacyCallbackToken(OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID)) {
         setAuthToken(value);
         await checkSession(value);
       }

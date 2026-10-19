@@ -79,6 +79,7 @@ async function harness(options = {}) {
   const config = {
     API_BASE_URL: binding.apiBaseUrl, OIDC_ISSUER: binding.issuer,
     OIDC_MOBILE_CLIENT_ID: binding.clientId, OIDC_RESOURCE: binding.resource,
+    OIDC_REDIRECT_URI: options.redirectUri,
     OIDC_SCOPES: ['openid','profile','email','offline_access'],
     OIDC_BROWSER_LOGOUT_URL: options.production ? undefined : options.endpoint ?? 'https://auth-staging.shocker.cl/logout',
   };
@@ -956,4 +957,61 @@ test('provider logout storage clear failure prevents browser and reports uncerta
     assert.equal(h.calls.revoke.length,2);
     assert.equal(JSON.stringify(h.calls.warnings).includes('secret storage'),false);
   } finally {storage.resolve();await h.close();}
+});
+
+
+test('normal and diagnostic authorization exchange retain the chosen HTTPS redirect', async () => {
+  const redirectUri = 'https://balance-staging.shocker.cl/auth-callback';
+  for (const diagnostic of [false, true]) {
+    const exchanges = [];
+    const h = await harness({ redirectUri, session: false, loggedOut: true,
+      cryptoCount: diagnostic ? 64 : 32,
+      promptAsync: async () => ({ type: 'success', params: { code: 'synthetic-code', iss: stage.issuer } }),
+      exchangeCodeAsync: async request => { exchanges.push(request); return { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh', issuedAt: Date.now()/1000 }; },
+    });
+    try {
+      if (diagnostic) {
+        await h.start(auth => auth.runProviderLogoutDiagnostic());
+      } else {
+        await h.start(auth => auth.loginWithGoogle());
+      }
+      await flush();
+      assert.ok(h.calls.prompt.length >= (diagnostic ? 2 : 1));
+      for (const request of h.calls.prompt) {
+        assert.equal(request.redirectUri, redirectUri);
+        assert.equal(request.usePKCE, true);
+        assert.equal(request.responseType, 'code');
+      }
+      assert.ok(exchanges.length >= (diagnostic ? 2 : 1));
+      for (const request of exchanges) assert.equal(request.redirectUri, redirectUri);
+    } finally { await h.close(); }
+  }
+});
+
+test('callback route ignores URL credentials in staging and preserves legacy production', async () => {
+  const source = ts.transpileModule(readFileSync(new URL('../src/app/auth-callback.tsx', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
+  }).outputText;
+  for (const production of [false, true]) {
+    const calls = [];
+    const binding = production ? legacy : stage;
+    const module = { exports: {} };
+    const require = name => {
+      if (name === 'react') return { ...React, useEffect: effect => effect() };
+      if (name === 'react-native') return { View: 'View', ActivityIndicator: 'ActivityIndicator', StyleSheet: { create: value => value } };
+      if (name === 'expo-router') return { useLocalSearchParams: () => ({ token: 'synthetic-url-token', code: 'synthetic-code' }), useRouter: () => ({ replace: path => calls.push(['route', path]) }) };
+      if (name === '@/hooks/use-auth') return { useAuth: () => ({ setAuthToken: value => calls.push(['token', value]), checkSession: async value => calls.push(['check', value]) }) };
+      if (name === '@/services/config') return { OIDC_ISSUER: binding.issuer, OIDC_MOBILE_CLIENT_ID: binding.clientId };
+      if (name === '@/services/auth/session-state') return sessionState;
+      if (name === '@/theme') return { useTheme: () => ({ colors: {}, space: {} }) };
+      if (name === '@/components/ui') return { Text: 'Text' };
+      throw new Error(name);
+    };
+    runInNewContext(source, { module, exports: module.exports, require });
+    module.exports.default();
+    await flush();
+    assert.equal(calls.some(([kind]) => kind === 'token'), production);
+    assert.equal(calls.some(([kind]) => kind === 'check'), production);
+    assert.equal(calls.at(-1)[0], 'route');
+  }
 });
