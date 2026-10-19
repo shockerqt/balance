@@ -5,11 +5,11 @@ import { isDateId, type MealLogDoc, type WeightLogDoc } from '@/services/sync/ty
 import { canonicalQuantityForPortion, scaleNutrition } from '@balance/domain';
 import { epochForChileDateTime } from '@/lib/dates';
 
-// A neutral presentation of the reviewed wireframe; targets and data remain real.
+// Shared native/safe-area palette; targets and data remain canonical.
 export const interfaceColors = {
-  background: '#111315', surface: '#1b1e22', surfaceRaised: '#272b30',
-  text: '#eef0f2', textSecondary: '#a9afb6', border: '#3a4047',
-  primary: '#e1e5e9', onPrimary: '#111315', danger: '#f1a5a0',
+  background: '#101820', surface: '#19232c', surfaceRaised: '#23333f',
+  text: '#edf3f5', textSecondary: '#a8bac4', border: '#36444f',
+  primary: '#86b8d3', onPrimary: '#102531', danger: '#f1a5a0',
 };
 
 export function projectInterfaceDays(logs: Record<string, DayLog>, weights: Record<string, WeightLogDoc>, documents: MealLogDoc[]) {

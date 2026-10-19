@@ -47,7 +47,7 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     val snapshot = data.value
     val renderSession = snapshot.optString("session")
     val colors = snapshot.optJSONObject("colors") ?: JSONObject()
-    val background = color(colors, "background", Color(0xFF12160F))
+    val background = color(colors, "background", Color(0xFF101820))
     WireframeTheme(colors) {
       Surface(modifier = Modifier.fillMaxSize(), color = background,
         contentColor = MaterialTheme.colorScheme.onSurface) {
@@ -172,14 +172,14 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     if (destination == 0) {
     destinations.SaveableStateProvider(0) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = WireSpace.Small), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
         Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(visible.format(monthFormat).replaceFirstChar { it.titlecase(spanish) }, style = MaterialTheme.typography.titleLarge)
       }
       TextButton(onClick = { go(today) }, enabled = !locked && selected.isEmpty()) { Text("Hoy") }
-      TextButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
-        modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Text("Fecha") }
+      IconButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
+        modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Icon(WireIcons.Calendar, null) }
     }
     val weekStart = visible.minusDays((visible.dayOfWeek.value - 1).toLong())
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -191,7 +191,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
 
       }
     }
-    HorizontalDivider(Modifier.padding(top = 8.dp))
+    Spacer(Modifier.height(4.dp))
     HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(),
       beyondViewportPageCount = 1, userScrollEnabled = active && !pendingCommand && selected.isEmpty(), key = { it }) { page ->
       val date = DailyLogDates.date(page)
@@ -250,7 +250,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   if (registering && active) ModalBottomSheet(onDismissRequest = { registering = false }) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Registrar", style = MaterialTheme.typography.titleLarge)
-      Text(measurementDate, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(wireLongDate(LocalDate.parse(measurementDate)), color = MaterialTheme.colorScheme.onSurfaceVariant)
       Button(onClick = {
         registering = false; destination = 0
         val target = LocalDate.parse(measurementDate)

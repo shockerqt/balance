@@ -11,10 +11,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.YearMonth
@@ -25,10 +29,13 @@ import java.time.format.DateTimeFormatter
     listOf("Alimentos", "Mediciones", "+", "Resumen", "Perfil").forEachIndexed { index, label ->
       val target = if (index > 2) index - 1 else index
       if (index == 2) Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        FilledTonalIconButton(onClick = onAdd, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Registrar alimento o peso" }) { Text("+", fontSize = 28.sp) }
+        FilledIconButton(onClick = onAdd, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null) }
       } else NavigationBarItem(selected = destination == target, onClick = { onSelect(target) }, enabled = enabled,
-        icon = { Text(listOf("≡", "▦", "", "▥", "○")[index], fontSize = 23.sp) },
-        label = { Text(label, fontSize = 9.sp, maxLines = 1) }, alwaysShowLabel = true)
+        icon = { Icon(listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)[index], null) },
+        label = { Text(label, fontSize = 9.sp, maxLines = 1) }, alwaysShowLabel = true,
+        colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.primary,
+          selectedTextColor = MaterialTheme.colorScheme.onSurface, indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+          unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
     }
   }
 }
@@ -52,7 +59,7 @@ import java.time.format.DateTimeFormatter
   val month = YearMonth.parse(monthText)
   val days = data.optJSONObject("days") ?: JSONObject()
   LaunchedEffect(selected) { monthText = YearMonth.from(date).toString() }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
     item { Text("Mediciones", style = MaterialTheme.typography.headlineSmall); Text("Peso", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     if (!data.optBoolean("showWeight")) item {
       Text("El seguimiento de peso está desactivado. Puedes activarlo en Perfil.")
@@ -60,10 +67,10 @@ import java.time.format.DateTimeFormatter
       item {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           IconButton(onClick = { val first = month.minusMonths(1).atDay(1); monthText = YearMonth.from(first).toString(); onDate(first.toString()) }, enabled = enabled && month.year > 1900,
-            modifier = Modifier.semantics { contentDescription = "Mes anterior" }) { Text("‹", fontSize = 28.sp) }
+            modifier = Modifier.semantics { contentDescription = "Mes anterior" }) { Icon(WireIcons.Left, null) }
           TextButton(onClick = { picker = true }, enabled = enabled, modifier = Modifier.weight(1f)) { Text(month.format(DateTimeFormatter.ofPattern("MMMM yyyy", wireLocale))) }
           IconButton(onClick = { val first = month.plusMonths(1).atDay(1); monthText = YearMonth.from(first).toString(); onDate(first.toString()) }, enabled = enabled && month.year < 9998,
-            modifier = Modifier.semantics { contentDescription = "Mes siguiente" }) { Text("›", fontSize = 28.sp) }
+            modifier = Modifier.semantics { contentDescription = "Mes siguiente" }) { Icon(WireIcons.Right, null) }
         }
         Row(Modifier.fillMaxWidth()) { listOf("L", "M", "M", "J", "V", "S", "D").forEach { Text(it, modifier = Modifier.weight(1f).wrapContentWidth(), style = MaterialTheme.typography.labelSmall) } }
         val offset = month.atDay(1).dayOfWeek.value - 1
@@ -76,9 +83,11 @@ import java.time.format.DateTimeFormatter
                 val candidate = month.atDay(number)
                 val recorded = days.optJSONObject(candidate.toString())?.isNull("weightKg") == false
                 Surface(onClick = { onDate(candidate.toString()) }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics {
-                  contentDescription = "$candidate, ${if (recorded) "con peso registrado" else "sin peso registrado"}"
+                  contentDescription = "${wireLongDate(candidate)}, ${if (recorded) "con peso registrado" else "sin peso registrado"}"
                   this.selected = candidate == date
-                }, color = if (candidate == date) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.background) {
+                }, shape = MaterialTheme.shapes.small,
+                  contentColor = if (candidate == date) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                  color = if (candidate == date) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background) {
                   Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text(number.toString()); Text(if (recorded) "•" else " ", fontSize = 9.sp)
                   }
@@ -92,9 +101,9 @@ import java.time.format.DateTimeFormatter
       item {
         val day = days.optJSONObject(selected)
         val hasWeight = day != null && !day.isNull("weightKg")
-        OutlinedCard(Modifier.fillMaxWidth()) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
           Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(selected, style = MaterialTheme.typography.titleMedium)
+            Text(wireDate(date), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(if (hasWeight) "${wireNumber(day!!.optDouble("weightKg"))} kg" else "Sin peso registrado", style = MaterialTheme.typography.headlineSmall)
             Button(onClick = onWeight, enabled = enabled && date <= today) { Text(if (hasWeight) "Editar peso" else "Registrar peso") }
             if (date > today) Text("Elige hoy o una fecha anterior para registrar peso.", style = MaterialTheme.typography.bodySmall)
@@ -122,7 +131,7 @@ import java.time.format.DateTimeFormatter
   val allowed = date <= LocalDate.parse(data.optString("today")) && data.optBoolean("showWeight")
   AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-      Text(date.toString())
+      Text(wireDate(date))
       OutlinedTextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
       Text("De 1 a 500 kg · precisión de 0,1 kg", style = MaterialTheme.typography.bodySmall)
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
@@ -132,14 +141,14 @@ import java.time.format.DateTimeFormatter
     if (allowed && WireframeModel.weightGrams(quantity) != null) onAction("weight-save", mapOf("quantity" to quantity))
     else error = "Revisa el peso y la fecha."
   }, enabled = allowed) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-  if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso de $date?") },
+  if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso del ${wireDate(date)}?") },
     confirmButton = { TextButton(onClick = { onAction("weight-delete", emptyMap()) }) { Text("Eliminar") } },
     dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancelar") } })
 }
 
 @Composable private fun WireProfile(data: JSONObject, enabled: Boolean, onAction: (String, Map<String, Any>) -> Unit) {
   val profile = data.optJSONObject("profile") ?: JSONObject()
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Section)) {
     item { Text("Perfil", style = MaterialTheme.typography.headlineSmall) }
     item {
       Text(profile.optString("name"), style = MaterialTheme.typography.titleLarge)
@@ -155,11 +164,24 @@ import java.time.format.DateTimeFormatter
     }
     item { Text("Unidades", style = MaterialTheme.typography.titleMedium); Text("Peso: kg · Alimentos: g / ml · Energía: kcal", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
     item {
-      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = { onAction("library", emptyMap()) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Administrar biblioteca") }
-        OutlinedButton(onClick = { onAction("import", emptyMap()) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Importar MacroFactor") }
-        OutlinedButton(onClick = { onAction("settings", emptyMap()) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Cuenta y configuración") }
+      Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        WireToolRow("Administrar biblioteca", WireIcons.Diary, enabled) { onAction("library", emptyMap()) }
+        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
+        WireToolRow("Importar MacroFactor", WireIcons.Import, enabled) { onAction("import", emptyMap()) }
+        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
+        WireToolRow("Cuenta y configuración", WireIcons.Settings, enabled) { onAction("settings", emptyMap()) }
       }
     }
+  }
+}
+
+@Composable private fun WireToolRow(label: String, icon: ImageVector, enabled: Boolean, click: () -> Unit) {
+  val colors = MaterialTheme.colorScheme
+  val content = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f)
+  val secondary = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.38f)
+  Surface(onClick = click, enabled = enabled, color = Color.Transparent, modifier = Modifier.semantics { role = Role.Button }) {
+    ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) }, leadingContent = { Icon(icon, null, tint = secondary) },
+      trailingContent = { Icon(WireIcons.Right, null, Modifier.size(18.dp), tint = secondary) },
+      colors = ListItemDefaults.colors(containerColor = Color.Transparent))
   }
 }

@@ -1,12 +1,10 @@
 package expo.modules.balancedailylog
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,7 +35,8 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   val progress = day.optDouble("progress", 0.0)
   val ring = WireframeModel.ring(progress)
   Surface(onClick = click, enabled = enabled, color = if (chosen) colors.surfaceContainer else colors.background,
-    shape = RoundedCornerShape(10.dp), modifier = Modifier.weight(1f).heightIn(min = 64.dp).semantics {
+    contentColor = if (chosen) colors.primary else colors.onSurfaceVariant,
+    shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f).heightIn(min = 64.dp).semantics {
       selected = chosen
       contentDescription = "${date.format(DateTimeFormatter.ofPattern("EEEE d MMMM", wireLocale))}, ${day.optString("calories", "0")} kcal registradas, ${wireNumber(progress * 100)} por ciento de la meta"
     }) {
@@ -49,7 +48,8 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
           if (ring.first > 0) drawArc(colors.onSurfaceVariant, -90f, ring.first * 360, false, style = Stroke(2.dp.toPx()))
           if (ring.second > 0) drawArc(Color(0xFFB66A12), -90f, ring.second * 360, false, style = Stroke(2.dp.toPx()))
         }
-        Text(date.dayOfMonth.toString(), fontSize = 16.sp, fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
+        Text(date.dayOfMonth.toString(), fontSize = 16.sp, color = if (chosen) colors.primary else colors.onSurface,
+          fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
       }
     }
   }
@@ -65,15 +65,22 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   var detail by remember { mutableStateOf(false) }
   var editing by remember { mutableStateOf<JSONObject?>(null) }
   LaunchedEffect(enabled) { if (!enabled) { detail = false; editing = null } }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    item("date") { Text(date.format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", wireLocale)), style = MaterialTheme.typography.titleSmall) }
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = WireSpace.Page, vertical = WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
+    item("date") { Text(date.format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", wireLocale)), style = MaterialTheme.typography.titleSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant) }
     item("summary") {
-      OutlinedCard(onClick = { detail = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-          Text("${day.optString("calories", "0")} / ${day.optString("target")} kcal", fontWeight = FontWeight.SemiBold)
+      Card(onClick = { detail = true }, enabled = enabled, modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(day.optString("calories", "0"), fontWeight = FontWeight.SemiBold)
+            Text(" / ${day.optString("target")} kcal", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Icon(WireIcons.Right, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
           val macros = wireObjects(day.optJSONArray("macros")).take(3)
           Text(macros.mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")}/${m.optString("target")}" }.joinToString(" · ") + " g",
-            fontSize = 12.sp, modifier = Modifier.semantics { contentDescription = macros.joinToString { "${it.optString("name")}: ${it.optString("value")} de ${it.optString("target")} gramos" } })
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { contentDescription = macros.joinToString { "${it.optString("name")}: ${it.optString("value")} de ${it.optString("target")} gramos" } })
         }
       }
     }
@@ -90,22 +97,25 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
       val totals = JSONObject()
       listOf("calories", "protein", "carbs", "fat").forEach { key -> totals.put(key, group.sumOf { it.optJSONObject("totals")?.optDouble(key, 0.0) ?: 0.0 }) }
       item("hour-$hour") {
-        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(8.dp)) {
+        Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.medium) {
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (selected.isNotEmpty()) Checkbox(ids.all { it in selected }, { onGroup(ids) }, enabled = enabled)
             Surface(onClick = { opened = if (expanded) opened.split('|').filter { it != hour }.joinToString("|") else "$opened|$hour" }, enabled = enabled,
               color = Color.Transparent, modifier = Modifier.weight(1f).semantics { stateDescription = if (expanded) "Expandido" else "Plegado" }) {
               Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                  Text("${if (expanded) "⌄" else "›"} $hour · ${group.size}", fontWeight = FontWeight.Medium)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Icon(if (expanded) WireIcons.Down else WireIcons.Right, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                  Text(hour, fontWeight = FontWeight.Medium)
+                  Text("· ${group.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                   Text("${wireNumber(totals.optDouble("calories"))} kcal", fontSize = 12.sp)
                 }
-                Text(wireMacros(totals), fontSize = 11.sp, modifier = Modifier.align(Alignment.End))
+                Text(wireMacros(totals), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End))
               }
             }
             if (selected.isEmpty()) {
-              VerticalDivider(Modifier.height(44.dp))
-              IconButton(onClick = { onAdd(hour) }, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Agregar alimento a las $hour" }) { Text("+", fontSize = 26.sp) }
+              IconButton(onClick = { onAdd(hour) }, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Agregar alimento a las $hour" }) {
+                Icon(WireIcons.Add, null, tint = MaterialTheme.colorScheme.primary)
+              }
             }
           }
         }
@@ -113,15 +123,14 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
       if (expanded) items(group, key = { "food-${it.optString("id")}" }, contentType = { "food" }) { food ->
         val id = food.optString("id")
         val chosen = id in selected
-        Surface(color = if (chosen) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.background,
+        Surface(color = if (chosen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background,
+          shape = MaterialTheme.shapes.small,
           modifier = Modifier.fillMaxWidth().combinedClickable(enabled = enabled,
             onClick = { if (selected.isEmpty()) editing = food else onFood(id) },
             onLongClickLabel = "Seleccionar alimento", onLongClick = { onLongFood(id) })
             .semantics(mergeDescendants = true) { this.selected = chosen; contentDescription = "${food.optString("name")}, ${food.optString("portion")}, ${food.optString("time")}, ${food.optString("calories")} kcal, ${food.optString("macros")}" }) {
-          Row(Modifier.padding(vertical = 8.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+          Row(Modifier.padding(vertical = 8.dp, horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selected.isNotEmpty()) Checkbox(chosen, null, modifier = Modifier.size(32.dp))
-            Box(Modifier.size(28.dp).background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) { Text("◯", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
               Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(food.optString("name"), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -129,8 +138,8 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
               }
               Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(food.optString("portion"), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(food.optString("time"), fontSize = 10.sp)
-                Text(food.optString("macros"), fontSize = 10.sp, maxLines = 1)
+                Text(food.optString("time"), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(food.optString("macros"), fontSize = 10.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
               }
             }
           }
@@ -140,7 +149,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   }
   if (detail && enabled) ModalBottomSheet(onDismissRequest = { detail = false }) {
     LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-      item { Text("Nutrición · $date", style = MaterialTheme.typography.titleLarge) }
+      item { Text("Nutrición · ${wireDate(date)}", style = MaterialTheme.typography.titleLarge) }
       item { Text("${wireNumber(day.optDouble("progress", 0.0) * 100)}% de la meta de energía registrada", color = MaterialTheme.colorScheme.onSurfaceVariant) }
       items(wireObjects(day.optJSONArray("details"))) { field ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -164,7 +173,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   val portion = food.optJSONObject("portionSnapshot")
   AlertDialog(onDismissRequest = onDismiss, title = { Text(food.optString("name")) }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-      Text("$date · la información nutricional histórica se conserva", style = MaterialTheme.typography.bodySmall)
+      Text("${wireDate(date)} · la información nutricional histórica se conserva", style = MaterialTheme.typography.bodySmall)
       OutlinedTextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(mode == "canonical", { mode = "canonical"; quantity = FoodEntryModel.input(food.optDouble("canonicalQuantity")) }, label = { Text(food.optString("unit")) })

@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
@@ -35,17 +36,19 @@ import kotlin.math.abs
       if (if (body) !day.isNull("weightKg") else day.optBoolean("recorded")) date to day else null
     }.toList()
   }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
     item { Text("Resumen", style = MaterialTheme.typography.headlineSmall) }
     item {
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(!body, { body = false }, label = { Text("Alimentación") }, enabled = enabled)
-        FilterChip(body, { body = true }, label = { Text("Cuerpo") }, enabled = enabled)
+      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        SegmentedButton(selected = !body, onClick = { body = false }, shape = SegmentedButtonDefaults.itemShape(0, 2), label = { Text("Alimentación") }, enabled = enabled)
+        SegmentedButton(selected = body, onClick = { body = true }, shape = SegmentedButtonDefaults.itemShape(1, 2), label = { Text("Cuerpo") }, enabled = enabled)
       }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(7, 30, 90).forEach { n -> FilterChip(period == n, { period = n }, label = { Text("$n días") }, enabled = enabled) }
       }
-      OutlinedButton(onClick = { picker = true }, enabled = enabled) { Text("Hasta $end") }
+      TextButton(onClick = { picker = true }, enabled = enabled) {
+        Icon(WireIcons.Calendar, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Hasta ${wireDate(end)}")
+      }
     }
     if (body && !data.optBoolean("showWeight")) item { Text("Activa el seguimiento de peso en Perfil para consultar su evolución.") }
     else if (records.isEmpty()) item {
@@ -67,6 +70,7 @@ import kotlin.math.abs
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable private fun WirePlot(title: String, unit: String, records: List<Pair<LocalDate, JSONObject>>, start: LocalDate, end: LocalDate,
   keys: List<String>, labels: List<String>, bars: Boolean, body: Boolean, enabled: Boolean, onOpen: (LocalDate) -> Unit) {
   var selectedText by rememberSaveable { mutableStateOf(records.last().first.toString()) }
@@ -80,49 +84,81 @@ import kotlin.math.abs
   val top = maximum + if (body) 0.5 else maximum * 0.1
   val span = ChronoUnit.DAYS.between(start, end).coerceAtLeast(1).toFloat()
   val colors = MaterialTheme.colorScheme
-  val paints = listOf(colors.onSurface, colors.onSurfaceVariant, colors.outline)
-  OutlinedCard(Modifier.fillMaxWidth()) {
-    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-      Text(title, style = MaterialTheme.typography.titleMedium)
-      Text("${wireNumber(minimum)}–${wireNumber(top)} $unit", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-      Canvas(Modifier.fillMaxWidth().height(140.dp).semantics {
-        contentDescription = "$title, desde $start hasta $end. Usa los botones de fecha para consultar valores y abrir registros."
+  val paints = listOf(colors.primary, colors.onSurface, colors.onSurfaceVariant)
+  val ticks = listOf(top, (top + minimum) / 2, minimum)
+  fun pattern(series: Int) = if (series == 0) null else PathEffect.dashPathEffect(floatArrayOf(if (series == 1) 10f else 3f, 5f))
+  Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = colors.surface)) {
+    Column(Modifier.padding(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Medium)) {
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Text(unit, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+      }
+      if (keys.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        labels.forEachIndexed { series, label ->
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Canvas(Modifier.size(20.dp, 12.dp)) {
+              drawLine(paints[series], Offset(0f, size.height / 2), Offset(size.width, size.height / 2),
+                strokeWidth = 2.dp.toPx(), pathEffect = pattern(series))
+            }
+            Text(label, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+          }
+        }
+      }
+      Row(Modifier.fillMaxWidth().height(140.dp)) {
+        Column(Modifier.width(48.dp).fillMaxHeight().padding(end = 8.dp), verticalArrangement = Arrangement.SpaceBetween,
+          horizontalAlignment = Alignment.End) {
+          ticks.forEach { Text(wireNumber(it), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant) }
+        }
+      Canvas(Modifier.weight(1f).fillMaxHeight().semantics {
+        contentDescription = "$title, desde ${wireDate(start)} hasta ${wireDate(end)}. Usa los botones de fecha para consultar valores y abrir registros."
       }.pointerInput(records, start, end, enabled) {
         detectTapGestures { point ->
           if (enabled) {
-            val target = point.x / size.width * span
+            val target = point.x / size.width * (span + 1) - 0.5f
             selectedText = records.minBy { abs(ChronoUnit.DAYS.between(start, it.first).toFloat() - target) }.first.toString()
           }
         }
       }) {
         fun x(date: LocalDate) = (ChronoUnit.DAYS.between(start, date).toFloat() + 0.5f) / (span + 1) * size.width
-        fun y(value: Double) = size.height - (((value - minimum) / (top - minimum)).toFloat().coerceIn(0f, 1f) * (size.height - 6))
-        drawLine(colors.outlineVariant, Offset(0f, size.height), Offset(size.width, size.height))
+        val inset = 4.dp.toPx()
+        fun y(value: Double) = size.height - inset - (((value - minimum) / (top - minimum)).toFloat().coerceIn(0f, 1f) * (size.height - inset * 2))
+        ticks.forEach { tick -> drawLine(colors.outlineVariant, Offset(0f, y(tick)), Offset(size.width, y(tick)), strokeWidth = 0.5.dp.toPx()) }
+        drawLine(colors.primary.copy(alpha = 0.5f), Offset(x(selectedRecord.first), 0f), Offset(x(selectedRecord.first), size.height), 1.dp.toPx())
         records.forEachIndexed { i, record ->
           val v = values(record)
           keys.indices.forEach { series ->
             val point = Offset(x(record.first), y(v[series]))
-            if (bars) drawRect(paints[series], Offset(point.x - size.width / (span + 1) * .3f, point.y), Size((size.width / (span + 1) * .6f).coerceAtLeast(1f), size.height - point.y))
+            if (bars) drawRect(paints[series], Offset(point.x - size.width / (span + 1) * .3f, point.y), Size((size.width / (span + 1) * .6f).coerceAtLeast(1f), (y(minimum) - point.y).coerceAtLeast(0f)))
             else {
               if (i > 0 && (body || ChronoUnit.DAYS.between(records[i - 1].first, record.first) == 1L)) {
                 val previous = records[i - 1]
                 drawLine(paints[series], Offset(x(previous.first), y(values(previous)[series])), point, strokeWidth = 2.dp.toPx(),
-                  pathEffect = if (series == 0) null else PathEffect.dashPathEffect(floatArrayOf(if (series == 1) 10f else 3f, 5f)))
+                  pathEffect = pattern(series))
               }
-              drawCircle(paints[series], 2.dp.toPx(), point)
+              drawCircle(paints[series], (if (i == selected) 4.dp else 2.dp).toPx(), point)
             }
           }
         }
-        drawLine(colors.primary, Offset(x(selectedRecord.first), 0f), Offset(x(selectedRecord.first), size.height), 1.dp.toPx())
       }
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(start.toString(), style = MaterialTheme.typography.labelSmall); Text(end.toString(), style = MaterialTheme.typography.labelSmall) }
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        TextButton(onClick = { selectedText = records[selected - 1].first.toString() }, enabled = enabled && selected > 0) { Text("‹ Anterior") }
-        Text(selectedRecord.first.toString(), modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelMedium)
-        TextButton(onClick = { selectedText = records[selected + 1].first.toString() }, enabled = enabled && selected < records.lastIndex) { Text("Siguiente ›") }
       }
-      values(selectedRecord).forEachIndexed { i, n -> Text("${labels[i]}: ${wireNumber(n)} $unit", style = MaterialTheme.typography.bodySmall) }
-      OutlinedButton(onClick = { onOpen(selectedRecord.first) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Abrir registros de esa fecha") }
+      Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(wireDate(start), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        Text(wireDate(end), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+      }
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        IconButton(onClick = { selectedText = records[selected - 1].first.toString() }, enabled = enabled && selected > 0) { Icon(WireIcons.Left, "Fecha anterior") }
+        Text(wireDate(selectedRecord.first), style = MaterialTheme.typography.labelMedium)
+        IconButton(onClick = { selectedText = records[selected + 1].first.toString() }, enabled = enabled && selected < records.lastIndex) { Icon(WireIcons.Right, "Fecha siguiente") }
+      }
+      values(selectedRecord).forEachIndexed { i, n ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text(labels[i], style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+          Text("${wireNumber(n)} $unit", style = MaterialTheme.typography.bodySmall)
+        }
+      }
+      TextButton(onClick = { onOpen(selectedRecord.first) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+        Text("Abrir registros de esa fecha"); Spacer(Modifier.width(8.dp)); Icon(WireIcons.Right, null, Modifier.size(18.dp))
+      }
     }
   }
 }

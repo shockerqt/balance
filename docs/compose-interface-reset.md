@@ -40,8 +40,8 @@ snapshots. Optional absent nutrition remains absent; explicit zero is retained.
 The existing durable outbox completion, duplicate prevention and focus/account
 guards remain in place. No per-keystroke or per-frame JS event is introduced.
 
-The presentation uses a neutral dark palette derived from the grayscale
-wireframe, rather than its synthetic records or example goals. Real configured
+The presentation uses a custom dark slate palette and a restrained blue accent
+for native actions and selected states. Real configured
 goals and account identity are shown. Profile exposes the real weight preference
 and links to existing account/settings, catalog management and MacroFactor tools.
 Those secondary tools and login retain their existing screens; this task resets
@@ -52,7 +52,25 @@ Body circumferences require a separate backend/model/table/sync task and are
 not offered as fake local-only forms. Reminder scheduling, editable account names
 and unit conversion are not represented as supported preferences.
 
-Native source changes require a new APK: app/runtime1.4.0, Android versionCode5,
+## Visual refinement
+
+The user's review preserves the existing compact text sizes, including 13sp
+food names, 10sp row metadata and 9sp navigation labels; the proposed increase
+to 16sp was explicitly declined. The two-line summary and food rows remain.
+Native vectors replace text glyph icons with a consistent 24-unit grid and
+stroke, without another dependency. The repeated empty food thumbnail is removed
+to give names more width. Shared margins, shapes, tonal content surfaces and
+selected-state accents establish hierarchy without adding decorative motion.
+
+Food registration uses mutually exclusive segmented modes, a quieter date/time
+context and search icon; the repeated result-heading date is removed. Profile
+tools become grouped navigation rows with the previous 14sp label role. Display
+dates use Spanish day/month/year while persisted date IDs remain ISO. Plots have
+explicit legends that match stroke patterns, three scale references, distinct
+series tones and aligned inspected values. Missing-data behavior is unchanged.
+No per-frame bridge events, data owners or persistence formats are introduced.
+
+Native source changes require a new APK: app/runtime1.5.0, Android versionCode6,
 internal EAS preview/daily release. Do not promote delivery/daily-runtime.json or
 publish an OTA from this task. Use the declared delivery docs/workflows and
 EAS CLI21.7.0. Device acceptance must cover 375–390dp geometry, large text,
