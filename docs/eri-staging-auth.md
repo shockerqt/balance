@@ -312,3 +312,12 @@ until expiry. Guest and account namespaces keep their existing isolation; this
 flow does not import or merge guest data.
 
 The bundled Google G asset comes from the [Google Identity branding guidelines](https://developers.google.com/identity/branding-guidelines) ([original PNG](https://developers.google.com/static/identity/images/g-logo.png)).
+
+## Current Compose-compatible development build
+
+The integrated Android Compose screens require rebuilding the development client.
+Dev 1.5.2 (8), using the existing `eri-staging` profile, retains the exact
+verified HTTPS callback and staging-only endpoints. Dev 1.2.1 (4) lacks the local
+Compose module and cannot run the current Android routes. Daily and production
+versions, native baselines and delivery channels remain unchanged. The account
+choice feature is enabled only by the reviewed native Dev staging Metro flag.
