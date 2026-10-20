@@ -32,6 +32,7 @@ async function harness(options = {}) {
   if (options.session !== false) values.set(sessionState.SESSION_KEY, JSON.stringify({
     version: 2, accessToken: 'public-synthetic-access',
     refreshToken: options.refresh === false ? undefined : 'public-synthetic-refresh',
+    idToken: options.idToken,
     issuedAt: Math.floor(Date.now() / 1000), expiresIn: options.initialExpiresIn,
     lineage: 'synthetic-family', binding,
   }));
@@ -80,6 +81,7 @@ async function harness(options = {}) {
     API_BASE_URL: binding.apiBaseUrl, OIDC_ISSUER: binding.issuer,
     OIDC_MOBILE_CLIENT_ID: binding.clientId, OIDC_RESOURCE: binding.resource,
     OIDC_REDIRECT_URI: options.redirectUri,
+    OIDC_LOGOUT_ID_TOKEN_HINT: options.hintFlag ?? false,
     OIDC_SCOPES: ['openid','profile','email','offline_access'],
     OIDC_BROWSER_LOGOUT_URL: options.production ? undefined : options.endpoint ?? 'https://auth-staging.shocker.cl/logout',
   };
@@ -548,9 +550,9 @@ test('refresh replay distinguishes typed rejection, generic failure and accepted
 
 test('provider logout uses two fresh nonce-bound families, revokes A before browser, and leaves server proof pending', async () => {
   let h;
-  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,
+  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,hintFlag:true,
     promptAsync:async (_request,count)=>({type:'success',params:{code:`synthetic-code-${count}`,iss:stage.issuer}}),
-    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,issuedAt:Date.now()/1000}),
+    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,idToken:`secret-${count}-id`,issuedAt:Date.now()/1000}),
     refreshAsync:async (_token,count)=>{
       if (count<=2) return {accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000};
       throw Object.assign(new h.TokenError('secret rejection'),{code:'invalid_grant'});
@@ -564,6 +566,8 @@ test('provider logout uses two fresh nonce-bound families, revokes A before brow
     assert.equal(h.calls.browser.length,1);
     assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
     assert.equal(h.calls.revoke[0].token,'secret-rotated-refresh-1');
+    assert.equal(new URL(h.calls.browser[0].url).searchParams.get('id_token_hint'),'secret-1-id');
+    assert.equal(JSON.stringify(h.calls.revoke).includes('secret-1-id'),false);
     await h.auth.loginWithGoogle();
     assert.equal(await h.auth.logout(),'in_progress');
     assert.equal(await h.auth.enableGuestMode(),false);
@@ -604,9 +608,9 @@ test('provider logout uses two fresh nonce-bound families, revokes A before brow
 
 async function providerHarness(options={}) {
   let h;
-  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,
+  h=await harness({session:false,loggedOut:true,cryptoCount:64,cryptoBytes:true,hintFlag:true,
     promptAsync:async (_request,count)=>({type:'success',params:{code:`synthetic-code-${count}`,iss:stage.issuer}}),
-    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,issuedAt:Date.now()/1000}),
+    exchangeCodeAsync:async (_request,count)=>({accessToken:`secret-${count}-access`,refreshToken:`secret-${count}-refresh`,idToken:`secret-${count}-id`,issuedAt:Date.now()/1000}),
     refreshAsync:async (_token,count)=>{
       if (count<=2) return {accessToken:`secret-rotated-${count}`,refreshToken:`secret-rotated-refresh-${count}`,issuedAt:Date.now()/1000};
       throw Object.assign(new h.TokenError('secret rejection'),{code:'invalid_grant'});
@@ -1014,4 +1018,62 @@ test('callback route ignores URL credentials in staging and preserves legacy pro
     assert.equal(calls.some(([kind]) => kind === 'check'), production);
     assert.equal(calls.at(-1)[0], 'route');
   }
+});
+
+
+test('real hook native hint is captured before clear and requires explicit provider support', async () => {
+  for (const hintFlag of [undefined,false,true]) {
+    const h=await harness({idToken:'original-login-id',hintFlag});
+    try {
+      const {pending}=await h.start(auth=>auth.logout());
+      assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+      assert.equal(new URL(h.calls.browser[0].url).searchParams.get('id_token_hint'),hintFlag ? 'original-login-id' : null);
+      assert.equal(await h.finish(pending,{type:'cancel'}),'unconfirmed');
+      for (const output of [h.calls.revoke,h.calls.requests,h.calls.warnings]) assert.equal(JSON.stringify(output).includes('original-login-id'),false);
+    } finally {await h.close();}
+  }
+});
+
+test('real hook new native login retains original hint across refresh and replacement login cannot inherit it', async () => {
+  let count=0;
+  const h=await harness({idToken:'old-id',hintFlag:true,
+    promptAsync:async()=>({type:'success',params:{code:'synthetic',iss:stage.issuer}}),
+    exchangeCodeAsync:async()=>({accessToken:'new-access',refreshToken:'new-refresh',idToken:++count===1?'original-id':undefined,issuedAt:Date.now()/1000,expiresIn:120}),
+    refreshAsync:async()=>({accessToken:'rotated',refreshToken:'rotated-refresh',idToken:'ignored-refresh-id',issuedAt:Date.now()/1000,expiresIn:120})});
+  try {
+    await act(async()=>{await h.auth.loginWithGoogle();await flush();});
+    assert.equal(JSON.parse(h.values.get(sessionState.SESSION_KEY)).idToken,'original-id');
+    const timer=h.scheduled.find(timer=>timer.delay>=59000&&timer.delay<=61000);
+    assert(timer);
+    await act(async()=>{timer.callback();await flush();});
+    assert.equal(JSON.parse(h.values.get(sessionState.SESSION_KEY)).idToken,'original-id');
+    await act(async()=>{await h.auth.loginWithGoogle();await flush();});
+    assert.equal(JSON.parse(h.values.get(sessionState.SESSION_KEY)).idToken,undefined);
+  } finally {await h.close();}
+});
+
+
+test('real hook web login and hydration never retain an ID token', async () => {
+  const h=await harness({platform:'web',idToken:'native-only-id',hintFlag:true,
+    promptAsync:async()=>({type:'success',params:{code:'synthetic',iss:stage.issuer}}),
+    exchangeCodeAsync:async()=>({accessToken:'web-access',refreshToken:'web-refresh',idToken:'provider-web-id',issuedAt:Date.now()/1000})});
+  try {
+    assert.equal(JSON.parse(h.values.get(sessionState.SESSION_KEY)).idToken,undefined);
+    await act(async()=>{await h.auth.loginWithGoogle();await flush();});
+    const stored=JSON.parse(h.values.get(sessionState.SESSION_KEY));
+    assert.equal(stored.idToken,undefined);
+    assert.equal(stored.refreshToken,undefined);
+    const {pending}=await h.start(auth=>auth.logout());
+    assert.equal(await pending,'unconfirmed');
+    assert.equal(h.calls.browser.length,0);
+  } finally {await h.close();}
+});
+
+test('real hook malformed hint cannot hydrate a session', async () => {
+  const h=await harness({idToken:{invalid:true},hintFlag:true});
+  try {
+    assert.equal(h.auth.user,null);
+    assert.equal(h.auth.isAuthenticated,false);
+    assert.equal(h.calls.requests.length,0);
+  } finally {await h.close();}
 });

@@ -216,7 +216,20 @@ EXPO_PUBLIC_OIDC_BROWSER_LOGOUT_URL=https://auth-staging.shocker.cl/logout
 ```
 
 This is Eri's reviewed provider-local confirmation endpoint, **not** an advertised
-OIDC `end_session_endpoint`; no endpoint discovery or `id_token_hint` is invented.
+OIDC `end_session_endpoint`; the endpoint remains explicitly configured.
+Native login retains its original opaque ID token (at most 2048 characters) in
+SecureStore and preserves it across refresh. New logins cannot inherit another
+account's hint. Web storage, API/revocation credentials, sync and diagnostic
+results never receive it. Only this exact native staging logout URL can include
+`id_token_hint`, and only with `EXPO_PUBLIC_OIDC_LOGOUT_ID_TOKEN_HINT=1`.
+This public flag defaults off and must remain off until the reviewed Eri release
+supporting session-bound hints is activated; older Eri rejects the parameter.
+Missing hints retain interactive confirmation. Eri validates the signed hint
+against the active browser session; Balance never interprets claims as authority.
+The A/B diagnostic uses A's original hint in memory, independent random state,
+and unchanged provider proof, even after A's refresh family is revoked.
+This change is JavaScript-only and needs no new native APK or configuration;
+the currently compatible development APK can receive it through Metro.
 The only permitted context is the exact staging issuer/client/API with native
 Balance Dev scheme, returning exactly `balance-dev://logout-callback`. Infrastructure
 must separately register that URI in `balance-mobile-staging.post_logout_redirects`

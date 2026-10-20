@@ -723,3 +723,28 @@ test('only development declares the exact verified Android callback', () => {
     }
   } finally { if (previous === undefined) delete process.env.APP_VARIANT; else process.env.APP_VARIANT = previous; }
 });
+
+
+test('logout hint is bounded, native-only, fails closed on malformed hydration, and stays with original refresh lineage', async () => {
+  const { browserLogoutRequest }=await import('../src/services/auth/session-state.ts');
+  const native={...session,idToken:'original-id',lineage:'original'};
+  const record=sessionWritePlan(native,false)[0].value;
+  assert.equal(resolveStoredSession(record,null,false).idToken,native.idToken);
+  assert.equal(resolveStoredSession(record,null,true).idToken,undefined);
+  assert.equal(JSON.parse(sessionWritePlan(native,true)[0].value).idToken,undefined);
+  assert.equal(resolveStoredSession(null,'legacy-access',false).idToken,undefined);
+  assert.equal(mergeRefreshedSession(native,{accessToken:'rotated',issuedAt:2000,idToken:'replacement'}).idToken,native.idToken);
+  assert.equal(mergeRefreshedSession(native,{accessToken:'rotated',issuedAt:2000},true).idToken,undefined);
+  for(const idToken of [null,42,{},'', ' ', ' padded','x'.repeat(2049)]) {
+    const malformed=JSON.stringify({...native,idToken});
+    assert.equal(parseStoredSession(malformed),null);
+    assert.equal(resolveStoredSession(malformed,'older-legacy-token',false),null);
+  }
+  const binding={issuer:'https://auth-staging.shocker.cl',clientId:'balance-mobile-staging',apiBaseUrl:'https://balance-staging.shocker.cl/api'};
+  const request=(endpoint='https://auth-staging.shocker.cl/logout',platform='android',hint='opaque.original')=>browserLogoutRequest(binding,endpoint,'balance-dev',platform,'balance-dev://logout-callback','a'.repeat(64),hint);
+  assert.equal(new URL(request()).searchParams.get('id_token_hint'),'opaque.original');
+  assert.equal(new URL(request(undefined,undefined,'x'.repeat(2048))).searchParams.get('id_token_hint').length,2048);
+  for(const endpoint of ['https://evil.invalid/logout','https://auth-staging.shocker.cl/logout?x=1','https://auth-staging.shocker.cl/revoke']) assert.throws(()=>request(endpoint));
+  assert.throws(()=>request(undefined,'web'));
+  assert.throws(()=>request(undefined,undefined,''));
+});

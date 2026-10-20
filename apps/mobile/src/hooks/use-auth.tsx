@@ -7,7 +7,7 @@ import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL, OIDC_REDIRECT_URI } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL, OIDC_LOGOUT_ID_TOKEN_HINT, OIDC_REDIRECT_URI } from '@/services/config';
 import { storage } from '@/services/storage';
 import {
   assertAuthorizationResponseIssuer,
@@ -16,6 +16,7 @@ import {
   awaitCurrentAuthStep,
   authDataNamespace,
   browserLogoutRequest,
+  isLogoutIdToken,
   BrowserLogoutStatus,
   isValidLogoutReturn,
   retryUnauthorizedRequest,
@@ -91,6 +92,7 @@ const fromTokenResponse = (response: AuthSession.TokenResponse, previous?: Store
     previous ?? {
       version: 2,
       accessToken: response.accessToken,
+      idToken: Platform.OS !== 'web' && isLogoutIdToken(response.idToken) ? response.idToken : undefined,
       issuedAt: response.issuedAt,
       lineage: nextSessionLineage(),
       binding: { ...AUTH_BINDING },
@@ -211,7 +213,7 @@ const revokeRefresh = async (refreshToken: string, discovery?: Discovery): Promi
   } catch { return false; }
 };
 
-const openProviderLogout = async (isCurrent: () => boolean, stateOverride?: string): Promise<BrowserLogoutStatus> => {
+const openProviderLogout = async (isCurrent: () => boolean, stateOverride?: string, idToken?: string): Promise<BrowserLogoutStatus> => {
   if (!OIDC_BROWSER_LOGOUT_URL) return 'not_requested';
   try {
     const schemeValue = Constants.expoConfig?.scheme;
@@ -220,7 +222,7 @@ const openProviderLogout = async (isCurrent: () => boolean, stateOverride?: stri
     const state = stateOverride ?? toHex(await Crypto.getRandomBytesAsync(32));
     if (!isCurrent()) return 'unconfirmed';
     const url = browserLogoutRequest(AUTH_BINDING, OIDC_BROWSER_LOGOUT_URL,
-      typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state);
+      typeof scheme === 'string' ? scheme : '', Platform.OS, redirect, state, Platform.OS === 'web' || !OIDC_LOGOUT_ID_TOKEN_HINT ? undefined : idToken);
     const result = await WebBrowser.openAuthSessionAsync(url, redirect, { preferEphemeralSession: false });
     return isCurrent() && result.type === 'success' && isValidLogoutReturn(result.url, redirect, state)
       ? 'confirmed' : 'unconfirmed';
@@ -648,6 +650,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const active = sessionForAuthContext(sessionRef.current, AUTH_BINDING);
     const refreshToken = active?.refreshToken;
+    const idToken = active?.idToken;
     setIsGuest(false);
     // Clear memory/credentials and disconnect sockets before the first await.
     const clearing = clearAuthenticatedState();
@@ -670,7 +673,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // An in-progress login was invalidated above, but its browser still owns
       // the cookie context. Never schedule logout behind that login.
       if (!owner) return 'unconfirmed';
-      return await openProviderLogout(isCurrent);
+      return await openProviderLogout(isCurrent, undefined, idToken);
     } catch {
       return 'unconfirmed';
     } finally {
@@ -920,7 +923,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         finally { finishRevoke(); }
         if (!current()) return result(expired ? 'expired' : 'transport');
         if (!aRevoked) return result('transport');
-        const browserStatus = await openProviderLogout(current, logoutState);
+        const browserStatus = await openProviderLogout(current, logoutState, tokenA.idToken);
         if (!current()) return result(expired ? 'expired' : 'transport');
         if (browserStatus !== 'confirmed') return result('cancelled');
 

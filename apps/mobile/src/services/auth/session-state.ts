@@ -135,6 +135,8 @@ export interface StoredAuthSession {
   version: 2;
   accessToken: string;
   refreshToken?: string;
+  // Opaque original login token, native SecureStore only; solely an OP logout hint.
+  idToken?: string;
   expiresIn?: number;
   issuedAt: number;
   scope?: string;
@@ -168,6 +170,9 @@ const isStoredUser = (value: unknown): value is StoredUserProfile => {
   );
 };
 
+export const isLogoutIdToken = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= 2048 && value.trim() === value;
+
 export const parseStoredSession = (
   value: string | null,
 ): StoredAuthSession | null => {
@@ -182,6 +187,7 @@ export const parseStoredSession = (
       !isPositiveNumber(candidate.issuedAt) ||
       (candidate.refreshToken !== undefined &&
         typeof candidate.refreshToken !== "string") ||
+      (candidate.idToken !== undefined && !isLogoutIdToken(candidate.idToken)) ||
       (candidate.expiresIn !== undefined &&
         !isPositiveNumber(candidate.expiresIn)) ||
       (candidate.lineage !== undefined &&
@@ -298,14 +304,20 @@ export const mergeRefreshedSession = (
   previous: StoredAuthSession,
   refreshed: Omit<StoredAuthSession, "version" | "user" | "lineage" | "binding">,
   web = false,
-): StoredAuthSession => ({
-  version: 2,
-  ...refreshed,
-  refreshToken: web ? undefined : refreshed.refreshToken ?? previous.refreshToken,
-  user: previous.user,
-  lineage: previous.lineage,
-  ...(previous.binding ? { binding: previous.binding } : {}),
-});
+): StoredAuthSession => {
+  // A provider returning another ID token cannot switch the original hint.
+  const { idToken: _ignoredRefreshIdToken, ...credentials } = refreshed;
+  return {
+    version: 2,
+    ...credentials,
+    refreshToken: web ? undefined : refreshed.refreshToken ?? previous.refreshToken,
+    // Refresh cannot replace the original login/session hint.
+    ...(web || previous.idToken === undefined ? {} : { idToken: previous.idToken }),
+    user: previous.user,
+    lineage: previous.lineage,
+    ...(previous.binding ? { binding: previous.binding } : {}),
+  };
+};
 
 // SecureStore only accepts alphanumeric keys plus `.`, `-` and `_`.
 export const SESSION_KEY = "balance.auth.session.v2";
@@ -336,7 +348,7 @@ export const sessionWritePlan = (
       // falling back to a surviving v1 token; a later login replaces it.
       value: session
         ? JSON.stringify(
-            web ? { ...session, refreshToken: undefined } : session,
+            web ? { ...session, refreshToken: undefined, idToken: undefined } : session,
           )
         : LOGGED_OUT_MARKER,
     },
@@ -359,6 +371,7 @@ export const resolveStoredSession = (
     try {
       const value = JSON.parse(record);
       if (value?.binding !== undefined && !isSessionBinding(value.binding)) return null;
+      if (value?.idToken !== undefined && !isLogoutIdToken(value.idToken)) return null;
     } catch { return null; }
   }
   const saved = parseStoredSession(record);
@@ -366,6 +379,7 @@ export const resolveStoredSession = (
     return {
       ...saved,
       refreshToken: web ? undefined : saved.refreshToken,
+      idToken: web ? undefined : saved.idToken,
       lineage: saved.lineage ?? nextSessionLineage(),
     };
 
@@ -398,7 +412,7 @@ export type BrowserLogoutStatus = "confirmed" | "unconfirmed" | "not_requested" 
 
 export const browserLogoutRequest = (
   binding: SessionBinding, endpoint: string, scheme: string, platform: string,
-  redirect: string, state: string,
+  redirect: string, state: string, idToken?: string,
 ): string => {
   if (endpoint !== "https://auth-staging.shocker.cl/logout" ||
       binding.issuer !== "https://auth-staging.shocker.cl" ||
@@ -412,6 +426,10 @@ export const browserLogoutRequest = (
   url.searchParams.set("client_id", binding.clientId);
   url.searchParams.set("post_logout_redirect_uri", redirect);
   url.searchParams.set("state", state);
+  if (idToken !== undefined) {
+    if (!isLogoutIdToken(idToken)) throw new Error("Invalid logout hint");
+    url.searchParams.set("id_token_hint", idToken);
+  }
   return url.toString();
 };
 
