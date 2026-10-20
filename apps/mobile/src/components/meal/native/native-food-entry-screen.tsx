@@ -12,6 +12,7 @@ import { chileDateParts, todayId } from '@/lib/dates';
 import { isDateId } from '@/services/sync/types';
 import { logsDateStore } from '@/hooks/use-logs-date';
 import { acceptFoodEntryEvent, createFoodEntry, nutrientFields } from './food-entry-contract';
+import { interfaceColors } from './interface-contract';
 
 export default function NativeFoodEntryScreen() {
   const { user, isGuest } = useAuth();
@@ -57,10 +58,10 @@ function FoodEntrySession() {
       time: typeof params.time === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(params.time) ? params.time : `${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}`,
     };
   });
-  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: theme.colors,
+  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: interfaceColors,
     templates: library.templateDocuments.filter(t => !t._deleted), ready: library.isLibraryReady, nutrientFields,
   }), [session, documentId, initial, theme.colors, library.templateDocuments, library.isLibraryReady]);
-  return <Screen edges={['top', 'bottom']}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
+  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: interfaceColors.background }}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
     onAction={async ({ nativeEvent: event }) => {
       if (!live.current.active || live.current.saving || live.current.saved || !acceptFoodEntryEvent(event, live.current.session, live.current.sequence)) return;
       live.current.sequence = event.sequence;

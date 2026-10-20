@@ -52,6 +52,9 @@ export function createFoodEntry(input: unknown, templates: MealTemplateDoc[], id
     name = p.name.trim();
     if (p.unit !== 'g' && p.unit !== 'ml') return fail('Elige gramos o mililitros.');
     unit = p.unit;
+    if (p.labelBasis !== undefined && p.labelBasis !== 'per100' && p.labelBasis !== 'portion') return fail('Elige la base de la etiqueta.');
+    const labelSize = p.labelBasis === 'portion' ? decimal(p.labelSize, true) : 100;
+    if (labelSize === null) return fail('Indica el tamaño de la porción de la etiqueta.');
     if (!p.nutrients || typeof p.nutrients !== 'object' || Array.isArray(p.nutrients)) return fail('Completa la información por 100.');
     const values = p.nutrients as Record<string, unknown>;
     const allowed = new Set(nutrientFields.map(v => v.key));
@@ -65,7 +68,9 @@ export function createFoodEntry(input: unknown, templates: MealTemplateDoc[], id
       }
       const n = decimal(raw);
       if (n === null) return fail(`Revisa ${field.label.toLowerCase()}: usa un número mayor o igual a cero.`);
-      parsed[field.key] = n;
+      const per100 = labelSize === 100 ? n : n / labelSize * 100;
+      if (!Number.isFinite(per100)) return fail('La conversión de la etiqueta es demasiado grande.');
+      parsed[field.key] = per100;
     }
     const { calories, protein, carbs, fat, fiber, sodiumMg, cholesterolMg, ...extendedNutrition } = parsed;
     nutrition = { calories, protein, carbs, fat,

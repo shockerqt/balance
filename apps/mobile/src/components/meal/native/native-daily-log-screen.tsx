@@ -10,7 +10,8 @@ import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { useTheme } from '@/theme';
 import { currentTimeString, todayId } from '@/lib/dates';
-import { acceptDailyEvent, projectDays } from './daily-log-contract';
+import { acceptDailyEvent } from './daily-log-contract';
+import { acceptInterfaceEvent, interfaceColors, projectInterfaceDays, weightGrams } from './interface-contract';
 
 export default function NativeDailyLogScreen() {
   const { user, isGuest } = useAuth();
@@ -20,6 +21,7 @@ export default function NativeDailyLogScreen() {
 let sessionCounter = 0;
 const freshSession = () => `daily-${Date.now()}-${++sessionCounter}`;
 function DailyLogSession() {
+  const { user, isGuest } = useAuth();
   const router = useRouter();
   const meals = useMealStore();
   const weight = useWeightStore();
@@ -55,25 +57,47 @@ function DailyLogSession() {
     return () => { live.current.alive = false; unsubscribe(); subscription.remove(); clearInterval(timer); };
   }, []);
   const data = useMemo(() => JSON.stringify({
-    session, today, colors: theme.colors,
+    session, today, colors: interfaceColors,
+    profile: { name: user?.name ?? (isGuest ? 'Invitado' : 'Cuenta'), guest: isGuest },
+    preferencesError: preferences.syncError,
     showWeight: preferences.preferencesReady && preferences.weightTrackingEnabled,
     weightError: weight.syncError,
-    days: mounted ? projectDays(meals.dayLogs, weight.weightsByDate) : {},
-    empty: projectDays({ [today]: emptyDayLog(today) }, {})[today],
-  }), [session, today, theme.colors, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, mounted]);
+    preferencesReady: preferences.preferencesReady,
+    days: mounted ? projectInterfaceDays(meals.dayLogs, weight.weightsByDate, meals.mealDocuments) : {},
+    empty: projectInterfaceDays({ [today]: emptyDayLog(today) }, {}, [])[today],
+  }), [session, today, user?.name, isGuest, preferences.syncError, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, meals.mealDocuments, mounted]);
   const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision, session });
-  return <Screen><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
+  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: interfaceColors.background }}><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
-      if (!live.current.alive || !live.current.focused || !mounted || !acceptDailyEvent(e, live.current.session, live.current.sequence, logsDateStore.get(), meals.dayLogs, live.current.commandRevision)) return;
+      if (!live.current.alive || !live.current.focused || !mounted) return;
+      const common = [live.current.session, live.current.sequence] as const;
+      const legacy = acceptDailyEvent(e, ...common, logsDateStore.get(), meals.dayLogs, live.current.commandRevision);
+      if (!legacy && !acceptInterfaceEvent(e, ...common, live.current.commandRevision, todayId(), meals.mealDocuments)) return;
       live.current.sequence = e.sequence;
       if (e.action === 'date') {
         live.current.nativeDate = e.date;
         live.current.applyingNative = true;
         try { logsDateStore.set(e.date); } finally { live.current.applyingNative = false; }
-      } else if (e.action === 'add') router.push({ pathname: '/food-search', params: { dateId: e.date, time: e.time ?? currentTimeString() } });
+      } else if (e.action === 'add' || e.action === 'register') {
+        // A calendar selection may be ahead of the hidden pager. Commit that
+        // explicit navigation before blur, including when the draft is cancelled.
+        if (e.action === 'register') logsDateStore.set(e.date);
+        router.push({ pathname: '/food-search', params: { dateId: e.date, time: e.time ?? currentTimeString() } });
+      }
       else if (e.action === 'edit') router.push({ pathname: '/food-edit', params: { dateId: e.date, foodId: e.ids![0] } });
       else if (e.action === 'weight' && preferences.weightTrackingEnabled && e.date <= todayId()) router.push({ pathname: '/weight-entry', params: { dateId: e.date } });
       else if (e.action === 'delete') meals.deleteMultipleFoods(e.date, e.ids!);
       else if (e.action === 'move') meals.moveMultipleFoodsTime(e.date, e.ids!, e.time!);
+      else if (e.action === 'weight-save' && preferences.preferencesReady && preferences.weightTrackingEnabled) weight.saveWeight(e.date, weightGrams(e.input?.quantity)!);
+      else if (e.action === 'weight-delete' && preferences.preferencesReady && preferences.weightTrackingEnabled) weight.deleteWeight(e.date);
+      else if (e.action === 'preference' && preferences.preferencesReady) preferences.setWeightTrackingEnabled(e.input!.enabled!);
+      else if (e.action === 'edit-save') {
+        const doc = meals.mealDocuments.find(d => d.id === e.ids![0] && !d._deleted)!;
+        const unit = e.input!.mode === 'portion' ? ` ${doc.entry.portionSnapshot!.name}` : doc.nutritionSnapshot.canonicalUnit;
+        meals.updateFood(e.date, doc.id, { portion: `${e.input!.quantity!.replace(',', '.')}${unit}`, time: e.time });
+      }
+      else if (e.action === 'library') router.push('/(tabs)/library');
+      else if (e.action === 'settings') router.push('/settings');
+      else if (e.action === 'import') router.push('/macro-factor-import');
     }} /></Screen>;
 }

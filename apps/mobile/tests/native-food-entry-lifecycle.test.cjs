@@ -22,6 +22,7 @@ const stub={
  '@/services/sync/types':{isDateId:v=>/^\d{4}-\d{2}-\d{2}$/.test(v)},
  '@/hooks/use-logs-date':{logsDateStore:{set:v=>selected.push(v)}},
  './food-entry-contract':{nutrientFields:[],acceptFoodEntryEvent:(e,s,n)=>e.session===s&&e.sequence>n,createFoodEntry:(input,templates,id)=>{if(input.fail)throw new Error('Invalid input');return{id,...input};}},
+ './interface-contract':{interfaceColors:colors},
 };
 const m=new Module(filename,module);m.filename=filename;m.require=n=>{if(n in stub)return stub[n];throw new Error('Unexpected dependency '+n);};
 m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,filename);

@@ -32,6 +32,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.time.LocalDate
 import java.util.Locale
+import java.text.Normalizer
 
 class BalanceFoodEntryView(context: Context, appContext: AppContext) : ExpoComposeView<ComposeProps>(context, appContext, withHostingView = true) {
   private val onAction by EventDispatcher()
@@ -50,13 +51,7 @@ class BalanceFoodEntryView(context: Context, appContext: AppContext) : ExpoCompo
     val snapshot = data.value
     val renderSession = snapshot.optString("session")
     val colors = snapshot.optJSONObject("colors") ?: JSONObject()
-    fun color(name: String, fallback: Long): Color = runCatching { Color(android.graphics.Color.parseColor(colors.getString(name))) }.getOrDefault(Color(fallback))
-    MaterialTheme(colorScheme = darkColorScheme(
-      background = color("background", 0xFF12160F), surface = color("surface", 0xFF1A1F16),
-      primary = color("primary", 0xFFEEF2E6), onPrimary = color("onPrimary", 0xFF12160F),
-      onSurface = color("text", 0xFFEEF2E6), onSurfaceVariant = color("textSecondary", 0xFF9AA392),
-      surfaceContainer = color("surfaceRaised", 0xFF232A1E), outlineVariant = color("border", 0xFF333C2C), error = color("danger", 0xFFFF6B6B)
-    )) {
+    WireframeTheme(colors) {
       // Focus nonces invalidate callbacks; the route draft survives focus changes.
       key(snapshot.optString("draftId", renderSession)) {
         FoodEntryScreen(snapshot, status.value, active.value) { action, input ->
@@ -79,6 +74,10 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   val fields = remember(data) { objects(data.optJSONArray("nutrientFields")) }
   var query by rememberSaveable { mutableStateOf("") }
   var editing by rememberSaveable { mutableStateOf(false) }
+  var filter by rememberSaveable { mutableStateOf("all") }
+  var labelBasis by rememberSaveable { mutableStateOf("per100") }
+  var labelSize by rememberSaveable { mutableStateOf("100") }
+  var discardToLabel by remember { mutableStateOf(false) }
   // Store the selected revision with the draft. A later catalogue refresh must
   // not silently change the historical snapshot being reviewed.
   var chosenJson by rememberSaveable { mutableStateOf("") }
@@ -91,6 +90,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   val nutrients = remember(nutrientsJson) { JSONObject(nutrientsJson) }
   var date by rememberSaveable { mutableStateOf(data.optString("date")) }
   var time by rememberSaveable { mutableStateOf(data.optString("time")) }
+  val dateLabel = DailyLogDates.parse(date)?.let(::wireDate) ?: "Elegir fecha"
   var dirty by rememberSaveable { mutableStateOf(false) }
   var localError by remember { mutableStateOf("") }
   var dismissedError by remember { mutableStateOf("") }
@@ -111,12 +111,21 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   val portions = remember(chosenJson) { objects(details?.optJSONArray("portions")) }
   val portion = portions.firstOrNull { it.optString("id") == portionId }
   val canonical = FoodEntryModel.canonical(quantity, portion?.optDouble("portionQuantity") ?: 1.0, portion?.optDouble("canonicalQuantity") ?: 1.0)
-  val nutrition = details?.optJSONObject("nutritionPer100") ?: nutrients
-  val results = remember(templates, query) {
-    val q = query.trim().lowercase(Locale.ROOT)
-    templates.filter { q.isEmpty() || it.optString("name").lowercase(Locale.ROOT).contains(q) }
+  val labelFactor = if (labelBasis == "portion") FoodEntryModel.decimal(labelSize)?.takeIf { it > 0 }?.let { 100 / it }?.takeIf { it.isFinite() } else 1.0
+  val nutrition = details?.optJSONObject("nutritionPer100") ?: JSONObject().apply {
+    fields.forEach { field -> FoodEntryModel.decimal(nutrients.optString(field.optString("key")))?.let { n -> labelFactor?.let { factor -> (n * factor).takeIf { it.isFinite() }?.let { put(field.optString("key"), it) } } } }
   }
-  fun leave() { discardToSearch = false; if (!saving) { if (dirty) discard = true else emit("cancel", null) } }
+  val results = remember(templates, query, filter) {
+    fun normalize(text: String) = Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase(Locale.ROOT)
+    val q = normalize(query.trim())
+    templates.filter { (q.isEmpty() || normalize(it.optString("name")).contains(q)) &&
+      (filter == "all" || (filter == "official") == it.optBoolean("isOfficial")) }
+  }
+  fun labels() {
+    chosenJson = ""; name = query.trim(); unit = "g"; quantity = "100"; nutrientsJson = "{}"; portionId = ""
+    editing = true; dirty = false; labelBasis = "per100"; labelSize = "100"; localError = ""
+  }
+  fun leave() { discardToLabel = false; discardToSearch = false; if (!saving) { if (dirty) discard = true else emit("cancel", null) } }
   BackHandler(active) { leave() }
   fun pick(food: JSONObject) {
     chosenJson = food.toString(); name = food.optString("name")
@@ -128,6 +137,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     focus.clearFocus()
     if (!FoodEntryModel.validDateTime(date, time) || canonical == null) { localError = "Revisa la cantidad, la fecha y la hora."; return }
     if (name.trim().isEmpty() || name.codePointCount(0, name.length) > 160) { localError = "Escribe un nombre de hasta 160 caracteres."; return }
+    if (chosen == null && labelFactor == null) { localError = "Indica cuántos $unit contiene la porción de la etiqueta."; return }
     if (chosen == null && fields.any { field ->
       val value = nutrients.optString(field.optString("key"))
       (field.optBoolean("required") || value.isNotBlank()) && FoodEntryModel.decimal(value) == null
@@ -135,15 +145,39 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     val input = JSONObject().put("date", date).put("time", time).put("quantity", quantity)
       .put("templateId", chosen?.optString("id") ?: "").put("templateRevision", chosen?.optLong("updatedAt") ?: 0)
       .put("portionId", portionId).put("name", name).put("unit", unit).put("nutrients", nutrients)
+      .put("labelBasis", labelBasis).put("labelSize", labelSize)
     pending = true; localError = ""; emit("save", input)
   }
   Scaffold(modifier = Modifier.fillMaxSize().imePadding(), containerColor = MaterialTheme.colorScheme.background,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
-    topBar = { TopAppBar(title = { Text(if (editing) "Registrar alimento" else "Elegir alimento") },
-      navigationIcon = { TextButton(onClick = { leave() }, enabled = enabled, modifier = Modifier.semantics { contentDescription = "Volver al registro diario" }) { Text("‹", fontSize = 32.sp) } }) },
+    topBar = { Column {
+      TopAppBar(title = { Text("Agregar alimento") },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+        navigationIcon = { IconButton(onClick = { leave() }, enabled = enabled,
+          modifier = Modifier.semantics { contentDescription = "Volver al registro diario" }) { Icon(WireIcons.Back, null) } })
+      Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page), horizontalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
+        TextButton(onClick = { calendar = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Fecha del consumo: $dateLabel" }) {
+          Icon(WireIcons.Calendar, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+          Text(dateLabel, maxLines = 1)
+        }
+        TextButton(onClick = { clock = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Hora del consumo en Chile: $time" }) {
+          Icon(WireIcons.Clock, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(time)
+        }
+      }
+      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = 4.dp)) {
+        SegmentedButton(selected = !(editing && chosen == null), onClick = {
+          if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = "" }
+        }, shape = SegmentedButtonDefaults.itemShape(0, 2), label = { Text("Bibliotecas") }, enabled = enabled)
+        SegmentedButton(selected = editing && chosen == null, onClick = {
+          if (!(editing && chosen == null)) {
+            if (dirty) { discardToLabel = true; discardToSearch = false; discard = true } else labels()
+          }
+        }, shape = SegmentedButtonDefaults.itemShape(1, 2), label = { Text("Etiquetas") }, enabled = enabled)
+      }
+    } },
     bottomBar = {
       if (editing) Surface(color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
           val error = localError.ifEmpty { status.optString("error").takeUnless { it == dismissedError } ?: "" }
           if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.semantics { contentDescription = "Error: $error" })
@@ -155,22 +189,27 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       }
     }) { padding ->
     if (!editing) {
-      LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
         item("search") {
           OutlinedTextField(value = query, onValueChange = { query = it }, enabled = enabled, singleLine = true,
-            label = { Text("Buscar en tus alimentos") }, modifier = Modifier.fillMaxWidth())
+            label = { Text("Buscar en tus alimentos") }, leadingIcon = { Icon(WireIcons.Search, null) }, modifier = Modifier.fillMaxWidth())
         }
-        item("manual") { OutlinedButton(onClick = { chosenJson = ""; name = query.trim(); unit = "g"; quantity = "100"; nutrientsJson = "{}"; editing = true; dirty = query.isNotBlank() }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("+ Registrar sin biblioteca") } }
+        item("filter") {
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("all" to "Todas", "personal" to "Mi biblioteca", "official" to "Oficial").forEach { (key, label) ->
+              FilterChip(filter == key, { filter = key }, label = { Text(label) }, enabled = enabled)
+            }
+          }
+        }
         item("heading") {
-          Text(if (query.isBlank()) "Tu biblioteca" else "${results.size} resultados", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium)
-          Text("${data.optString("date")} · ${data.optString("time")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text(if (query.isBlank()) "Tu biblioteca" else "${results.size} resultados", Modifier.padding(top = WireSpace.Small), style = MaterialTheme.typography.titleMedium)
         }
         if (!data.optBoolean("ready")) item("loading") { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Cargando alimentos…") }
         else if (results.isEmpty()) item("empty") { Text("No hay alimentos que coincidan. Puedes registrar uno sin guardarlo en la biblioteca.", Modifier.padding(vertical = 24.dp)) }
         items(results, key = { it.optString("id") }, contentType = { "food" }) { food ->
           val d = food.getJSONObject("details"); val n = d.getJSONObject("nutritionPer100")
           Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth().clickable(enabled) { pick(food) }) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.padding(WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(4.dp)) {
               Text(food.optString("name"), style = MaterialTheme.typography.titleMedium)
               Text("${FoodEntryModel.display(n.optDouble("calories"))} kcal / 100 ${d.optString("canonicalUnit")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
               Text(if (food.optBoolean("isOfficial")) "Alimento oficial" else "Biblioteca personal", style = MaterialTheme.typography.labelSmall)
@@ -179,8 +218,8 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
         }
       }
     } else {
-      Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        TextButton(onClick = { if (dirty) { discardToSearch = true; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
+      Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = WireSpace.Page, vertical = WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
+        TextButton(onClick = { if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
         if (chosen == null) OutlinedTextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
           label = { Text("Nombre del alimento") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
@@ -202,7 +241,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("En esta cantidad", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             fun total(key: String): Double? {
-              val n = if (chosen == null) FoodEntryModel.decimal(nutrition.optString(key)) else if (nutrition.isNull(key)) null else nutrition.optDouble(key)
+              val n = if (nutrition.isNull(key)) null else nutrition.optDouble(key).takeIf { it.isFinite() }
               return if (canonical == null || n == null) null else n * canonical / 100.0
             }
             Text("${FoodEntryModel.display(total("calories"))} kcal", fontSize = 36.sp, fontWeight = FontWeight.SemiBold)
@@ -213,16 +252,20 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
             }
           }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-          OutlinedButton(onClick = { calendar = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Fecha del consumo: $date" }) { Text(date) }
-          OutlinedButton(onClick = { clock = true }, enabled = enabled, modifier = Modifier.weight(1f).semantics { contentDescription = "Hora del consumo: $time" }) { Text(time) }
-        }
-        Text("Fecha y hora de Chile", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (chosen == null) {
-          Text("Información por 100 $unit", style = MaterialTheme.typography.titleLarge)
-          Text("Copia los valores de la etiqueta por 100 $unit. Deja en blanco lo que no conozcas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text("Información de la etiqueta", style = MaterialTheme.typography.titleLarge)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(labelBasis == "per100", { labelBasis = "per100"; dirty = true }, label = { Text("Por 100 $unit") }, enabled = enabled)
+            FilterChip(labelBasis == "portion", { labelBasis = "portion"; dirty = true }, label = { Text("Por porción") }, enabled = enabled)
+          }
+          if (labelBasis == "portion") OutlinedTextField(labelSize, { labelSize = it; dirty = true }, label = { Text("Tamaño de la porción en $unit") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth())
+          Text("Transcribe los valores de esa base. Deja en blanco los nutrientes que no conozcas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
           fields.take(4).forEach { field -> NutrientInput(field, nutrients.optString(field.optString("key")), enabled) { value -> nutrientsJson = JSONObject(nutrientsJson).put(field.optString("key"), value).toString(); dirty = true } }
-          TextButton(onClick = { optional = !optional }, enabled = enabled) { Text(if (optional) "Ocultar nutrientes opcionales" else "+ Fibra y otros nutrientes") }
+          TextButton(onClick = { optional = !optional }, enabled = enabled) {
+            Icon(if (optional) WireIcons.Down else WireIcons.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+            Text(if (optional) "Ocultar nutrientes opcionales" else "Fibra y otros nutrientes")
+          }
           if (optional) {
             fields.drop(4).take(3).forEach { field -> NutrientInput(field, nutrients.optString(field.optString("key")), enabled) { value -> nutrientsJson = JSONObject(nutrientsJson).put(field.optString("key"), value).toString(); dirty = true } }
             fields.drop(7).filter { it.optString("key") in extras.split('|') }.forEach { field -> NutrientInput(field, nutrients.optString(field.optString("key")), enabled) { value -> nutrientsJson = JSONObject(nutrientsJson).put(field.optString("key"), value).toString(); dirty = true } }
@@ -248,7 +291,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   }
   if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("¿Descartar este registro?") },
     text = { Text("Los cambios de este alimento todavía no están guardados.") },
-    confirmButton = { TextButton(onClick = { discard = false; dirty = false; editing = false; chosenJson = ""; if (!discardToSearch) emit("cancel", null) }) { Text("Descartar") } },
+    confirmButton = { TextButton(onClick = { discard = false; dirty = false; editing = false; chosenJson = ""; if (discardToLabel) { labels(); discardToLabel = false } else if (!discardToSearch) emit("cancel", null) }) { Text("Descartar") } },
     dismissButton = { TextButton(onClick = { discard = false }) { Text("Seguir editando") } })
   if (calendar) {
     val picker = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(LocalDate.parse(date)), yearRange = 1970..9999)
