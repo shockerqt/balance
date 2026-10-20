@@ -8,8 +8,7 @@ import { Button, Card, Screen, Text } from '@/components/ui';
 export default function LoginScreen() {
   const theme = useTheme();
   const { loginWithGoogle, enableGuestMode, isLoading, isAuthenticated, isGuest,
-    providerLogoutAvailable, providerLogoutNotice, runProviderLogoutDiagnostic,
-    dismissProviderLogoutNotice, accountChoicesAvailable, rememberedAccount,
+    accountChoicesAvailable, rememberedAccount,
     continueWithRememberedAccount, forgetRememberedAccount, loginError } = useAuth();
   const router = useRouter();
   const [pendingChoice, setPendingChoice] = useState<string | null>(null);
@@ -138,37 +137,7 @@ export default function LoginScreen() {
             Sin cuenta. Tus registros se guardan en este dispositivo.
           </Text>
         </Card>
-        {providerLogoutAvailable ? <Card padding="xxl">
-          <Text variant="title" style={{ marginBottom: theme.space.xs }}>Comprobar cierre de sesión</Text>
-          <Text variant="body" tone="secondary" style={{ marginBottom: theme.space.md }}>
-            Abrirá dos sesiones de prueba y pedirá confirmar el cierre. Puede tardar unos minutos.
-          </Text>
-          <Button title="Iniciar comprobación" variant="secondary" loading={isLoading}
-            disabled={isLoading || isAuthenticated || isGuest}
-            onPress={() => { void runProviderLogoutDiagnostic(); }} />
-          {providerLogoutNotice ? <View style={{ marginTop: theme.space.md, gap: theme.space.sm }}>
-            <Text variant="body" tone={providerLogoutNotice.status === 'FAIL' ? 'danger' : 'secondary'}>
-              {providerLogoutNotice.reason === 'provider_proof_pending'
-                ? 'Comprobación local completada. Falta verificar el resultado en el servidor.'
-                : providerLogoutNotice.reason === 'accepted'
-                  ? 'Una sesión siguió activa después del cierre. El resultado requiere revisión.'
-                  : providerLogoutNotice.reason === 'storage'
-                    ? 'No se pudo borrar la sesión guardada. Intenta cerrar sesión de nuevo.'
-                    : providerLogoutNotice.reason === 'cleanup'
-                      ? 'No se pudo terminar de cerrar las sesiones de prueba. Espera y vuelve a intentarlo.'
-                    : providerLogoutNotice.reason === 'expired'
-                      ? 'La comprobación tardó demasiado. Espera a que termine antes de volver a intentarlo.'
-                      : 'No se pudo confirmar el resultado. Inicia sesión de nuevo antes de repetirla.'}
-            </Text>
-            {providerLogoutNotice.cleanupIssue ? <Text variant="caption" tone="danger">
-              No se pudo terminar de cerrar una sesión de prueba. Espera antes de repetir la comprobación.
-            </Text> : null}
-            {providerLogoutNotice.reference ? <Text variant="caption" tone="muted" selectable>
-              Referencia: {providerLogoutNotice.reference}
-            </Text> : null}
-            <Button title="Ocultar resultado" variant="secondary" onPress={dismissProviderLogoutNotice} />
-          </View> : null}
-        </Card> : null}
+
       </View>
 
       <View style={[styles.footer, { paddingVertical: theme.space.xl }]}>

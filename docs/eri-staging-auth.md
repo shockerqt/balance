@@ -321,3 +321,14 @@ verified HTTPS callback and staging-only endpoints. Dev 1.2.1 (4) lacks the loca
 Compose module and cannot run the current Android routes. Daily and production
 versions, native baselines and delivery channels remain unchanged. The account
 choice feature is enabled only by the reviewed native Dev staging Metro flag.
+
+## User interface after acceptance tooling cleanup
+
+Login and settings no longer expose the temporary provider-logout or refresh
+replay diagnostic controls. Automated engine/protocol coverage remains intact;
+normal session checks, refresh, revocation and truthful logout errors are retained.
+Remembered-account metadata is display-only after logout: continuing requests a
+new authorization through AuthSession, potentially reusing Eri browser SSO. It
+does not keep renewable credentials after a completed app logout. Routine app
+reopening uses the existing persistent session/refresh path without starting a
+new browser authorization, until that session expires or is revoked.
