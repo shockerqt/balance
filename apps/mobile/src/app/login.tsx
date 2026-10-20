@@ -113,7 +113,7 @@ export default function LoginScreen() {
             variant={remembered ? 'secondary' : 'primary'}
             icon={<View style={{ backgroundColor: '#FFFFFF', padding: 3, borderRadius: 3 }}>
               <Image source={require('../../assets/images/google-g.png')}
-                style={{ width: 18, height: 18 }} accessible={false} />
+                style={{ width: 18, height: 18 }} resizeMode="contain" accessible={false} />
             </View>}
             disabled={busy}
             loading={pendingChoice === 'google' || (isLoading && pendingChoice === null)}
