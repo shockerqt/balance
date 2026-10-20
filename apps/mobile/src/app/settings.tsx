@@ -21,7 +21,8 @@ export default function SettingsScreen() {
     try {
       const status = await logout();
       if (status === 'in_progress') return;
-      if (status === 'unconfirmed') Alert.alert('Sesión cerrada en Balance',
+      if (status === 'unconfirmed') Alert.alert(
+        accountChoicesAvailable ? 'No se pudo confirmar el cierre' : 'Sesión cerrada en Balance',
         accountChoicesAvailable
           ? 'No se pudo confirmar el cierre completo. Vuelve a intentarlo cuando tengas conexión.'
           : 'No se confirmó el cierre de la sesión de Eri.');
