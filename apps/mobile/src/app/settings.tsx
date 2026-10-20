@@ -10,7 +10,7 @@ export default function SettingsScreen() {
   const styles = useStyles();
   const theme = useTheme();
   const router = useRouter();
-  const { user, isGuest, isLoading, logout, refreshReplayAvailable, runRefreshReplay } = useAuth();
+  const { user, isGuest, isLoading, logout, accountChoicesAvailable, refreshReplayAvailable, runRefreshReplay } = useAuth();
   const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled } =
     usePreferencesStore();
 
@@ -21,8 +21,11 @@ export default function SettingsScreen() {
     try {
       const status = await logout();
       if (status === 'in_progress') return;
-      if (status === 'unconfirmed') Alert.alert('Sesión cerrada en Balance',
-        'No se confirmó el cierre de la sesión de Eri.');
+      if (status === 'unconfirmed') Alert.alert(
+        accountChoicesAvailable ? 'No se pudo confirmar el cierre' : 'Sesión cerrada en Balance',
+        accountChoicesAvailable
+          ? 'No se pudo confirmar el cierre completo. Vuelve a intentarlo cuando tengas conexión.'
+          : 'No se confirmó el cierre de la sesión de Eri.');
       router.replace('/login');
     } finally { logoutPending.current = false; }
   };
