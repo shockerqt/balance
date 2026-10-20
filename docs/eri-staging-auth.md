@@ -276,3 +276,39 @@ completion, invalid returns, cancel/error and unchanged production behavior.
 the authentication browser context; [Expo57 Crypto](https://docs.expo.dev/versions/v57.0.0/sdk/crypto/)
 documents cryptographic state generation. These tests do not replace device/SSO
 acceptance or provider runtime review.
+
+
+## Development account choices (prepared; disabled by default)
+
+`EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES=1` opts into the remembered-account screen only
+for a native development build, `balance-dev`, and the exact Eri staging issuer,
+mobile client, REST resource and API binding. This flag does not require auth
+diagnostics. Keep it disabled until the reviewed Eri `prompt=select_account`
+implementation has been activated. No production/default behavior is changed.
+
+After successful Google authentication, Balance verifies `/me` before adopting
+new credentials, and stores only the numeric Balance user ID, email, optional
+name and full issuer/client/resource/API binding in native SecureStore. This
+record contains no token, ID token, key material or remote avatar. It survives
+local logout and app hydration, but never restores credentials or authenticates.
+Web does not read or write remembered metadata.
+
+“Continuar” makes a fresh normal Authorization Code + PKCE request, allowing the
+provider browser SSO session to complete it. Missing or expired SSO may require
+interactive authentication. The resulting verified `/me` numeric Balance user
+ID must match the remembered ID before credential adoption or sync. A mismatch
+shows “Usa otra cuenta…” and best-effort revokes the newly issued refresh token.
+“Otra cuenta de Google” sends `prompt=select_account`; it never treats stored
+metadata or an email hint as authorization. Forgetting deletes the metadata,
+fences pending continuation results and serializes deletion after pending writes.
+
+With this flag enabled, normal logout clears local credentials and disconnects
+sync, best-effort revokes the captured refresh family, and does not open a browser.
+`not_requested` describes browser logout. Failed refresh revocation or storage
+cleanup returns `unconfirmed`; offline logout cannot certify remote revocation. Browser SSO remains
+available for a later continuation. The explicit provider-logout diagnostic keeps
+its separate reviewed browser flow. Already-issued access JWTs may remain valid
+until expiry. Guest and account namespaces keep their existing isolation; this
+flow does not import or merge guest data.
+
+The bundled Google G asset comes from the [Google Identity branding guidelines](https://developers.google.com/identity/branding-guidelines) ([original PNG](https://developers.google.com/static/identity/images/g-logo.png)).

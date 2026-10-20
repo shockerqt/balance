@@ -7,9 +7,11 @@ import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { syncClient } from '@/services/sync/sync-client';
 import { fetchOfficialTemplates } from '@/services/sync/official-templates';
-import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL, OIDC_LOGOUT_ID_TOKEN_HINT, OIDC_REDIRECT_URI } from '@/services/config';
+import { API_BASE_URL, OIDC_ISSUER, OIDC_MOBILE_CLIENT_ID, OIDC_RESOURCE, OIDC_SCOPES, OIDC_BROWSER_LOGOUT_URL, OIDC_LOGOUT_ID_TOKEN_HINT, OIDC_REDIRECT_URI, OIDC_ACCOUNT_CHOICES } from '@/services/config';
 import { storage } from '@/services/storage';
 import {
+  RememberedAccount, REMEMBERED_ACCOUNT_KEY, parseRememberedAccount, rememberedAccountForProfile,
+  accountChoicesBindingAllowed, assertRememberedIdentity,
   assertAuthorizationResponseIssuer,
   assertStagingMobileRedirect,
   chosenMobileRedirect,
@@ -44,6 +46,7 @@ import {
 WebBrowser.maybeCompleteAuthSession();
 
 export type UserProfile = StoredUserProfile;
+export type { RememberedAccount } from '@/services/auth/session-state';
 
 interface ApiResponse<T> {
   data?: T | null;
@@ -115,6 +118,11 @@ interface AuthContextType {
   isGuest: boolean;
   isLoading: boolean;
   loginWithGoogle: () => Promise<void>;
+  accountChoicesAvailable: boolean;
+  rememberedAccount: RememberedAccount | null;
+  continueWithRememberedAccount: () => Promise<void>;
+  forgetRememberedAccount: () => Promise<void>;
+  loginError: string | null;
   enableGuestMode: () => Promise<boolean>;
   logout: () => Promise<BrowserLogoutStatus>;
   setAuthToken: (token: string | null) => void;
@@ -148,6 +156,9 @@ export const REFRESH_REPLAY_AVAILABLE = replayBindingAllowed(
   Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme,
   Constants.expoConfig?.extra?.appVariant,
 );
+const ACCOUNT_CHOICES_AVAILABLE = accountChoicesBindingAllowed(OIDC_ACCOUNT_CHOICES, __DEV__, Platform.OS,
+  Array.isArray(configuredScheme) ? configuredScheme[0] : configuredScheme,
+  Constants.expoConfig?.extra?.appVariant, AUTH_BINDING);
 const DIAGNOSTIC_DEADLINE_MS = 30000;
 const PROVIDER_DIAGNOSTIC_DEADLINE_MS = 5 * 60 * 1000;
 const toHex = (bytes: Uint8Array) => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
@@ -161,7 +172,7 @@ const requestRefresh = (refreshToken: string, discovery: Discovery) => AuthSessi
 
 const requestAuthorization = async (
   discovery: Discovery, isCurrent: () => boolean, nonce?: string,
-  onExchangeStart?: () => () => void,
+  onExchangeStart?: () => () => void, selectAccount = false,
 ): Promise<AuthSession.TokenResponse | undefined> => {
   const schemeValue = Constants.expoConfig?.scheme;
   const scheme = Array.isArray(schemeValue) ? schemeValue[0] : schemeValue;
@@ -176,7 +187,7 @@ const requestAuthorization = async (
     responseType: AuthSession.ResponseType.Code,
     redirectUri: redirectUrl,
     scopes: OIDC_SCOPES,
-    extraParams: { ...oauthResourceParams(OIDC_RESOURCE), ...(nonce ? { nonce } : {}) },
+    extraParams: { ...oauthResourceParams(OIDC_RESOURCE), ...(nonce ? { nonce } : {}), ...(selectAccount ? { prompt: 'select_account' } : {}) },
     usePKCE: true,
   });
   const result = await awaitCurrentAuthStep(
@@ -199,6 +210,15 @@ const requestAuthorization = async (
     if (isCurrent()) throw error;
     return;
   } finally { finishExchange?.(); }
+};
+
+const boundedRevocation = async (operation: Promise<boolean>): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), 5000);
+    })]);
+  } finally { if (timer !== undefined) clearTimeout(timer); }
 };
 
 const revokeRefresh = async (refreshToken: string, discovery?: Discovery): Promise<boolean> => {
@@ -241,6 +261,32 @@ export type ProviderLogoutDiagnostic = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [rememberedAccount, setRememberedAccount] = useState<RememberedAccount | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const rememberedEpochRef = useRef(0);
+  const rememberedWriterRef = useRef<SerializedSessionWriter<RememberedAccount> | null>(null);
+  if (!rememberedWriterRef.current) rememberedWriterRef.current = new SerializedSessionWriter(
+    value => writeValue(REMEMBERED_ACCOUNT_KEY, value ? JSON.stringify(value) : null),
+    () => rememberedEpochRef.current, setRememberedAccount,
+  );
+  const forgetRememberedAccount = useCallback(async () => {
+    if (!ACCOUNT_CHOICES_AVAILABLE) return;
+    const generation = ++rememberedEpochRef.current;
+    // Forgetting also cancels a pending continuation; its credentials cannot be adopted.
+    ++epochRef.current;
+    setIsLoading(false);
+    await rememberedWriterRef.current!.commit(null, generation);
+  }, []);
+  useEffect(() => {
+    if (!ACCOUNT_CHOICES_AVAILABLE) return;
+    const generation = rememberedEpochRef.current;
+    let cancelled = false;
+    void readValue(REMEMBERED_ACCOUNT_KEY).then(raw => {
+      if (!cancelled && generation === rememberedEpochRef.current)
+        setRememberedAccount(parseRememberedAccount(raw, AUTH_BINDING));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isGuest, setIsGuest] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -411,7 +457,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const verifySession = useCallback(
-    async (candidate: StoredAuthSession) => {
+    async (candidate: StoredAuthSession, preverified?: UserProfile) => {
       if (diagnosticOwnerRef.current) return;
       const epoch = epochRef.current;
       const isCurrent = () => epoch === epochRef.current && !diagnosticOwnerRef.current;
@@ -434,7 +480,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const fetchProfile = (accessToken: string) =>
-        fetch(`${API_BASE_URL}/me`, {
+        preverified ? Promise.resolve({ ok: true, status: 200, json: async () => ({ data: preverified }) }) : fetch(`${API_BASE_URL}/me`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -496,6 +542,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!isCurrent()) return;
         syncClient.setNamespace(authDataNamespace(API_BASE_URL, payload.data.id));
         syncClient.connect(verified.accessToken, authDataNamespace(API_BASE_URL, payload.data.id));
+        return payload.data;
       } catch (error) {
         // Offline startup keeps the securely cached identity and tokens. A later
         // foreground transition retries validation and refresh.
@@ -540,6 +587,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let cancelled = false;
     const hydrationEpoch = epochRef.current;
+    const rememberGeneration = rememberedEpochRef.current;
 
     (async () => {
       try {
@@ -555,7 +603,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (!(await adoptSession(savedSession, hydrationEpoch))) return;
           if (cancelled || hydrationEpoch !== epochRef.current) return;
           if (savedSession.user) setUser(savedSession.user);
-          await verifySession(savedSession);
+          const verifiedUser = await verifySession(savedSession);
+          if (ACCOUNT_CHOICES_AVAILABLE && verifiedUser && !cancelled && hydrationEpoch === epochRef.current &&
+              rememberGeneration === rememberedEpochRef.current) {
+            await rememberedWriterRef.current!.commit(rememberedAccountForProfile(verifiedUser, AUTH_BINDING), ++rememberedEpochRef.current);
+          }
         } else if (savedGuest === '1') {
           setIsGuest(true);
         }
@@ -605,10 +657,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally { guestTransitionRef.current = false; }
   }, [clearAuthenticatedState]);
 
-  const loginWithGoogle = useCallback(async () => {
+  const login = useCallback(async (remembered: RememberedAccount | null = null) => {
     // A generation guard cannot undo remote browser logout. Hold one owner
     // synchronously until the browser operation ends; never queue another.
     if (browserOperationRef.current || diagnosticOwnerRef.current) return;
+    const rememberGeneration = ACCOUNT_CHOICES_AVAILABLE ? ++rememberedEpochRef.current : rememberedEpochRef.current;
+    setLoginError(null);
     const owner = Symbol('login');
     browserOperationRef.current = { kind: 'login', owner };
     setBrowserBusy(true);
@@ -618,17 +672,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const discovery = await awaitCurrentAuthStep(AuthSession.fetchDiscoveryAsync(OIDC_ISSUER), isCurrent);
       if (!discovery) return;
-      const tokenResponse = await requestAuthorization(discovery, isCurrent);
-      if (!tokenResponse?.accessToken || !isCurrent()) return;
+      const tokenResponse = await requestAuthorization(discovery, isCurrent, undefined, undefined, ACCOUNT_CHOICES_AVAILABLE && !remembered);
+      if (!tokenResponse?.accessToken) return;
+      if (!isCurrent()) { if (ACCOUNT_CHOICES_AVAILABLE && tokenResponse.refreshToken) void revokeRefresh(tokenResponse.refreshToken, discovery); return; }
+      let verifiedUser: UserProfile | undefined;
+      if (ACCOUNT_CHOICES_AVAILABLE) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/me`, { headers: { Authorization: `Bearer ${tokenResponse.accessToken}` } });
+          if (!response.ok) throw new Error('No se pudo verificar la cuenta.');
+          const payload = await response.json() as ApiResponse<UserProfile>;
+          if (!payload.data) throw new Error('No se pudo verificar la cuenta.');
+          assertRememberedIdentity(payload.data, remembered);
+          verifiedUser = payload.data;
+        } catch (error) {
+          if (tokenResponse.refreshToken) void revokeRefresh(tokenResponse.refreshToken, discovery);
+          throw error;
+        }
+        if (!isCurrent()) { if (tokenResponse.refreshToken) void revokeRefresh(tokenResponse.refreshToken, discovery); return; }
+      }
       const session = fromTokenResponse(tokenResponse);
       // Adoption starts a new credential generation, invalidating any refresh
       // of the previous account that began while the browser was open.
       loginEpoch = ++epochRef.current;
       setUser(null);
       syncClient.disconnect();
-      if (!(await adoptSession(session, loginEpoch)) || !isCurrent()) return;
-      await verifySession(session);
-    } catch {
+      if (!(await adoptSession(session, loginEpoch)) || !isCurrent()) {
+        if (ACCOUNT_CHOICES_AVAILABLE && tokenResponse.refreshToken) void revokeRefresh(tokenResponse.refreshToken, discovery);
+        return;
+      }
+      await verifySession(session, verifiedUser);
+      if (ACCOUNT_CHOICES_AVAILABLE && verifiedUser && isCurrent() && rememberGeneration === rememberedEpochRef.current) {
+        await rememberedWriterRef.current!.commit(rememberedAccountForProfile(verifiedUser, AUTH_BINDING), rememberGeneration);
+      }
+    } catch (error) {
+      if (isCurrent() && ACCOUNT_CHOICES_AVAILABLE) setLoginError(
+        error && typeof error === 'object' && 'message' in error &&
+          error.message === 'Usa otra cuenta para elegir la cuenta que quieres abrir.'
+          ? error.message : 'No se pudo iniciar sesión. Inténtalo de nuevo.',
+      );
       if (isCurrent()) console.warn('Fallo el login con Google');
     } finally {
       if (isCurrent()) setIsLoading(false);
@@ -639,10 +720,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [adoptSession, verifySession]);
 
+  const loginWithGoogle = useCallback(() => login(), [login]);
+  const continueWithRememberedAccount = useCallback(async () => {
+    if (ACCOUNT_CHOICES_AVAILABLE && rememberedAccount) await login(rememberedAccount);
+  }, [login, rememberedAccount]);
+
   const logout = useCallback(async (): Promise<BrowserLogoutStatus> => {
     if (diagnosticOwnerRef.current) return 'in_progress';
     if (browserOperationRef.current?.kind === 'logout') return 'in_progress';
-    const owner = OIDC_BROWSER_LOGOUT_URL === undefined || browserOperationRef.current
+    const owner = ACCOUNT_CHOICES_AVAILABLE || OIDC_BROWSER_LOGOUT_URL === undefined || browserOperationRef.current
       ? null : Symbol('logout');
     if (owner) {
       browserOperationRef.current = { kind: 'logout', owner };
@@ -653,7 +739,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const idToken = active?.idToken;
     setIsGuest(false);
     // Clear memory/credentials and disconnect sockets before the first await.
-    const clearing = clearAuthenticatedState();
+    const clearing = clearAuthenticatedState(ACCOUNT_CHOICES_AVAILABLE);
     const logoutEpoch = epochRef.current;
     const isCurrent = () => logoutEpoch === epochRef.current;
     const revocation = refreshToken ? revokeRefresh(refreshToken) : Promise.resolve(false);
@@ -664,11 +750,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await clearing;
       if (!isCurrent()) return 'unconfirmed';
       try { await storage.removeItem(GUEST_KEY); }
-      catch { console.warn('No se pudo limpiar la marca de invitado'); }
+      catch {
+        console.warn('No se pudo limpiar la marca de invitado');
+        if (ACCOUNT_CHOICES_AVAILABLE) return 'unconfirmed';
+      }
       if (!isCurrent()) return 'unconfirmed';
-      if (OIDC_BROWSER_LOGOUT_URL === undefined) {
-        await revocation;
-        return 'not_requested';
+      if (ACCOUNT_CHOICES_AVAILABLE || OIDC_BROWSER_LOGOUT_URL === undefined) {
+        const revoked = await (ACCOUNT_CHOICES_AVAILABLE ? boundedRevocation(revocation) : revocation);
+        return ACCOUNT_CHOICES_AVAILABLE && refreshToken && !revoked ? 'unconfirmed' : 'not_requested';
       }
       // An in-progress login was invalidated above, but its browser still owns
       // the cookie context. Never schedule logout behind that login.
@@ -991,6 +1080,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isGuest,
       isLoading: isLoading || browserBusy,
       loginWithGoogle,
+      accountChoicesAvailable: ACCOUNT_CHOICES_AVAILABLE, rememberedAccount, loginError,
+      continueWithRememberedAccount, forgetRememberedAccount,
       enableGuestMode,
       logout,
       setAuthToken,
@@ -1004,7 +1095,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       runProviderLogoutDiagnostic,
       dismissProviderLogoutNotice,
     }),
-    [user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch, runRefreshReplay, providerLogoutNotice, runProviderLogoutDiagnostic, dismissProviderLogoutNotice],
+    [rememberedAccount, loginError, continueWithRememberedAccount, forgetRememberedAccount, user, isGuest, isLoading, browserBusy, loginWithGoogle, enableGuestMode, logout, setAuthToken, checkSession, authorizedFetch, runRefreshReplay, providerLogoutNotice, runProviderLogoutDiagnostic, dismissProviderLogoutNotice],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

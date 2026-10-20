@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/theme';
@@ -9,8 +9,24 @@ export default function LoginScreen() {
   const theme = useTheme();
   const { loginWithGoogle, enableGuestMode, isLoading, isAuthenticated, isGuest,
     providerLogoutAvailable, providerLogoutNotice, runProviderLogoutDiagnostic,
-    dismissProviderLogoutNotice } = useAuth();
+    dismissProviderLogoutNotice, accountChoicesAvailable, rememberedAccount,
+    continueWithRememberedAccount, forgetRememberedAccount, loginError } = useAuth();
   const router = useRouter();
+  const [pendingChoice, setPendingChoice] = useState<string | null>(null);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
+  const remembered = accountChoicesAvailable ? rememberedAccount : null;
+  const rememberedName = remembered?.user.name?.trim() || remembered?.user.email;
+  const busy = isLoading || pendingChoice !== null;
+  const choose = async (choice: string, action: () => Promise<unknown>) => {
+    if (busy) return;
+    setPendingChoice(choice);
+    setChoiceError(null);
+    try { await action(); }
+    catch { setChoiceError(choice === 'forget'
+      ? 'No se pudo olvidar la cuenta. Vuelve a intentarlo.'
+      : 'No se pudo continuar. Vuelve a intentarlo.'); }
+    finally { setPendingChoice(null); }
+  };
 
   useEffect(() => {
     if (isAuthenticated || isGuest) router.replace('/(tabs)/logs');
@@ -22,6 +38,7 @@ export default function LoginScreen() {
 
   return (
     <Screen edges={['top', 'bottom']} style={{ paddingHorizontal: theme.space.xxl }}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
       <View style={styles.content}>
         <View
           style={[
@@ -60,29 +77,66 @@ export default function LoginScreen() {
 
         <Card padding="xxl">
           <Text variant="title" style={{ marginBottom: theme.space.xs }}>
-            Iniciar sesión
+            Elige cómo continuar
           </Text>
           <Text variant="body" tone="secondary" style={{ lineHeight: 20, marginBottom: theme.space.xxl }}>
             Conéctate con tu cuenta de Google para sincronizar tus dispositivos en segundo plano.
           </Text>
 
+          {remembered ? <View style={{ gap: theme.space.md, marginBottom: theme.space.lg }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.md }}>
+              <View style={{ width: 44, height: 44, borderRadius: theme.radius.pill,
+                backgroundColor: theme.colors.surfaceRaised, alignItems: 'center', justifyContent: 'center' }}>
+                <Text variant="title" accessibilityElementsHidden importantForAccessibility="no">
+                  {Array.from(rememberedName ?? '')[0]?.toLocaleUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1, gap: theme.space.xs }}>
+                <Text variant="bodyStrong">{rememberedName}</Text>
+                <Text variant="caption" tone="secondary" selectable>{remembered.user.email}</Text>
+                <Text variant="caption" tone="muted">Cuenta recordada en este dispositivo</Text>
+              </View>
+            </View>
+            <Button title={`Continuar como ${rememberedName}`} disabled={busy}
+              loading={pendingChoice === 'remembered'}
+              onPress={() => { void choose('remembered', continueWithRememberedAccount); }} />
+            <TouchableOpacity accessibilityRole="button" disabled={busy}
+              accessibilityLabel="Olvidar la cuenta recordada en este dispositivo"
+              onPress={() => { void choose('forget', forgetRememberedAccount); }}
+              style={{ alignSelf: 'center', paddingVertical: theme.space.sm }}>
+              <Text variant="caption" tone="secondary" style={styles.underline}>Olvidar esta cuenta</Text>
+            </TouchableOpacity>
+          </View> : null}
+
           <Button
-            title="Continuar con Google"
-            loading={isLoading}
-            onPress={loginWithGoogle}
+            title={remembered ? 'Usar otra cuenta de Google' : 'Continuar con Google'}
+            variant={remembered ? 'secondary' : 'primary'}
+            icon={<View style={{ backgroundColor: '#FFFFFF', padding: 3, borderRadius: 3 }}>
+              <Image source={require('../../assets/images/google-g.png')}
+                style={{ width: 18, height: 18 }} accessible={false} />
+            </View>}
+            disabled={busy}
+            loading={pendingChoice === 'google' || (isLoading && pendingChoice === null)}
+            onPress={() => { void choose('google', loginWithGoogle); }}
             style={{ marginBottom: theme.space.md }}
           />
+
+          {loginError || choiceError ? <Text variant="body" tone="danger" accessibilityRole="alert"
+            accessibilityLiveRegion="polite" style={{ marginBottom: theme.space.md }}>{loginError || choiceError}</Text> : null}
 
           <TouchableOpacity
             accessibilityRole="button"
             activeOpacity={0.7}
-            disabled={isLoading}
-            onPress={continueAsGuest}
+            disabled={busy}
+            onPress={() => { void choose('guest', continueAsGuest); }}
             style={[styles.guest, { paddingVertical: theme.space.md }]}>
             <Text variant="caption" tone="secondary" style={styles.underline}>
               Continuar como invitado
             </Text>
           </TouchableOpacity>
+          <Text variant="caption" tone="muted" style={{ textAlign: 'center', marginTop: theme.space.xs }}>
+            Sin cuenta. Tus registros se guardan en este dispositivo.
+          </Text>
         </Card>
         {providerLogoutAvailable ? <Card padding="xxl">
           <Text variant="title" style={{ marginBottom: theme.space.xs }}>Comprobar cierre de sesión</Text>
@@ -122,6 +176,7 @@ export default function LoginScreen() {
           Balance · Librería oficial y sincronización en segundo plano
         </Text>
       </View>
+      </ScrollView>
     </Screen>
   );
 }

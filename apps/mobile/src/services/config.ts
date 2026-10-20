@@ -25,3 +25,6 @@ export const OIDC_LOGOUT_ID_TOKEN_HINT = process.env.EXPO_PUBLIC_OIDC_LOGOUT_ID_
 export const OIDC_BROWSER_LOGOUT_URL = process.env.EXPO_PUBLIC_OIDC_BROWSER_LOGOUT_URL;
 
 export const OIDC_REDIRECT_URI = process.env.EXPO_PUBLIC_OIDC_REDIRECT_URI;
+
+// Requires the reviewed provider select_account release before activation.
+export const OIDC_ACCOUNT_CHOICES = process.env.EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES === '1';
