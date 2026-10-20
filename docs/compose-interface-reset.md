@@ -70,9 +70,14 @@ explicit legends that match stroke patterns, three scale references, distinct
 series tones and aligned inspected values. Missing-data behavior is unchanged.
 No per-frame bridge events, data owners or persistence formats are introduced.
 
-Native source changes require a new APK: app/runtime1.5.0, Android versionCode6,
-internal EAS preview/daily release. Do not promote delivery/daily-runtime.json or
-publish an OTA from this task. Use the declared delivery docs/workflows and
-EAS CLI21.7.0. Device acceptance must cover 375–390dp geometry, large text,
+The operator accepted the visual version in Daily1.5.0/code6 and authorized
+ordered integration, native-baseline promotion and task cleanup. Current-main
+development/auth configuration is retained without changing the approved Compose
+sources. The final integration artifact uses app/runtime1.5.1, Android code7,
+internal EAS preview/daily. Promote delivery/daily-runtime.json only after its
+source, successful build and binary have been verified; publish compatible OTA
+updates through the existing verified-main delivery DAG. Keep the strict native
+compatibility check intact. Use the declared delivery docs/workflows and pinned
+EAS CLI21.7.0. Device review covers 375–390dp geometry, large text,
 keyboard, Android Back, paging/scroll, selection, graph links and save/offline
 behavior. Automated checks cannot establish phone smoothness or accessibility.

@@ -110,6 +110,12 @@ grupo actual esperado. Deshabilitar primero Deliver Balance Clients si se necesi
 mantener un rollback mientras se prepara la corrección. Una publicación EAS
 confirmada no implica que todos los teléfonos ya hayan descargado la OTA.
 
+Para la prueba aislada de Eri, el perfil `eri-staging` hereda `development`
+y configura únicamente endpoints públicos de staging. La Dev 1.2.1 (4) añade
+el retorno HTTPS verificado de Android; exige instalar esa APK nueva y verificar
+su firma y asociación del dominio antes de habilitar la preautorización.
+No modifica la referencia ni el canal de Daily. Ver `eri-staging-auth.md`.
+
 Las Development Builds no se compilan en GitHub Actions. Se crean y
 distribuyen mediante el perfil `development` de Expo EAS.
 
