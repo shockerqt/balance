@@ -32,8 +32,6 @@ module.exports = () => {
   return {
     ...baseConfig,
     name: variant.name,
-    // Compose and verified-link native runtime for Dev; Daily/production keep their baseline.
-    ...(variantName === "development" ? { version: "1.5.2" } : {}),
     scheme: variant.scheme,
     icon,
     ios: {
@@ -43,14 +41,18 @@ module.exports = () => {
     android: {
       ...baseConfig.android,
       package: variant.package,
-      ...(variantName === "development" ? {
-        versionCode: 8,
-        intentFilters: [{
-          action: "VIEW",
-          autoVerify: true,
-          category: ["BROWSABLE", "DEFAULT"],
-          data: [{ scheme: "https", host: "balance-staging.shocker.cl", path: "/auth-callback" }],
-        }],
+      ...(['development', 'daily'].includes(variantName) ? {
+        intentFilters: [
+          ...(variantName === 'development' ? [{
+            action: 'VIEW', autoVerify: true, category: ['BROWSABLE', 'DEFAULT'],
+            data: [{ scheme: 'https', host: 'balance-staging.shocker.cl', path: '/auth-callback' }],
+          }] : []),
+          {
+            action: 'VIEW', autoVerify: true, category: ['BROWSABLE', 'DEFAULT'],
+            data: [{ scheme: 'https', host: 'balance.shocker.cl',
+              path: variantName === 'development' ? '/auth-callback/dev' : '/auth-callback/daily' }],
+          },
+        ],
       } : {}),
       // Icono heredado para Android 7 y anterior; de 8 en adelante manda el
       // adaptativo, que se conserva para no perder la mascara ni el icono

@@ -1,4 +1,4 @@
-import { getDashboardServiceConfig } from '../../../services/config.ts';
+import { getDashboardServiceConfig, type DashboardServiceConfig } from '../../../services/config.ts';
 import {
   isMealLogDoc,
   isMealTemplateDoc,
@@ -80,6 +80,10 @@ export class RemoteFoodLogRepository {
   private readonly handlers: RemoteFoodLogRepositoryHandlers;
   private readonly wsUrl: string;
   private socket: WebSocket | null = null;
+  private readonly authMode: 'legacy' | 'application';
+  private authenticated = false;
+  private authTimer: number | null = null;
+  private generation = 0;
   private accessToken: string | null = null;
   private stopped = false;
   private hasInitialSync = false;
@@ -97,9 +101,10 @@ export class RemoteFoodLogRepository {
     error: null,
   };
 
-  constructor(handlers: RemoteFoodLogRepositoryHandlers) {
+  constructor(handlers: RemoteFoodLogRepositoryHandlers, config: DashboardServiceConfig = getDashboardServiceConfig()) {
     this.handlers = handlers;
-    this.wsUrl = getDashboardServiceConfig().wsSyncUrl;
+    this.wsUrl = config.wsSyncUrl;
+    this.authMode = config.wsAuthMode ?? 'legacy';
     this.handlers.onState(this.state);
   }
 
@@ -115,6 +120,7 @@ export class RemoteFoodLogRepository {
       this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING
     )) return;
 
+    this.invalidateConnection();
     this.clearReconnectTimer();
     if (this.socket) {
       const previous = this.socket;
@@ -127,6 +133,7 @@ export class RemoteFoodLogRepository {
   }
 
   disconnect(): void {
+    this.invalidateConnection();
     this.stopped = true;
     this.accessToken = null;
     this.clearReconnectTimer();
@@ -141,35 +148,57 @@ export class RemoteFoodLogRepository {
   pushMealLogs(documents: MealLogDoc[]): void {
     for (const document of documents) this.outbox.set(document.id, document);
     this.setState({ phase: this.state.ready ? 'syncing' : this.state.phase, error: null });
-    void this.flushOutbox();
+    void this.flushOutbox().catch(() => undefined);
   }
 
   private openSocket(): void {
     if (this.stopped || !this.accessToken) return;
     let socket: WebSocket;
     try {
-      socket = new WebSocket(this.wsUrl, ['balance', `balance.bearer.${this.accessToken}`]);
+      socket = new WebSocket(this.wsUrl, this.authMode === 'application' ? ['balance'] : ['balance', `balance.bearer.${this.accessToken}`]);
     } catch {
       this.setState({ phase: 'offline', error: null });
       this.scheduleReconnect();
       return;
     }
     this.socket = socket;
-
-    socket.onopen = () => {
-      if (this.socket !== socket) return;
+    const generation = this.generation;
+    const current = () => this.socket === socket && this.generation === generation && !this.stopped;
+    const ready = () => {
+      this.clearAuthTimer();
+      this.authenticated = true;
       this.reconnectAttempt = 0;
       this.setState({ phase: 'syncing', error: null });
-      void this.afterOpen();
+      void this.afterOpen(generation);
+    };
+
+    socket.onopen = () => {
+      if (!current()) return;
+      if (this.authMode === 'legacy') { ready(); return; }
+      this.authTimer = window.setTimeout(() => {
+        if (current() && !this.authenticated) socket.close();
+      }, REQUEST_TIMEOUT_MS);
+      try { socket.send(JSON.stringify({ event: 'authenticate', accessToken: this.accessToken })); }
+      catch { socket.close(); }
     };
     socket.onmessage = (event) => {
-      if (this.socket === socket) this.handleMessage(event.data);
+      if (!current()) return;
+      if (!this.authenticated) {
+        try {
+          const message: unknown = JSON.parse(event.data);
+          if (message && typeof message === 'object' && !Array.isArray(message) &&
+              Object.keys(message).length === 1 && (message as Record<string, unknown>).event === 'authenticated') ready();
+        } catch { /* Invalid or unsolicited frames never enable sync. */ }
+        return;
+      }
+      this.handleMessage(event.data);
     };
     socket.onerror = () => {
       // onclose owns reconnect and status transitions. Never log bearer protocols.
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
+      this.invalidateConnection();
       this.socket = null;
       this.rejectPending(new Error('SYNC_OFFLINE'));
       if (this.stopped) return;
@@ -178,13 +207,14 @@ export class RemoteFoodLogRepository {
     };
   }
 
-  private async afterOpen(): Promise<void> {
+  private async afterOpen(generation: number): Promise<void> {
     try {
       if (!this.hasInitialSync) {
         const [templates, logs] = await Promise.all([
           this.pullAll<MealTemplateDoc>('mealTemplates', true),
           this.pullAll<MealLogDoc>('mealLogs', true),
         ]);
+        this.assertGeneration(generation);
         this.handlers.onMealTemplates(templates, 'replace');
         this.handlers.onMealLogs(logs, 'replace');
         this.hasInitialSync = true;
@@ -192,10 +222,12 @@ export class RemoteFoodLogRepository {
       } else {
         await Promise.all([this.resyncCollection('mealTemplates'), this.resyncCollection('mealLogs')]);
       }
+      this.assertGeneration(generation);
       await this.flushOutbox();
+      this.assertGeneration(generation);
       if (!this.outbox.size) this.setState({ phase: 'synced', ready: true, error: null });
     } catch (syncError) {
-      if (this.stopped) return;
+      if (this.stopped || this.generation !== generation) return;
       this.setState({
         phase: this.socket?.readyState === WebSocket.OPEN ? 'error' : 'offline',
         error: syncError instanceof Error ? syncError.message : 'Remote sync failed',
@@ -207,6 +239,7 @@ export class RemoteFoodLogRepository {
     collection: SyncCollection,
     resetCheckpoint: boolean,
   ): Promise<T[]> {
+    const generation = this.generation;
     if (resetCheckpoint) this.checkpoints.delete(collection);
     let checkpoint = this.checkpoints.get(collection) ?? null;
     const documents: T[] = [];
@@ -214,6 +247,7 @@ export class RemoteFoodLogRepository {
 
     while (hasMore) {
       const page = await this.pullPage<T>(collection, checkpoint);
+      this.assertGeneration(generation);
       documents.push(...page.documents);
       checkpoint = page.checkpoint ?? checkpoint;
       if (page.checkpoint) this.checkpoints.set(collection, page.checkpoint);
@@ -245,8 +279,10 @@ export class RemoteFoodLogRepository {
   private resyncCollection(collection: SyncCollection): Promise<void> {
     const current = this.resyncs.get(collection);
     if (current) return current;
+    const generation = this.generation;
     const operation = (async () => {
       const documents = await this.pullAll<MealLogDoc | MealTemplateDoc>(collection, false);
+      this.assertGeneration(generation);
       if (!documents.length) return;
       if (collection === 'mealLogs') {
         this.handlers.onMealLogs(documents.filter(isMealLogDoc), 'merge');
@@ -262,15 +298,17 @@ export class RemoteFoodLogRepository {
 
   private flushOutbox(): Promise<void> {
     if (this.flushPromise) return this.flushPromise;
-    if (!this.hasInitialSync || !this.socket || this.socket.readyState !== WebSocket.OPEN || !this.outbox.size) {
+    if (!this.authenticated || !this.hasInitialSync || !this.socket || this.socket.readyState !== WebSocket.OPEN || !this.outbox.size) {
       return Promise.resolve();
     }
 
+    const generation = this.generation;
     const operation = (async () => {
-      while (this.socket?.readyState === WebSocket.OPEN && this.outbox.size) {
+      while (this.authenticated && this.socket?.readyState === WebSocket.OPEN && this.outbox.size) {
         const batch = Array.from(this.outbox.values()).slice(0, PUSH_BATCH_SIZE);
         this.setState({ phase: 'syncing', error: null });
         const response = await this.pushBatch(batch);
+        this.assertGeneration(generation);
 
         const rejected = new Set(response.rejectedIndexes);
         for (const [index, document] of batch.entries()) {
@@ -284,13 +322,14 @@ export class RemoteFoodLogRepository {
           throw new Error(`${rejected.size} meal mutation${rejected.size === 1 ? '' : 's'} rejected by server`);
         }
         await this.resyncCollection('mealLogs');
+        this.assertGeneration(generation);
         this.setState({ pending: this.outbox.size });
       }
     })();
     this.flushPromise = operation;
     return operation.finally(() => {
       if (this.flushPromise === operation) this.flushPromise = null;
-      if (!this.outbox.size && this.state.ready && this.socket?.readyState === WebSocket.OPEN) {
+      if (this.generation === generation && this.authenticated && !this.outbox.size && this.state.ready && this.socket?.readyState === WebSocket.OPEN) {
         this.setState({ phase: 'synced', error: null });
       }
     });
@@ -322,7 +361,7 @@ export class RemoteFoodLogRepository {
 
   private request(collection: SyncCollection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('SYNC_OFFLINE'));
+    if (!this.authenticated || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('SYNC_OFFLINE'));
     const id = requestId();
     return new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => {
@@ -348,7 +387,7 @@ export class RemoteFoodLogRepository {
       : null;
 
     if (event === 'collection_changed' || event === 'collectionChanged' || event === 'sync_required') {
-      if (this.hasInitialSync && collection) void this.resyncCollection(collection);
+      if (this.hasInitialSync && collection) void this.resyncCollection(collection).catch(() => undefined);
       return;
     }
 
@@ -375,6 +414,23 @@ export class RemoteFoodLogRepository {
       pending.reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  private assertGeneration(generation: number): void {
+    if (this.stopped || this.generation !== generation || !this.authenticated) throw new Error('SYNC_REPLACED');
+  }
+
+  private clearAuthTimer(): void {
+    if (this.authTimer !== null) window.clearTimeout(this.authTimer);
+    this.authTimer = null;
+  }
+
+  private invalidateConnection(): void {
+    this.generation += 1;
+    this.authenticated = false;
+    this.clearAuthTimer();
+    this.resyncs.clear();
+    this.flushPromise = null;
   }
 
   private scheduleReconnect(): void {
