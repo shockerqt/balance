@@ -32,8 +32,8 @@ module.exports = () => {
   return {
     ...baseConfig,
     name: variant.name,
-    // New verified-link native runtime for Dev; Daily/production keep their baseline.
-    ...(variantName === "development" ? { version: "1.2.1" } : {}),
+    // Compose and verified-link native runtime for Dev; Daily/production keep their baseline.
+    ...(variantName === "development" ? { version: "1.5.2" } : {}),
     scheme: variant.scheme,
     icon,
     ios: {
@@ -44,7 +44,7 @@ module.exports = () => {
       ...baseConfig.android,
       package: variant.package,
       ...(variantName === "development" ? {
-        versionCode: 4,
+        versionCode: 8,
         intentFilters: [{
           action: "VIEW",
           autoVerify: true,
