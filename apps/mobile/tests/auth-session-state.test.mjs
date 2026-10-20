@@ -831,3 +831,63 @@ test('staging account choices retain development-only binding and platforms', as
   assert.equal(accountChoicesBindingAllowed(false, true, 'android', 'balance-dev', 'development', binding), false);
   assert.equal(accountChoicesBindingAllowed(true, true, 'web', 'balance-dev', 'development', binding), false);
 });
+
+
+function loadMobileServiceConfig(variant, platform = 'android', env = {}) {
+  const module = { exports: {} };
+  const source = readFileSync(new URL('../src/services/config.ts', import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText;
+  runInNewContext(code, { module, exports: module.exports, process: { env }, require(name) {
+    if (name === 'expo-constants') return { expoConfig: { extra: { appVariant: variant } } };
+    if (name === 'react-native') return { Platform: { OS: platform } };
+    if (name === './auth/session-state') return { assertSyncConfiguration };
+    throw new Error(`Unexpected dependency: ${name}`);
+  }});
+  return module.exports;
+}
+
+test('Android Dev/Daily candidate JS defaults preserve Eri bindings when OTA public overrides are absent', () => {
+  for (const [variant, client, path] of [['development', 'balance-mobile-dev', 'dev'], ['daily', 'balance-mobile-daily', 'daily']]) {
+    const config = loadMobileServiceConfig(variant);
+    assert.equal(config.OIDC_ISSUER, 'https://auth.shocker.cl');
+    assert.equal(config.OIDC_MOBILE_CLIENT_ID, client);
+    assert.equal(config.OIDC_REDIRECT_URI, `https://balance.shocker.cl/auth-callback/${path}`);
+    assert.equal(config.OIDC_RESOURCE, 'https://balance.shocker.cl/api');
+    assert.deepEqual(Array.from(config.OIDC_SCOPES), ['openid', 'profile', 'email', 'offline_access']);
+    assert.equal(config.WS_SYNC_URL, 'wss://balance.shocker.cl/api/ws/sync/application');
+    assert.equal(config.WS_AUTH_MODE, 'application');
+    assert.equal(config.OIDC_ACCOUNT_CHOICES, true);
+  }
+});
+
+test('explicit staging and old-provider overrides stay isolated from Android production defaults', () => {
+  const staging = loadMobileServiceConfig('development', 'android', {
+    EXPO_PUBLIC_API_URL: 'https://balance-staging.shocker.cl/api',
+    EXPO_PUBLIC_WS_URL: 'wss://balance-staging.shocker.cl/api/ws/sync/application', EXPO_PUBLIC_WS_AUTH_MODE: 'application',
+    EXPO_PUBLIC_OIDC_ISSUER: 'https://auth-staging.shocker.cl', EXPO_PUBLIC_OIDC_MOBILE_CLIENT_ID: 'balance-mobile-staging',
+    EXPO_PUBLIC_OIDC_RESOURCE: 'https://balance-staging.shocker.cl/api', EXPO_PUBLIC_OIDC_SCOPES: 'openid email offline_access',
+    EXPO_PUBLIC_OIDC_REDIRECT_URI: 'https://balance-staging.shocker.cl/auth-callback', EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES: '1',
+  });
+  assert.equal(staging.OIDC_ISSUER, 'https://auth-staging.shocker.cl');
+  assert.equal(staging.OIDC_RESOURCE, 'https://balance-staging.shocker.cl/api');
+  assert.equal(staging.OIDC_MOBILE_CLIENT_ID, 'balance-mobile-staging');
+  assert.equal(staging.OIDC_REDIRECT_URI, 'https://balance-staging.shocker.cl/auth-callback');
+  assert.equal(staging.OIDC_ACCOUNT_CHOICES, true);
+  const legacy = loadMobileServiceConfig('daily', 'android', { EXPO_PUBLIC_OIDC_ISSUER: 'https://auth.shocker.cl/realms/balance' });
+  assert.equal(legacy.OIDC_RESOURCE, undefined);
+  assert.equal(legacy.WS_AUTH_MODE, 'legacy');
+  assert.equal(legacy.OIDC_ACCOUNT_CHOICES, false);
+  assert.equal(loadMobileServiceConfig('daily', 'android', { EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES: '0' }).OIDC_ACCOUNT_CHOICES, false);
+});
+
+test('other variants and iOS/web never inherit Android Eri bindings or account choices', () => {
+  for (const [variant, platform] of [['production', 'android'], [undefined, 'android'], ['daily', 'ios'], ['development', 'web']]) {
+    const config = loadMobileServiceConfig(variant, platform);
+    assert.equal(config.OIDC_ISSUER, 'https://auth.shocker.cl/realms/balance');
+    assert.equal(config.OIDC_MOBILE_CLIENT_ID, 'balance-mobile');
+    assert.equal(config.OIDC_ACCOUNT_CHOICES, false);
+    assert.equal(config.OIDC_REDIRECT_URI, undefined);
+  }
+});

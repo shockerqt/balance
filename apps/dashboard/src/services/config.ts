@@ -1,7 +1,7 @@
 const DEFAULT_API_URL = 'https://balance.shocker.cl/api';
 const DEFAULT_WS_URL = 'wss://balance.shocker.cl/api/ws/sync';
-const DEFAULT_OIDC_ISSUER = 'https://auth.shocker.cl/realms/balance';
-const DEFAULT_OIDC_CLIENT_ID = 'balance-mobile';
+const DEFAULT_OIDC_ISSUER = 'https://auth.shocker.cl';
+const DEFAULT_OIDC_CLIENT_ID = 'balance-dashboard';
 
 export interface DashboardServiceConfig {
   apiBaseUrl: string;
@@ -42,15 +42,22 @@ export function validateDashboardServiceConfig(config: DashboardServiceConfig): 
   return config;
 }
 
-export function getDashboardServiceConfig(origin = window.location.origin): DashboardServiceConfig {
+export function getDashboardServiceConfig(
+  origin = window.location.origin,
+  environment: Record<string, string | undefined> = import.meta.env ?? {},
+): DashboardServiceConfig {
+  const issuer = trimTrailingSlash(environment.VITE_OIDC_ISSUER ?? DEFAULT_OIDC_ISSUER);
+  // Explicit legacy/staging issuers must never inherit a production resource or transport.
+  const production = issuer === DEFAULT_OIDC_ISSUER &&
+    (environment.VITE_API_URL === undefined || trimTrailingSlash(environment.VITE_API_URL) === DEFAULT_API_URL);
   return validateDashboardServiceConfig({
-    apiBaseUrl: trimTrailingSlash(import.meta.env?.VITE_API_URL ?? DEFAULT_API_URL),
-    wsSyncUrl: import.meta.env?.VITE_WS_URL ?? DEFAULT_WS_URL,
-    oidcIssuer: trimTrailingSlash(import.meta.env?.VITE_OIDC_ISSUER ?? DEFAULT_OIDC_ISSUER),
-    oidcClientId: import.meta.env?.VITE_OIDC_CLIENT_ID ?? DEFAULT_OIDC_CLIENT_ID,
-    oidcResource: import.meta.env?.VITE_OIDC_RESOURCE,
-    oidcScopes: import.meta.env?.VITE_OIDC_SCOPES,
-    wsAuthMode: (import.meta.env?.VITE_WS_AUTH_MODE ?? 'legacy') as DashboardServiceConfig['wsAuthMode'],
-    oidcRedirectUri: import.meta.env?.VITE_OIDC_REDIRECT_URI ?? `${trimTrailingSlash(origin)}/`,
+    apiBaseUrl: trimTrailingSlash(environment.VITE_API_URL ?? DEFAULT_API_URL),
+    wsSyncUrl: environment.VITE_WS_URL ?? `${DEFAULT_WS_URL}${production ? '/application' : ''}`,
+    oidcIssuer: issuer,
+    oidcClientId: environment.VITE_OIDC_CLIENT_ID ?? (production ? DEFAULT_OIDC_CLIENT_ID : 'balance-mobile'),
+    oidcResource: environment.VITE_OIDC_RESOURCE ?? (production ? DEFAULT_API_URL : undefined),
+    oidcScopes: environment.VITE_OIDC_SCOPES ?? (production ? 'openid profile email offline_access' : undefined),
+    wsAuthMode: (environment.VITE_WS_AUTH_MODE ?? (production ? 'application' : 'legacy')) as DashboardServiceConfig['wsAuthMode'],
+    oidcRedirectUri: environment.VITE_OIDC_REDIRECT_URI ?? `${trimTrailingSlash(origin)}/`,
   });
 }
