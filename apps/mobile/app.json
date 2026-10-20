@@ -2,7 +2,7 @@
   "expo": {
     "name": "Balance",
     "slug": "balance",
-    "version": "1.5.1",
+    "version": "1.6.0",
     "orientation": "portrait",
     "icon": "./assets/images/balance-icon.png",
     "scheme": "balance",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.balance.app",
-      "versionCode": 7,
+      "versionCode": 9,
       "newArchEnabled": true,
       "adaptiveIcon": {
         "backgroundColor": "#010517",

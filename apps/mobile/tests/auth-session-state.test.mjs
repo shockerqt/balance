@@ -710,7 +710,7 @@ test('claimed HTTPS redirect is exact and restricted to Android staging developm
   assert.equal(allowsLegacyCallbackToken('https://auth.shocker.cl/realms/balance', 'balance-mobile'), true);
 });
 
-test('only development declares the exact verified Android callback', () => {
+test('native variants declare disjoint production callbacks and retain the staging Dev callback', () => {
   const require = createRequire(import.meta.url);
   const config = require('../app.config.js');
   const previous = process.env.APP_VARIANT;
@@ -718,8 +718,15 @@ test('only development declares the exact verified Android callback', () => {
     for (const variant of ['development', 'daily', 'production']) {
       process.env.APP_VARIANT = variant;
       const filters = config().android.intentFilters;
-      if (variant === 'development') assert.deepEqual(filters, [{ action: 'VIEW', autoVerify: true, category: ['BROWSABLE','DEFAULT'], data: [{ scheme: 'https', host: 'balance-staging.shocker.cl', path: '/auth-callback' }] }]);
-      else assert.equal(filters, undefined);
+      const expected = variant === 'development'
+        ? [{ scheme: 'https', host: 'balance-staging.shocker.cl', path: '/auth-callback' },
+           { scheme: 'https', host: 'balance.shocker.cl', path: '/auth-callback/dev' }]
+        : variant === 'daily'
+          ? [{ scheme: 'https', host: 'balance.shocker.cl', path: '/auth-callback/daily' }] : [];
+      if (!expected.length) assert.equal(filters, undefined);
+      else assert.deepEqual(filters, expected.map(data => ({ action: 'VIEW', autoVerify: true,
+        category: ['BROWSABLE', 'DEFAULT'], data: [data] })));
+
     }
   } finally { if (previous === undefined) delete process.env.APP_VARIANT; else process.env.APP_VARIANT = previous; }
 });
@@ -758,4 +765,69 @@ test('remembered metadata rejects malformed and foreign bindings and strips cred
   for (const key of ['issuer','clientId','resource','apiBaseUrl']) assert.equal(parseRememberedAccount(JSON.stringify(record),{...binding,[key]:'different'}),null);
   const clean=parseRememberedAccount(JSON.stringify({...record,accessToken:'forbidden',user:{...record.user,picture:'remote',refreshToken:'forbidden'}}),binding);
   assert.deepEqual(clean,record);
+});
+
+test('production Android bindings require exact registrations and deny mixed contexts', async () => {
+  const { chosenMobileRedirect, accountChoicesBindingAllowed, allowsLegacyCallbackToken } = await import('../src/services/auth/session-state.ts');
+  const contexts = [
+    { clientId: 'balance-mobile-dev', scheme: 'balance-dev', variant: 'development', development: true, redirect: 'https://balance.shocker.cl/auth-callback/dev' },
+    { clientId: 'balance-mobile-daily', scheme: 'balance-daily', variant: 'daily', development: false, redirect: 'https://balance.shocker.cl/auth-callback/daily' },
+  ];
+  for (const context of contexts) {
+    const binding = { issuer: 'https://auth.shocker.cl', clientId: context.clientId, resource: 'https://balance.shocker.cl/api', apiBaseUrl: 'https://balance.shocker.cl/api' };
+    const choose = (overrides = {}) => {
+      const v = { binding, scheme: context.scheme, platform: 'android', variant: context.variant, redirect: context.redirect, ...overrides };
+      return chosenMobileRedirect(v.binding, v.scheme, v.platform, v.variant, v.redirect);
+    };
+    const allowed = (overrides = {}) => {
+      const v = { enabled: true, development: context.development, platform: 'android', scheme: context.scheme, variant: context.variant, binding, ...overrides };
+      return accountChoicesBindingAllowed(v.enabled, v.development, v.platform, v.scheme, v.variant, v.binding);
+    };
+    assert.equal(choose(), context.redirect);
+    assert.equal(choose({ redirect: undefined }), undefined);
+    assert.equal(allowed(), true);
+    assert.equal(allowed({ enabled: false }), false);
+    assert.equal(allowed({ development: !context.development }), false);
+    assert.doesNotThrow(() => assertStagingMobileRedirect(binding, context.scheme, context.redirect, choose()));
+    assert.throws(() => assertStagingMobileRedirect(binding, context.scheme, context.redirect));
+    assert.throws(() => assertStagingMobileRedirect(binding, context.scheme, `${context.scheme}://auth-callback`));
+    assert.throws(() => assertStagingMobileRedirect(binding, 'balance', context.redirect, context.redirect));
+    for (const platform of ['ios', 'web', 'unknown']) {
+      assert.throws(() => choose({ platform }));
+      assert.equal(allowed({ platform }), false);
+    }
+    for (const other of contexts.filter(other => other !== context)) {
+      for (const key of ['scheme', 'variant', 'redirect']) assert.throws(() => choose({ [key]: other[key] }));
+      for (const key of ['scheme', 'variant']) assert.equal(allowed({ [key]: other[key] }), false);
+      assert.throws(() => assertStagingMobileRedirect(binding, context.scheme, other.redirect, other.redirect));
+    }
+    for (const redirect of [context.redirect + '/', context.redirect + '?x=1', context.redirect + '#fragment', 'https://balance-staging.shocker.cl/auth-callback', 'https://foreign.invalid/auth-callback']) assert.throws(() => choose({ redirect }));
+    for (const [key, values] of Object.entries({
+      issuer: ['https://auth-staging.shocker.cl', 'https://auth.shocker.cl/realms/balance', 'https://foreign.invalid'],
+      clientId: ['balance-mobile-staging', 'balance-mobile', 'foreign'],
+      resource: [undefined, 'https://balance-staging.shocker.cl/api', 'https://balance.shocker.cl/api/mcp'],
+      apiBaseUrl: ['https://balance-staging.shocker.cl/api', 'https://foreign.invalid/api'],
+    })) for (const value of values) {
+      const foreign = { ...binding, [key]: value };
+      assert.throws(() => choose({ binding: foreign }));
+      assert.equal(allowed({ binding: foreign }), false);
+      assert.throws(() => assertStagingMobileRedirect(foreign, context.scheme, context.redirect, context.redirect));
+    }
+    assert.equal(allowsLegacyCallbackToken(binding.issuer, binding.clientId), false);
+    assert.equal(allowsLegacyCallbackToken('https://foreign.invalid', binding.clientId), false);
+  }
+  assert.equal(allowsLegacyCallbackToken('https://auth.shocker.cl', 'foreign'), false);
+  assert.equal(allowsLegacyCallbackToken('https://auth.shocker.cl/realms/balance', 'balance-mobile'), true);
+});
+
+test('staging account choices retain development-only binding and platforms', async () => {
+  const { accountChoicesBindingAllowed } = await import('../src/services/auth/session-state.ts');
+  const binding = { issuer: 'https://auth-staging.shocker.cl', clientId: 'balance-mobile-staging', resource: 'https://balance-staging.shocker.cl/api', apiBaseUrl: 'https://balance-staging.shocker.cl/api' };
+  for (const platform of ['android', 'ios']) {
+    assert.equal(accountChoicesBindingAllowed(true, true, platform, 'balance-dev', 'development', binding), true);
+    assert.equal(accountChoicesBindingAllowed(true, false, platform, 'balance-dev', 'development', binding), false);
+    assert.equal(accountChoicesBindingAllowed(true, true, platform, 'balance-daily', 'daily', binding), false);
+  }
+  assert.equal(accountChoicesBindingAllowed(false, true, 'android', 'balance-dev', 'development', binding), false);
+  assert.equal(accountChoicesBindingAllowed(true, true, 'web', 'balance-dev', 'development', binding), false);
 });

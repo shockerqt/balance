@@ -71,12 +71,36 @@ export const assertAuthorizationResponseIssuer = (
 
 export const STAGING_ANDROID_REDIRECT = "https://balance-staging.shocker.cl/auth-callback";
 
-// A public opt-in for the reviewed Android development binary only.
+// Static registrations remain candidates until explicitly configured and provisioned.
+const productionMobileContexts = [
+  { clientId: "balance-mobile-dev", scheme: "balance-dev", variant: "development", development: true,
+    redirect: "https://balance.shocker.cl/auth-callback/dev" },
+  { clientId: "balance-mobile-daily", scheme: "balance-daily", variant: "daily", development: false,
+    redirect: "https://balance.shocker.cl/auth-callback/daily" },
+] as const;
+const productionMobileContext = (binding: SessionBinding) =>
+  binding.issuer === "https://auth.shocker.cl" &&
+  binding.apiBaseUrl === "https://balance.shocker.cl/api" &&
+  binding.resource === binding.apiBaseUrl
+    ? productionMobileContexts.find(context => context.clientId === binding.clientId)
+    : undefined;
+const requiresProductionMobileContext = (binding: SessionBinding) =>
+  binding.issuer === "https://auth.shocker.cl" ||
+  productionMobileContexts.some(context => context.clientId === binding.clientId);
+
+// Public opt-in for an exact reviewed Android binary and static registration.
 export const chosenMobileRedirect = (
   binding: SessionBinding, scheme: string, platform: string, variant: unknown,
   configured?: string,
 ): string | undefined => {
   if (configured === undefined) return undefined;
+  if (requiresProductionMobileContext(binding)) {
+    const context = productionMobileContext(binding);
+    if (!context || platform !== "android" || scheme !== context.scheme ||
+        variant !== context.variant || configured !== context.redirect)
+      throw new Error("HTTPS redirect requires the reviewed Android production context");
+    return configured;
+  }
   if (configured !== STAGING_ANDROID_REDIRECT || platform !== "android" ||
       variant !== "development" || scheme !== "balance-dev" ||
       binding.issuer !== "https://auth-staging.shocker.cl" ||
@@ -87,9 +111,11 @@ export const chosenMobileRedirect = (
   return configured;
 };
 
-// Strict staging never accepts credentials delivered directly in a URL.
+// Eri static clients never accept credentials delivered directly in a URL.
 export const allowsLegacyCallbackToken = (issuer: string, clientId: string) =>
-  issuer !== "https://auth-staging.shocker.cl" && clientId !== "balance-mobile-staging";
+  issuer !== "https://auth-staging.shocker.cl" && clientId !== "balance-mobile-staging" &&
+  issuer !== "https://auth.shocker.cl" &&
+  !productionMobileContexts.some(context => context.clientId === clientId);
 
 export const assertStagingMobileRedirect = (
   binding: SessionBinding,
@@ -97,6 +123,13 @@ export const assertStagingMobileRedirect = (
   redirect: string,
   chosenRedirect?: string,
 ) => {
+  if (requiresProductionMobileContext(binding)) {
+    const context = productionMobileContext(binding);
+    if (!context || scheme !== context.scheme || chosenRedirect !== context.redirect ||
+        redirect !== context.redirect)
+      throw new Error("Production requires the registered Balance Android HTTPS redirect");
+    return;
+  }
   if (chosenRedirect !== undefined && chosenRedirect !== STAGING_ANDROID_REDIRECT)
     throw new Error("Unregistered mobile redirect");
   if (binding.issuer === "https://auth-staging.shocker.cl" ||
@@ -475,12 +508,20 @@ export const parseRememberedAccount = (raw: string | null, binding: SessionBindi
 export const accountChoicesBindingAllowed = (
   enabled: boolean, development: boolean, platform: string, scheme: unknown,
   variant: unknown, binding: SessionBinding,
-) => enabled && development && ['android', 'ios'].includes(platform) &&
-  scheme === 'balance-dev' && variant === 'development' &&
-  binding.issuer === 'https://auth-staging.shocker.cl' &&
-  binding.clientId === 'balance-mobile-staging' &&
-  binding.resource === 'https://balance-staging.shocker.cl/api' &&
-  binding.apiBaseUrl === binding.resource;
+) => {
+  if (!enabled) return false;
+  if (requiresProductionMobileContext(binding)) {
+    const context = productionMobileContext(binding);
+    return !!context && platform === 'android' && scheme === context.scheme &&
+      variant === context.variant && development === context.development;
+  }
+  return development && ['android', 'ios'].includes(platform) &&
+    scheme === 'balance-dev' && variant === 'development' &&
+    binding.issuer === 'https://auth-staging.shocker.cl' &&
+    binding.clientId === 'balance-mobile-staging' &&
+    binding.resource === 'https://balance-staging.shocker.cl/api' &&
+    binding.apiBaseUrl === binding.resource;
+};
 export const assertRememberedIdentity = (user: StoredUserProfile, remembered: RememberedAccount | null) => {
   if (!isRememberableProfile(user)) throw new Error("Invalid verified profile");
   if (remembered && user.id !== remembered.user.id)

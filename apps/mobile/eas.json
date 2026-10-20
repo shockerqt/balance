@@ -43,6 +43,38 @@
         "EXPO_PUBLIC_OIDC_REDIRECT_URI": "https://balance-staging.shocker.cl/auth-callback",
         "EXPO_PUBLIC_AUTH_DIAGNOSTICS": "1"
       }
+    },
+    "eri-production-dev": {
+      "extends": "development",
+      "env": {
+        "EXPO_PUBLIC_OIDC_ISSUER": "https://auth.shocker.cl",
+        "EXPO_PUBLIC_OIDC_RESOURCE": "https://balance.shocker.cl/api",
+        "EXPO_PUBLIC_OIDC_SCOPES": "openid profile email offline_access",
+        "EXPO_PUBLIC_API_URL": "https://balance.shocker.cl/api",
+        "EXPO_PUBLIC_WS_URL": "wss://balance.shocker.cl/api/ws/sync/application",
+        "EXPO_PUBLIC_WS_AUTH_MODE": "application",
+        "EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES": "1",
+        "EXPO_PUBLIC_AUTH_DIAGNOSTICS": "0",
+        "APP_VARIANT": "development",
+        "EXPO_PUBLIC_OIDC_MOBILE_CLIENT_ID": "balance-mobile-dev",
+        "EXPO_PUBLIC_OIDC_REDIRECT_URI": "https://balance.shocker.cl/auth-callback/dev"
+      }
+    },
+    "eri-production-daily": {
+      "extends": "preview",
+      "env": {
+        "EXPO_PUBLIC_OIDC_ISSUER": "https://auth.shocker.cl",
+        "EXPO_PUBLIC_OIDC_RESOURCE": "https://balance.shocker.cl/api",
+        "EXPO_PUBLIC_OIDC_SCOPES": "openid profile email offline_access",
+        "EXPO_PUBLIC_API_URL": "https://balance.shocker.cl/api",
+        "EXPO_PUBLIC_WS_URL": "wss://balance.shocker.cl/api/ws/sync/application",
+        "EXPO_PUBLIC_WS_AUTH_MODE": "application",
+        "EXPO_PUBLIC_OIDC_ACCOUNT_CHOICES": "1",
+        "EXPO_PUBLIC_AUTH_DIAGNOSTICS": "0",
+        "APP_VARIANT": "daily",
+        "EXPO_PUBLIC_OIDC_MOBILE_CLIENT_ID": "balance-mobile-daily",
+        "EXPO_PUBLIC_OIDC_REDIRECT_URI": "https://balance.shocker.cl/auth-callback/daily"
+      }
     }
   }
 }
