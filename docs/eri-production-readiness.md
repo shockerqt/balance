@@ -1,8 +1,10 @@
 # Eri production release preparation
 
 INF-017 owns production infrastructure and activation; BAL-033 owns these
-consumer changes. Preparation is not a production cutover. Keycloak defaults,
-current Daily native baseline and existing running production services remain.
+consumer changes. The source candidate now defaults reviewed Android Dev/Daily and dashboard builds
+to Eri. This is not activation evidence: production publication remains paused,
+and existing running services and the Daily native compatibility baseline are not
+changed by these source defaults.
 
 ## Candidate Android builds
 
@@ -25,19 +27,27 @@ account choices. Diagnostic UI has been removed. Android production account
 choices require exact issuer/client/API/resource/variant/scheme/development
 bindings; iOS and web are not implicitly provisioned by the Android release.
 
-The normal `development` and `preview` profiles retain their old environment
-selection. Candidate profiles do not automatically change EAS Update variables:
-Daily OTA publication must use the same reviewed public OIDC/API/WSS/redirect
-values in the EAS **preview** environment. Before activation, verify exact
-public environment readback and the actual exported bundle, otherwise a later
-OTA could return to the legacy defaults. Do not promote the native baseline or
-publish an OTA until the new Daily APK and its complete runtime configuration
-are verified. Keep the existing native compatibility gate strict.
+The candidate APK builds use version 1.6.0/code 9 from integrated source
+`aa3221`; their configured build profiles already supply the production binding.
+The later configuration-only JavaScript delta selects the same binding from
+`Constants.expoConfig.extra.appVariant` for Android `development` and `daily`.
+Thus an OTA exported without public environment overrides retains Eri rather
+than falling back to Keycloak. Other variants, iOS and web do not automatically
+inherit those Android bindings or account choices. Explicit public configuration
+continues to override defaults and keeps staging isolated.
+
+Before activation, verify the APK/build receipts, exact exported bundle and any
+explicit public EAS preview environment overrides. An old explicit issuer/API
+still wins over defaults and can select the old environment. Do not promote the
+native baseline or publish an OTA until the new Daily APK and complete runtime
+configuration are verified. Keep the existing native compatibility gate strict.
+No artifact publication or live authentication acceptance is claimed here.
 
 ## Dashboard candidate
 
-Keep current default Keycloak configuration until coordinated activation. The
-candidate Eri artifact must explicitly configure:
+The dashboard source candidate defaults to the following production Eri binding.
+Explicit build settings remain authoritative; inspect the final artifact before
+coordinated activation:
 
 ```
 VITE_OIDC_ISSUER=https://auth.shocker.cl
@@ -49,6 +59,11 @@ VITE_API_URL=https://balance.shocker.cl/api
 VITE_WS_URL=wss://balance.shocker.cl/api/ws/sync/application
 VITE_WS_AUTH_MODE=application
 ```
+
+Explicit legacy or staging issuer/API settings do not inherit the production
+resource, renewable scopes or application mode. The existing loopback Keycloak
+E2E build retains its declared legacy WebSocket URL and transport without a
+production resource. Staging must explicitly provide its own complete binding.
 
 Discovery supplies authorization/token/revocation endpoints; do not construct
 Keycloak-specific paths for Eri. User identity comes from authenticated `/me`,
