@@ -73,9 +73,16 @@ EXPO_PUBLIC_WS_AUTH_MODE=application
 These are public bundle configuration values, not runtime secrets. Resource
 extras accompany authorize, code exchange and refresh. Scopes are whitespace
 separated; `offline_access` permits the existing native refresh lifecycle.
-Staging requires the development variant's exact registered redirect
-`balance-dev://auth-callback`; production/daily/web redirects are rejected for
-this staging client. Before exchanging a callback code, the mobile requires exact
+Staging defaults to the legacy development redirect `balance-dev://auth-callback`
+with interactive Eri consent. The new Android Dev build 1.2.1 (4), profile
+`eri-staging`, opts into `EXPO_PUBLIC_OIDC_REDIRECT_URI=https://balance-staging.shocker.cl/auth-callback`.
+Only the exact Android/development/staging binding permits this value; authorization
+and exchange use the same URI. The native manifest includes its exact auto-verified
+App Link. INF-015 must verify the actual APK signer and public assetlinks association
+before enabling Eri preauthorization for that redirect. A new APK is required;
+Metro/OTA cannot add the association to an installed binary. There is no custom-scheme
+fallback from the HTTPS callback. Daily, production and web cannot select it.
+Strict staging callback routes never adopt credentials from URL query parameters. Before exchanging a callback code, the mobile requires exact
 `iss` when discovery advertises `authorization_response_iss_parameter_supported`.
 Any returned issuer mismatch is rejected even if the provider did not advertise
 support. PKCE and AuthSession's own callback/state validation remain in use.
