@@ -40,7 +40,7 @@ export function nativeContract(ref) {
     if (path === `node_modules/${purePackage}` || path === '../../packages/balance-domain') delete lock.packages[path];
   }
   const files = git('ls-tree', '-r', '--name-only', ref, '--', 'apps/mobile').split('\n')
-    .filter(path => /^apps\/mobile\/(app\.(json|config\.[cm]?[jt]s)|eas\.json|android\/|ios\/|plugins\/|assets\/)/.test(path));
+    .filter(path => /^apps\/mobile\/(app\.(json|config\.[cm]?[jt]s)|eas\.json|android\/|ios\/|plugins\/|modules\/[^/]+\/(?:android\/|ios\/|expo-module\.config\.json)|assets\/)/.test(path));
   const blobs = files.map(path => [path, git('rev-parse', `${ref}:${path}`)]);
   return createHash('sha256').update(JSON.stringify(sorted({ pkg, lock, blobs }))).digest('hex');
 }

@@ -1,0 +1,14 @@
+{
+  "platforms": [
+    "android"
+  ],
+  "coreFeatures": [
+    "compose"
+  ],
+  "android": {
+    "modules": [
+      "expo.modules.balancedailylog.BalanceDailyLogModule",
+      "expo.modules.balancedailylog.BalanceFoodEntryModule"
+    ]
+  }
+}

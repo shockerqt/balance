@@ -1,0 +1,43 @@
+name: Verify Balance Native Daily Log
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - "packages/balance-domain/**"
+      - ".github/workflows/mobile-native-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-native-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci --prefix apps/mobile
+      - name: Generate Android project and resolve local module
+        working-directory: apps/mobile
+        run: APP_VARIANT=development npx expo prebuild --platform android --no-install
+      - name: Verify app compatibility, compile Compose and test calendar arithmetic
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:checkDebugAarMetadata :balance-daily-log:compileDebugKotlin :balance-daily-log:testDebugUnitTest --no-daemon -PreactNativeArchitectures=arm64-v8a
