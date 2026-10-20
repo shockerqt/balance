@@ -37,6 +37,7 @@ async function harness(options = {}) {
     lineage: 'synthetic-family', binding,
   }));
   else if (options.loggedOut) values.set(sessionState.SESSION_KEY, sessionState.LOGGED_OUT_MARKER);
+  if (options.remembered) values.set(sessionState.REMEMBERED_ACCOUNT_KEY, JSON.stringify(options.remembered));
   const calls = { discovery: [], refresh: [], revoke: [], browser: [], prompt: [], crypto: 0, sync: [], templates: 0, warnings: [], requests: [], writes: [] };
   const timers = new Set();
   const scheduled = [];
@@ -69,15 +70,24 @@ async function harness(options = {}) {
     },
   };
   const secure = {
-    getItemAsync: async key => values.get(key) ?? null,
+    getItemAsync: async key => {
+      const value = values.get(key) ?? null;
+      if (key === sessionState.REMEMBERED_ACCOUNT_KEY && options.rememberedRead) await options.rememberedRead.promise;
+      return value;
+    },
     setItemAsync: async (key, value) => {
       if (value === sessionState.LOGGED_OUT_MARKER && options.storage) await options.storage.promise;
+      if (key === sessionState.REMEMBERED_ACCOUNT_KEY && options.rememberedWrite) await options.rememberedWrite.promise;
       calls.writes.push({key,value});
       values.set(key, value);
     },
-    deleteItemAsync: async key => { values.delete(key); },
+    deleteItemAsync: async key => {
+      if (key === sessionState.REMEMBERED_ACCOUNT_KEY && options.forgetFails) throw new Error("synthetic storage failure");
+      values.delete(key);
+    },
   };
   const config = {
+    OIDC_ACCOUNT_CHOICES: options.accountChoices ?? false,
     API_BASE_URL: binding.apiBaseUrl, OIDC_ISSUER: binding.issuer,
     OIDC_MOBILE_CLIENT_ID: binding.clientId, OIDC_RESOURCE: binding.resource,
     OIDC_REDIRECT_URI: options.redirectUri,
@@ -637,7 +647,8 @@ async function loginScreenFor(auth) {
   const nativeRequire=createRequire(import.meta.url);
   const require=name=>{
     if (name==='react') return nativeRequire('react');
-    if (name==='react-native') return {StyleSheet:{create:value=>value},TouchableOpacity:component('TouchableOpacity'),View:component('View')};
+    if (name==='react-native') return {StyleSheet:{create:value=>value},TouchableOpacity:component('TouchableOpacity'),View:component('View'),Image:component('Image'),ScrollView:component('ScrollView')};
+    if (name==='../../assets/images/google-g.png') return 'bundled-google-g';
     if (name==='expo-router') return {useRouter:()=>({replace:path=>routes.push(path)})};
     if (name==='@/hooks/use-auth') return {useAuth:()=>auth};
     if (name==='@/theme') return {useTheme:()=>({space:new Proxy({},{get:()=>1}),colors:new Proxy({},{get:()=>"black"}),border:{hairline:1},radius:{pill:1}})};
@@ -1076,4 +1087,152 @@ test('real hook malformed hint cannot hydrate a session', async () => {
     assert.equal(h.auth.isAuthenticated,false);
     assert.equal(h.calls.requests.length,0);
   } finally {await h.close();}
+});
+
+
+const rememberedFixture = (id = 7) => sessionState.rememberedAccountForProfile(
+  { id, email: 'synthetic@example.invalid', name: 'Synthetic' }, stage,
+);
+const successfulPrompt = { type: 'success', params: { code: 'public-test-code', iss: stage.issuer } };
+
+test('account choices gate defaults off and requires exact native development staging binding', async () => {
+  for (const options of [{}, { accountChoices:true, production:true }, { accountChoices:true, platform:'web' },
+    { accountChoices:true, variant:'production' }, { accountChoices:true, scheme:'balance' }, { accountChoices:true, dev:false }]) {
+    const h = await harness({ session:false, ...options });
+    try { assert.equal(h.auth.accountChoicesAvailable,false); assert.equal(h.auth.rememberedAccount,null); }
+    finally { await h.close(); }
+  }
+});
+
+test('account choices remembers only verified metadata, selects other Google account and logout avoids browser', async () => {
+  const h = await harness({ session:false, accountChoices:true });
+  try {
+    const { pending } = await h.start(auth => auth.loginWithGoogle());
+    assert.equal(h.calls.prompt[0].extraParams.prompt,'select_account');
+    await act(async () => { h.prompt.resolve(successfulPrompt); await pending; });
+    assert.equal(h.auth.user.id,7);
+    const record = JSON.parse(h.values.get(sessionState.REMEMBERED_ACCOUNT_KEY));
+    assert.deepEqual(Object.keys(record.user).sort(),['email','id']);
+    assert.equal(record.user.id,7);
+    assert(!JSON.stringify(record).includes('public-next'));
+    await act(async () => { assert.equal(await h.auth.logout(),'not_requested'); });
+    assert.equal(h.calls.browser.length,0);
+    assert.equal(h.auth.user,null);
+    assert.equal(h.auth.rememberedAccount.user.id,7);
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.equal(h.calls.revoke.length,1);
+  } finally { await h.close(); }
+});
+
+test('remembered continuation rejects a different numeric Balance identity before credential adoption or sync', async () => {
+  const h = await harness({ session:false, accountChoices:true, remembered:rememberedFixture(8) });
+  try {
+    const { pending } = await h.start(auth => auth.continueWithRememberedAccount());
+    assert.equal(h.calls.prompt[0].extraParams.prompt,undefined);
+    await act(async () => { h.prompt.resolve(successfulPrompt); await pending; });
+    assert.equal(h.auth.user,null);
+    assert.match(h.auth.loginError,/Usa otra cuenta/);
+    assert(!h.calls.writes.some(write => write.key === sessionState.SESSION_KEY));
+    assert(!h.calls.sync.includes('connect'));
+    assert.equal(h.calls.revoke.length,1);
+    assert.equal(h.auth.rememberedAccount.user.id,8);
+  } finally { await h.close(); }
+});
+
+test('forget invalidates pending remembered hydration and never restores credentials', async () => {
+  const read = deferred();
+  const h = await harness({ session:false, accountChoices:true, remembered:rememberedFixture(), rememberedRead:read });
+  try {
+    await act(async () => { await h.auth.forgetRememberedAccount(); read.resolve(); await flush(); });
+    assert.equal(h.auth.rememberedAccount,null);
+    assert.equal(h.auth.user,null);
+    assert.equal(h.values.has(sessionState.REMEMBERED_ACCOUNT_KEY),false);
+    assert.equal(h.calls.prompt.length,0);
+    assert.equal(h.calls.requests.length,0);
+  } finally { read.resolve(); await h.close(); }
+});
+
+test('forget during pending login prevents adoption and revokes late issued refresh', async () => {
+  const exchange = deferred();
+  const h = await harness({ session:false, accountChoices:true, remembered:rememberedFixture(), exchangeCodeAsync:() => exchange.promise });
+  try {
+    const { pending } = await h.start(auth => auth.continueWithRememberedAccount());
+    await act(async () => { h.prompt.resolve(successfulPrompt); await flush(); await h.auth.forgetRememberedAccount();
+      exchange.resolve({accessToken:'public-late-access',refreshToken:'public-late-refresh',issuedAt:Date.now()/1000}); await pending; });
+    assert.equal(h.auth.user,null);
+    assert.equal(h.auth.rememberedAccount,null);
+    assert.equal(h.values.has(sessionState.REMEMBERED_ACCOUNT_KEY),false);
+    assert(!h.calls.writes.some(write => write.key === sessionState.SESSION_KEY));
+    assert.equal(h.calls.revoke.length,1);
+  } finally { await h.close(); }
+});
+
+test('forget queued behind a metadata write wins on disk and in memory', async () => {
+  const write = deferred();
+  const h = await harness({ session:false, accountChoices:true, rememberedWrite:write });
+  try {
+    const { pending } = await h.start(auth => auth.loginWithGoogle());
+    await act(async () => { h.prompt.resolve(successfulPrompt); await flush(); });
+    const forgetting = await h.start(auth => auth.forgetRememberedAccount());
+    await act(async () => { write.resolve(); await pending; await forgetting.pending; });
+    assert.equal(h.auth.rememberedAccount,null);
+    assert.equal(h.values.has(sessionState.REMEMBERED_ACCOUNT_KEY),false);
+  } finally { write.resolve(); await h.close(); }
+});
+
+
+test('account-choice logout reports uncertain refresh revocation and never opens browser', async () => {
+  const h=await harness({accountChoices:true,revokeResult:false});
+  try {
+    assert.equal(h.auth.rememberedAccount.user.id,7);
+    await act(async()=>{assert.equal(await h.auth.logout(),'unconfirmed');});
+    assert.equal(h.auth.user,null);
+    assert.equal(h.calls.browser.length,0);
+  } finally {await h.close();}
+});
+
+test('fresh hydration seeds metadata but offline cached profile does not', async () => {
+  const h=await harness({accountChoices:true});
+  try {assert.equal(h.auth.rememberedAccount.user.id,7);}
+  finally {await h.close();}
+  const offline=await harness({accountChoices:true,fetch:async()=>{throw new Error('offline');}});
+  try {assert.equal(offline.auth.rememberedAccount,null);assert.equal(offline.values.has(sessionState.REMEMBERED_ACCOUNT_KEY),false);}
+  finally {await offline.close();}
+});
+
+
+test('local account-choice logout bounds offline revocation while credentials stay cleared', async () => {
+  const revoke=deferred();
+  const h=await harness({accountChoices:true,revoke});
+  try {
+    const {pending}=await h.start(auth=>auth.logout());
+    assert.equal(h.auth.user,null);
+    assert.equal(h.values.get(sessionState.SESSION_KEY),sessionState.LOGGED_OUT_MARKER);
+    assert.equal(h.calls.browser.length,0);
+    const deadline=h.scheduled.find(entry=>entry.delay===5000);
+    assert(deadline);
+    await act(async()=>{deadline.callback(); assert.equal(await pending,'unconfirmed');});
+  } finally {await h.close();}
+});
+
+
+
+test('failed remembered deletion keeps the choice visible for an explicit retry', async () => {
+  const h=await harness({session:false,accountChoices:true,remembered:rememberedFixture(),forgetFails:true});
+  try {
+    await act(async()=>{await assert.rejects(()=>h.auth.forgetRememberedAccount());});
+    assert.equal(h.auth.rememberedAccount.user.id,7);
+    assert.equal(h.values.has(sessionState.REMEMBERED_ACCOUNT_KEY),true);
+  } finally {await h.close();}
+});
+
+
+test('late remembered read cannot overwrite metadata seeded by fresh authenticated hydration', async () => {
+  const read=deferred();
+  const h=await harness({accountChoices:true,remembered:rememberedFixture(8),rememberedRead:read});
+  try {
+    assert.equal(h.auth.rememberedAccount.user.id,7);
+    await act(async()=>{read.resolve();await flush();});
+    assert.equal(h.auth.rememberedAccount.user.id,7);
+  } finally {read.resolve();await h.close();}
 });

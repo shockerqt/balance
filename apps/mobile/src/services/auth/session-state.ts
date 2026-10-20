@@ -443,3 +443,46 @@ export const isValidLogoutReturn = (value: string, redirect: string, state: stri
       [...url.searchParams.keys()].every(key => key === "state");
   } catch { return false; }
 };
+
+// Display metadata only: it never grants or restores an authenticated session.
+export interface RememberedAccount {
+  version: 1;
+  binding: SessionBinding;
+  user: StoredUserProfile;
+}
+export const REMEMBERED_ACCOUNT_KEY = "balance.auth.remembered.v1";
+const isRememberableProfile = (user: unknown): user is StoredUserProfile =>
+  !!user && isStoredUser(user) && Number.isSafeInteger((user as StoredUserProfile).id) &&
+  (user as StoredUserProfile).id > 0 && (user as StoredUserProfile).email.trim().length > 0 &&
+  (user as StoredUserProfile).email.length <= 320 &&
+  ((user as StoredUserProfile).name === undefined || (user as StoredUserProfile).name!.length <= 200);
+export const rememberedAccountForProfile = (user: StoredUserProfile, binding: SessionBinding): RememberedAccount => {
+  if (!isRememberableProfile(user)) throw new Error("Invalid remembered profile");
+  return {
+    version: 1, binding: { ...binding },
+    user: { id: user.id, email: user.email, ...(user.name === undefined ? {} : { name: user.name }) },
+  };
+};
+export const parseRememberedAccount = (raw: string | null, binding: SessionBinding): RememberedAccount | null => {
+  try {
+    const value = JSON.parse(raw ?? "null");
+    if (!value || value.version !== 1 || !isSessionBinding(value.binding) ||
+        !sameSessionBinding(value.binding, binding) || !isRememberableProfile(value.user)) return null;
+    // Reconstruct the allowlisted metadata so unknown fields cannot carry credentials.
+    return rememberedAccountForProfile(value.user, binding);
+  } catch { return null; }
+};
+export const accountChoicesBindingAllowed = (
+  enabled: boolean, development: boolean, platform: string, scheme: unknown,
+  variant: unknown, binding: SessionBinding,
+) => enabled && development && ['android', 'ios'].includes(platform) &&
+  scheme === 'balance-dev' && variant === 'development' &&
+  binding.issuer === 'https://auth-staging.shocker.cl' &&
+  binding.clientId === 'balance-mobile-staging' &&
+  binding.resource === 'https://balance-staging.shocker.cl/api' &&
+  binding.apiBaseUrl === binding.resource;
+export const assertRememberedIdentity = (user: StoredUserProfile, remembered: RememberedAccount | null) => {
+  if (!isRememberableProfile(user)) throw new Error("Invalid verified profile");
+  if (remembered && user.id !== remembered.user.id)
+    throw new Error('Usa otra cuenta para elegir la cuenta que quieres abrir.');
+};

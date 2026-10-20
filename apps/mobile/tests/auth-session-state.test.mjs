@@ -748,3 +748,14 @@ test('logout hint is bounded, native-only, fails closed on malformed hydration, 
   assert.throws(()=>request(undefined,'web'));
   assert.throws(()=>request(undefined,undefined,''));
 });
+
+
+test('remembered metadata rejects malformed and foreign bindings and strips credentials/avatar', async () => {
+  const {parseRememberedAccount,rememberedAccountForProfile}=await import('../src/services/auth/session-state.ts');
+  const binding={issuer:'https://auth-staging.shocker.cl',clientId:'balance-mobile-staging',resource:'https://balance-staging.shocker.cl/api',apiBaseUrl:'https://balance-staging.shocker.cl/api'};
+  const record=rememberedAccountForProfile({id:7,email:'synthetic@example.invalid',name:'Synthetic',picture:'https://invalid/avatar'},binding);
+  for (const raw of [null,'{', '{}', JSON.stringify({...record,user:{id:'7',email:'e'}}),JSON.stringify({...record,user:{id:0,email:'e'}}), JSON.stringify({...record,user:{id:7,email:' '}}), JSON.stringify({...record,user:{id:7,email:'x'.repeat(321)}}), JSON.stringify({...record,user:{id:7,email:'e',name:'x'.repeat(201)}})]) assert.equal(parseRememberedAccount(raw,binding),null);
+  for (const key of ['issuer','clientId','resource','apiBaseUrl']) assert.equal(parseRememberedAccount(JSON.stringify(record),{...binding,[key]:'different'}),null);
+  const clean=parseRememberedAccount(JSON.stringify({...record,accessToken:'forbidden',user:{...record.user,picture:'remote',refreshToken:'forbidden'}}),binding);
+  assert.deepEqual(clean,record);
+});
