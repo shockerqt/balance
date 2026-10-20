@@ -93,7 +93,7 @@ Para reintentar una entrega, ejecutar ese workflow manualmente desde `main`;
 no ejecutar el workflow reutilizable de OTA directamente.
 
 `delivery/daily-runtime.json` identifica la APK de referencia. El gate compara
-configuración, assets, dependencias y lockfile con su commit. Excluye scripts
+configuración, assets, código/configuración de módulos nativos locales, dependencias y lockfile con su commit. Excluye scripts
 npm y el paquete TS puro `@balance/domain`, que debe conservar cero dependencias
 externas, hooks de instalación y configuración nativa. También permite la adición
 verificada de `react-test-renderer@19.2.3` solo para pruebas, con manifiestos y
@@ -132,3 +132,7 @@ Antes del primer uso, crear el entorno protegido `preview` en GitHub y añadir a
 ## Seguridad
 
 Las variables `EXPO_PUBLIC_*` se incrustan en la aplicación. No guardar allí secretos, claves Gemini, client secrets OAuth ni credenciales. Esos valores viven únicamente en backend o en el gestor de secretos correspondiente.
+
+El diario Android v2 y su ciclo de Development build están documentados en
+[native-daily-log.md](native-daily-log.md). Su APK Development no sustituye la
+referencia Daily validada.

@@ -18,6 +18,7 @@ superseded release. This initially favors simple correctness over build savings.
 The reusable Publish Balance Daily OTA workflow requires the native compatibility
 baseline in delivery/daily-runtime.json. It publishes only Android/preview/daily,
 verifies channel mapping, reconciles reruns and records source/update/group/runtime.
+The contract includes local module Android/iOS sources and registration config.
 A native mismatch blocks Daily with NEW_APK_REQUIRED; dashboard remains independently
 deliverable after the common tests. See eas-daily-use.md for installation and rollback.
 The native gate excludes the reviewed test-only `react-test-renderer@19.2.3`

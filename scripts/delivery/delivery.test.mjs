@@ -88,6 +88,9 @@ test('verified PR #59 test dependency passes without hiding APK-requiring change
       ['native config', () => write('apps/mobile/app.json', { expo: { version: '2.0.0' } })],
       ['asset', () => write('apps/mobile/assets/icon.png', 'changed asset')],
       ['native code', () => write('apps/mobile/android/app/build.gradle', 'native change')],
+      ['local Kotlin view', () => write('apps/mobile/modules/daily/android/src/main/java/Daily.kt', 'class Daily')],
+      ['local module autolinking', () => write('apps/mobile/modules/daily/expo-module.config.json', '{"platforms":["android"]}')],
+      ['local module Gradle', () => write('apps/mobile/modules/daily/android/build.gradle', 'implementation native')],
       ['config plugin', () => write('apps/mobile/plugins/with-native.cjs', 'module.exports = {};')],
     ];
     for (const [name, mutate] of cases) {
