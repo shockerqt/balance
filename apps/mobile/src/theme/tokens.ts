@@ -70,16 +70,16 @@ export type TypeVariant =
   | 'numberLarge';
 
 export const type: Record<TypeVariant, TextStyle> = {
-  display: { fontSize: 28, fontWeight: '700', letterSpacing: -0.4 },
-  title: { fontSize: 18, fontWeight: '700', letterSpacing: -0.2 },
-  heading: { fontSize: 15, fontWeight: '600' },
+  display: { fontSize: 28, fontWeight: '500', letterSpacing: -0.4 },
+  title: { fontSize: 18, fontWeight: '500', letterSpacing: -0.2 },
+  heading: { fontSize: 15, fontWeight: '500' },
   body: { fontSize: 13, fontWeight: '400' },
-  bodyStrong: { fontSize: 13, fontWeight: '600' },
+  bodyStrong: { fontSize: 14, fontWeight: '500' },
   /** Etiquetas en caja alta: el renglon de cabecera del libro. */
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
   caption: { fontSize: 11, fontWeight: '500' },
   /** Toda cifra va tabular: en un libro las columnas deben alinearse. */
-  number: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  number: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
   numberLarge: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
 };
 for (const [role, style] of Object.entries(type)) style.fontFamily = ['display', 'title', 'heading', 'numberLarge'].includes(role) ? 'Outfit' : 'Inter';

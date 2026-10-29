@@ -22,6 +22,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import org.json.JSONArray
@@ -250,13 +251,18 @@ class OrganicScreenshotTest {
       compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
     }
     // Compare geometry within exactly the same viewport; do not claim a pixel golden match.
-    val header = compose.onNodeWithContentDescription("Día anterior").fetchSemanticsNode().boundsInRoot
-    val group = compose.onNodeWithText("13:00", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-    val chicken = compose.onNodeWithText("Pechuga de pollo", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-    val oil = compose.onNodeWithText("Aceite de oliva", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-    val nav = compose.onNodeWithContentDescription("Registrar alimento o peso").fetchSemanticsNode().boundsInRoot
-    assertTrue("Header, group and food order", header.bottom < group.top && group.bottom < chicken.top && chicken.bottom < oil.top)
-    assertTrue("Expanded foods fit above navigation", oil.bottom < nav.top && nav.bottom <= 844f)
+    val header = compose.onNodeWithTag("organic-diary-header").fetchSemanticsNode().boundsInRoot
+    val group = compose.onNodeWithTag("organic-hour-13:00", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val chicken = compose.onNodeWithTag("organic-food-reference-chicken", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val oil = compose.onNodeWithTag("organic-food-reference-oil", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val nav = compose.onNodeWithTag("organic-navigation").fetchSemanticsNode().boundsInRoot
+    assertEquals("Reference header height", 164f, header.height, 10f)
+    assertEquals("Reference hour height", 76f, group.height, 2f)
+    assertEquals("Reference continuous row height", 72f, chicken.height, 2f)
+    assertEquals("Reference grouped food inset", 16f, chicken.left, 1f)
+    assertEquals("Four adjacent food rows", 216f, oil.top - chicken.top, 2f)
+    assertTrue("Whole rows fit above whole navigation", oil.bottom <= nav.top && nav.bottom <= 844f)
+    assertEquals("Reference navigation height", 88f, nav.height, 2f)
     listOf("Pechuga de pollo", "Arroz integral", "Ensalada de tomate y pepino", "Aceite de oliva").forEach {
       compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
     }

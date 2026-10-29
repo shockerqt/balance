@@ -6,6 +6,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -15,7 +16,7 @@ import java.time.LocalDate
 
 @Composable internal fun WireDiaryHeader(visible: LocalDate, today: LocalDate, days: JSONObject, empty: JSONObject, enabled: Boolean,
   go: (LocalDate) -> Unit, onCalendar: () -> Unit, onNutrition: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header)) {
+    Column(Modifier.testTag("organic-diary-header").fillMaxWidth().background(LocalOrganicGradients.current.header).padding(vertical = 4.dp)) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
       IconButton(onClick = { go(visible.minusDays(1)) }, enabled = enabled, modifier = Modifier.semantics { contentDescription = "Día anterior" }) { Icon(WireIcons.Left, null, Modifier.size(18.dp)) }
       TextButton(onClick = { onCalendar() }, enabled = enabled, modifier = Modifier.weight(1f)) {

@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -81,7 +82,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
       val totals = JSONObject()
       listOf("calories", "protein", "carbs", "fat").forEach { key -> totals.put(key, group.sumOf { it.optJSONObject("totals")?.optDouble(key, 0.0) ?: 0.0 }) }
       item("hour-$hour") {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.testTag("organic-hour-$hour").fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           if (selected.isNotEmpty()) Checkbox(ids.all { it in selected }, { onGroup(ids) }, enabled = enabled)
           Surface(onClick = { opened = if (expanded) opened.split('|').filter { it != hour }.joinToString("|") else "$opened|$hour" }, enabled = enabled,
             color = Color.Transparent, modifier = Modifier.weight(1f).semantics { stateDescription = if (expanded) "Expandido" else "Plegado" }) {
@@ -107,7 +108,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
         val divider = MaterialTheme.colorScheme.background
         Surface(color = if (chosen) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
           shape = RoundedCornerShape(topStart = if (position == 0) 18.dp else 0.dp, topEnd = if (position == 0) 6.dp else 0.dp, bottomStart = if (position == group.lastIndex) 18.dp else 0.dp, bottomEnd = if (position == group.lastIndex) 18.dp else 0.dp),
-          modifier = Modifier.fillMaxWidth().drawWithContent { drawContent(); if (position > 0) drawLine(divider, Offset.Zero, Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) }.combinedClickable(enabled = enabled,
+          modifier = Modifier.testTag("organic-food-$id").fillMaxWidth().drawWithContent { drawContent(); if (position > 0) drawLine(divider, Offset.Zero, Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) }.combinedClickable(enabled = enabled,
             onClick = { if (selected.isEmpty()) editing = food else onFood(id) },
             onLongClickLabel = "Seleccionar alimento", onLongClick = { onLongFood(id) })
             .semantics(mergeDescendants = true) { this.selected = chosen; contentDescription = "${food.optString("name")}, ${food.optString("portion")}, ${food.optString("time")}, ${food.optString("calories")} kcal, ${food.optString("macros")}" }) {
