@@ -13,14 +13,14 @@ import java.time.format.DateTimeFormatter
 
 // One optical size/stroke throughout the native shell, without icon fonts or
 // another native dependency. These simple vectors are drawn in a 24-unit grid.
-private fun wireVector(name: String, draw: PathBuilder.() -> Unit): ImageVector =
+private fun wireVector(name: String, width: Float = 1.8f, draw: PathBuilder.() -> Unit): ImageVector =
   ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
-    path(fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.8f,
+    path(fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = width,
       strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) { draw() }
   }.build()
 
 internal object WireIcons {
-  val Image = wireVector("Image") {
+  val Image = wireVector("Image", 1.2f) {
     moveTo(5f, 3f); lineTo(19f, 3f); quadTo(21f, 3f, 21f, 5f); lineTo(21f, 19f); quadTo(21f, 21f, 19f, 21f); lineTo(5f, 21f); quadTo(3f, 21f, 3f, 19f); lineTo(3f, 5f); quadTo(3f, 3f, 5f, 3f); close()
     moveTo(3f, 17f); lineTo(9f, 11f); lineTo(13f, 15f); lineTo(17f, 10f); lineTo(21f, 14f)
     moveTo(8f, 7f); lineTo(8.01f, 7f)

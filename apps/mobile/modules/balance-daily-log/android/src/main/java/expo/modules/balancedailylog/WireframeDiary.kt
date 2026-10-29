@@ -47,10 +47,10 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 3.dp)) {
       Text(date.format(DateTimeFormatter.ofPattern("EEEEE", wireLocale)).uppercase(wireLocale), fontSize = 10.sp)
       Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize().padding(3.dp)) {
-          drawCircle(colors.outlineVariant, style = Stroke(2.dp.toPx()))
+        Canvas(Modifier.fillMaxSize().padding(2.dp)) {
+          drawCircle(colors.outline, style = Stroke(2.dp.toPx()))
           if (ring.first > 0) drawArc(colors.onSurfaceVariant, -90f, ring.first * 360, false, style = Stroke(2.dp.toPx()))
-          if (ring.second > 0) drawArc(Color(0xFFB66A12), -90f, ring.second * 360, false, style = Stroke(2.dp.toPx()))
+          if (ring.second > 0) drawArc(colors.tertiary, -90f, ring.second * 360, false, style = Stroke(2.dp.toPx()))
         }
         Text(date.dayOfMonth.toString(), fontSize = 11.sp, color = if (chosen) colors.primary else colors.onSurface,
           fontWeight = if (chosen) FontWeight.Bold else FontWeight.Normal)
@@ -114,7 +114,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
             .semantics(mergeDescendants = true) { this.selected = chosen; contentDescription = "${food.optString("name")}, ${food.optString("portion")}, ${food.optString("time")}, ${food.optString("calories")} kcal, ${food.optString("macros")}" }) {
           Row(Modifier.heightIn(min = 72.dp).padding(vertical = 12.dp, horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (selected.isNotEmpty()) Checkbox(chosen, null, modifier = Modifier.size(24.dp))
-            else Icon(WireIcons.Image, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            else Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Icon(WireIcons.Image, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
               Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(food.optString("name"), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = FontWeight.Medium)

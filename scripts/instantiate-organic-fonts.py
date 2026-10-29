@@ -18,5 +18,7 @@ for source, name, weights, base in [(sys.argv[1], 'inter', [400, 500, 600, 700],
         suffix = {400: 'regular', 500: 'medium', 600: 'semibold', 700: 'bold'}[weight]
         target = native / (name + ('' if weight == base else '_' + suffix) + '.ttf')
         instance.save(target)
+        if name == 'inter' and weight == 500:
+            (assets / 'Inter-Medium.ttf').write_bytes(target.read_bytes())
         if weight == base:
             (assets / (name.title() + '.ttf')).write_bytes(target.read_bytes())

@@ -87,6 +87,7 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
   )
   CompositionLocalProvider(LocalOrganicGradients provides gradients) {
     MaterialTheme(colorScheme = fallback.copy(
+      tertiary = read("amber", fallback.tertiary), onTertiary = bg,
       primary = primary, onPrimary = onPrimary, primaryContainer = secondary, onPrimaryContainer = onSecondary,
       secondary = primary, onSecondary = onPrimary, secondaryContainer = secondary, onSecondaryContainer = onSecondary,
       background = bg, onBackground = ink, surface = surface, onSurface = ink,

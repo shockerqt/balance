@@ -305,6 +305,7 @@ class OrganicScreenshotTest {
       "#6a7d65", "#42633a", "#ffffff", "#dbeacb", "#2c4125")
     return JSONObject().apply {
       put("scheme", if (dark) "dark" else "light")
+      put("amber", if (dark) "#efbd8a" else "#83501e")
       keys.zip(values).forEach { (key, value) -> put(key, value) }
       put("headerGradient", JSONArray(if (dark) listOf("#213c34", "#2c3d42", "#413745")
         else listOf("#ddebcf", "#cce8e1", "#e9dcef")))

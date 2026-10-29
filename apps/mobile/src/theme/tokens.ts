@@ -82,7 +82,7 @@ export const type: Record<TypeVariant, TextStyle> = {
   number: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
   numberLarge: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
 };
-for (const [role, style] of Object.entries(type)) style.fontFamily = ['display', 'title', 'heading', 'numberLarge'].includes(role) ? 'Outfit' : 'Inter';
+for (const [role, style] of Object.entries(type)) style.fontFamily = ['display', 'title', 'heading', 'numberLarge'].includes(role) ? 'Outfit' : ['bodyStrong', 'number'].includes(role) ? 'InterMedium' : 'Inter';
 
 /** Escala de espaciado. Multiplos de 4. */
 export const space = {
