@@ -34,8 +34,8 @@ function Navigation() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="food-search" options={Platform.OS === 'android' ? { presentation: 'card', animation: 'slide_from_right', gestureEnabled: false } : sheet([0.9, 1.0])} />
         <Stack.Screen name="food-portion" options={sheet([0.65, 0.9])} />
-        <Stack.Screen name="create-food" options={sheet([0.85, 1.0])} />
-        <Stack.Screen name="food-library-food" options={sheet([0.9, 1.0])} />
+        <Stack.Screen name="create-food" options={Platform.OS === 'android' ? { presentation: 'card' } : sheet([0.85, 1.0])} />
+        <Stack.Screen name="food-library-food" options={Platform.OS === 'android' ? { presentation: 'card' } : sheet([0.9, 1.0])} />
         <Stack.Screen name="date-picker" options={sheet([0.6])} />
         <Stack.Screen name="food-edit" options={sheet([0.6, 0.95])} />
         <Stack.Screen name="batch-move" options={sheet([0.55])} />

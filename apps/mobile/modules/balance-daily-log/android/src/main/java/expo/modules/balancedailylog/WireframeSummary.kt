@@ -36,8 +36,9 @@ import kotlin.math.abs
       if (if (body) !day.isNull("weightKg") else day.optBoolean("recorded")) date to day else null
     }.toList()
   }
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Resumen", "Tendencias de tus registros")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { WirePageHeader("Resumen", "Tendencias de tus registros") }
     item {
       OrganicSegments(listOf("Alimentación", "Cuerpo"), if (body) 1 else 0, enabled, { body = it == 1 })
       Spacer(Modifier.height(12.dp))
@@ -57,6 +58,7 @@ import kotlin.math.abs
       item("macros") { WirePlot("Macronutrientes", "g", records, start, end, listOf("protein", "carbs", "fat"), listOf("Proteínas", "Carbohidratos", "Grasas"), false, false, enabled) { onOpenDate(it, false) } }
     }
     item { Text(if (body) "La línea une mediciones reales según el tiempo transcurrido." else "Los días sin alimentos registrados se muestran sin datos. Las curvas se interrumpen en esas fechas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+  }
   }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(end), yearRange = 1900..9999)

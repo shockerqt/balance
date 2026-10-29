@@ -7,10 +7,12 @@ import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 
 interface FoodLibraryRowProps {
   food: LibraryFoodItem;
+  first?: boolean;
+  last?: boolean;
   onPress: (food: LibraryFoodItem) => void;
 }
 
-export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress }) => {
+export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress, first, last }) => {
   const styles = useStyles();
   const isOfficial = food.isOfficial === true;
   const calories = formatCalories(food.calories);
@@ -23,7 +25,7 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
       }`}
       activeOpacity={0.72}
       delayPressIn={0}
-      style={styles.row}
+      style={[styles.row, first && { borderTopLeftRadius: 24, borderTopRightRadius: 24 }, last && { borderBottomLeftRadius: 24, borderBottomRightRadius: 24, borderBottomWidth: 0 }]}
       onPress={() => onPress(food)}>
       <View style={styles.description}>
         <Text variant="bodyStrong" numberOfLines={2} selectable>

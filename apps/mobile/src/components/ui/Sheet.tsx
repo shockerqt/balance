@@ -1,7 +1,9 @@
 import React from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { makeStyles } from '@/theme';
+import { makeStyles, useTheme } from '@/theme';
+import { gradientBackground } from '@/theme/gradient';
+import { Icon } from './Icon';
 import { Text } from './Text';
 
 /* ============================================================
@@ -38,6 +40,7 @@ export const Sheet: React.FC<SheetProps> = ({
   children,
 }) => {
   const styles = useStyles();
+  const theme = useTheme();
   const router = useRouter();
   const close = onClose ?? (() => router.back());
 
@@ -51,9 +54,12 @@ export const Sheet: React.FC<SheetProps> = ({
     <View style={styles.sheet}>
       <View style={styles.openingRule} />
 
-      <View style={styles.header}>
+      <View style={[styles.header, gradientBackground(theme.gradients.header)]}>
+        <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel={closeLabel} style={{ minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="arrow-left" size={20} />
+        </TouchableOpacity>
         <View style={styles.titleBlock}>
-          <Text variant="title">{title}</Text>
+          <Text variant="title" style={{ fontSize: 21, fontWeight: '500' }}>{title}</Text>
           {onSubtitlePress ? (
             <TouchableOpacity accessibilityRole="button" onPress={onSubtitlePress} hitSlop={8}>
               {subtitleNode}
@@ -63,13 +69,7 @@ export const Sheet: React.FC<SheetProps> = ({
           )}
         </View>
 
-        {action ?? (
-          <TouchableOpacity onPress={close} accessibilityRole="button" hitSlop={8}>
-            <Text variant="bodyStrong" tone="accent">
-              {closeLabel}
-            </Text>
-          </TouchableOpacity>
-        )}
+        {action}
       </View>
 
       <View style={styles.body}>{children}</View>
@@ -80,21 +80,21 @@ export const Sheet: React.FC<SheetProps> = ({
 };
 
 const useStyles = makeStyles((t) => ({
-  sheet: { flex: 1, backgroundColor: t.colors.surface },
+  sheet: { flex: 1, backgroundColor: t.colors.background },
   /** La regla que abre el panel. */
-  openingRule: { height: 0, backgroundColor: t.colors.surface },
+  openingRule: { height: 0, backgroundColor: t.colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: t.space.md,
-    paddingHorizontal: t.space.xl,
-    paddingTop: t.space.lg,
-    paddingBottom: t.space.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 64,
     borderBottomWidth: 0,
     borderBottomColor: t.colors.border,
   },
-  titleBlock: { flexShrink: 1, gap: 2 },
+  titleBlock: { flex: 1, gap: 2 },
   body: { flex: 1 },
   footer: {
     paddingHorizontal: t.space.xl,

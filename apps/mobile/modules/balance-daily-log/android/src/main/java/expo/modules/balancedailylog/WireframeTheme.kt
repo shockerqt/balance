@@ -9,6 +9,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Shader
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.LinearGradientShader
+import kotlin.math.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -51,7 +57,17 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
   fun gradient(key: String, backup: Color): Brush {
     val values = colors.optJSONArray(key)
     val stops = (0 until (values?.length() ?: 0)).mapNotNull { i -> runCatching { Color(android.graphics.Color.parseColor(values!!.getString(i))) }.getOrNull() }
-    return Brush.linearGradient(if (stops.size >= 2) stops else listOf(backup, backup))
+    val palette = if (stops.size >= 2) stops else listOf(backup, backup)
+    // Match CSS115deg header /135deg action on the actual component bounds.
+    val angle = Math.toRadians(if (key == "headerGradient") 115.0 else 135.0)
+    return object : ShaderBrush() {
+      override fun createShader(size: Size): Shader {
+        val x = sin(angle).toFloat(); val y = -cos(angle).toFloat()
+        val half = (abs(size.width * x) + abs(size.height * y)) / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+        return LinearGradientShader(center - Offset(x * half, y * half), center + Offset(x * half, y * half), palette)
+      }
+    }
   }
   val gradients = OrganicGradients(gradient("headerGradient", surface), gradient("actionGradient", primary))
   val inter = remember { FontFamily(Font(R.font.inter)) }

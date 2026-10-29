@@ -91,7 +91,7 @@ export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
     <SectionList
       sections={sections}
       keyExtractor={(food) => food.id}
-      renderItem={({ item }) => <FoodLibraryRow food={item} onPress={onPressFood} />}
+      renderItem={({ item, index, section }) => <FoodLibraryRow food={item} first={index === 0} last={index === section.data.length - 1} onPress={onPressFood} />}
       renderSectionHeader={({ section }) => (
         <View style={styles.sectionHeader}>
           <Text variant="label">{section.title}</Text>

@@ -65,8 +65,9 @@ import java.time.format.DateTimeFormatter
   val month = YearMonth.parse(monthText)
   val days = data.optJSONObject("days") ?: JSONObject()
   LaunchedEffect(selected) { monthText = YearMonth.from(date).toString() }
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Mediciones", "Peso")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { WirePageHeader("Mediciones", "Peso") }
     if (!data.optBoolean("showWeight")) item {
       Text("El seguimiento de peso está desactivado. Puedes activarlo en Perfil.")
     } else {
@@ -120,6 +121,7 @@ import java.time.format.DateTimeFormatter
       if (error != null) item { Text(error.optString("message"), color = MaterialTheme.colorScheme.error) }
     }
   }
+  }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(date), yearRange = 1900..9999)
     DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { TextButton(onClick = {
@@ -154,8 +156,9 @@ import java.time.format.DateTimeFormatter
 
 @Composable private fun WireProfile(data: JSONObject, enabled: Boolean, onAction: (String, Map<String, Any>) -> Unit) {
   val profile = data.optJSONObject("profile") ?: JSONObject()
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Perfil", "Tu cuenta y tus herramientas")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Section)) {
-    item { WirePageHeader("Perfil", "Configuración de Balance") }
     item {
       Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Box(Modifier.size(56.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) { Icon(WireIcons.Profile, null, Modifier.size(28.dp)) }
@@ -165,25 +168,28 @@ import java.time.format.DateTimeFormatter
         }
       }
     }
-    item { Text("Preferencias", style = MaterialTheme.typography.titleMedium) }
     item {
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text("Seguimiento de peso"); Text("Conserva el historial al desactivar", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Switch(data.optBoolean("showWeight"), { onAction("preference", mapOf("enabled" to it)) }, enabled = enabled && data.optBoolean("preferencesReady"))
+      OrganicSection("Preferencias") {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Seguimiento de peso", fontSize = 13.sp)
+            Text("Tu historial se conserva al desactivar", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          Switch(data.optBoolean("showWeight"), { onAction("preference", mapOf("enabled" to it)) }, enabled = enabled && data.optBoolean("preferencesReady"))
+        }
+        if (!data.isNull("preferencesError")) Text(data.optString("preferencesError"), color = MaterialTheme.colorScheme.error)
+        Text("kg · g / ml · kcal", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
-      if (!data.isNull("preferencesError")) Text(data.optString("preferencesError"), color = MaterialTheme.colorScheme.error)
     }
-    item { Text("Unidades", style = MaterialTheme.typography.titleMedium); Text("Peso: kg · Alimentos: g / ml · Energía: kcal", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
     item {
-      Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        WireToolRow("Administrar biblioteca", WireIcons.Diary, enabled) { onAction("library", emptyMap()) }
-        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
+      OrganicSection("Herramientas") {
+        WireToolRow("Biblioteca", WireIcons.Diary, enabled) { onAction("library", emptyMap()) }
         WireToolRow("Importar MacroFactor", WireIcons.Import, enabled) { onAction("import", emptyMap()) }
-        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
         WireToolRow("Cuenta y configuración", WireIcons.Settings, enabled) { onAction("settings", emptyMap()) }
       }
     }
   }
+}
 }
 
 @Composable private fun WireToolRow(label: String, icon: ImageVector, enabled: Boolean, click: () -> Unit) {
@@ -191,7 +197,7 @@ import java.time.format.DateTimeFormatter
   val content = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f)
   val secondary = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.38f)
   Surface(onClick = click, enabled = enabled, color = Color.Transparent, modifier = Modifier.semantics { role = Role.Button }) {
-    ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) }, leadingContent = { Icon(icon, null, tint = secondary) },
+    ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) },
       trailingContent = { Icon(WireIcons.Right, null, Modifier.size(18.dp), tint = secondary) },
       colors = ListItemDefaults.colors(containerColor = Color.Transparent))
   }
@@ -199,7 +205,7 @@ import java.time.format.DateTimeFormatter
 
 @Composable internal fun WirePageHeader(title: String, subtitle: String? = null) {
   Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 26.sp, fontWeight = FontWeight.Medium)
     if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }
 }
@@ -213,6 +219,15 @@ import java.time.format.DateTimeFormatter
           Text(label, fontSize = 13.sp, color = if (i == selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
         }
       }
+    }
+  }
+}
+
+@Composable internal fun OrganicSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+  Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+      Text(title, fontSize = 18.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontWeight = FontWeight.Medium)
+      content()
     }
   }
 }

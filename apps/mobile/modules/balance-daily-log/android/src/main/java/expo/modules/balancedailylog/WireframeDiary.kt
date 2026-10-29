@@ -12,6 +12,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.*
@@ -102,9 +104,10 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
         val id = food.optString("id")
         val chosen = id in selected
         val position = group.indexOf(food)
+        val divider = MaterialTheme.colorScheme.background
         Surface(color = if (chosen) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
           shape = RoundedCornerShape(topStart = if (position == 0) 18.dp else 0.dp, topEnd = if (position == 0) 6.dp else 0.dp, bottomStart = if (position == group.lastIndex) 18.dp else 0.dp, bottomEnd = if (position == group.lastIndex) 18.dp else 0.dp),
-          modifier = Modifier.fillMaxWidth().combinedClickable(enabled = enabled,
+          modifier = Modifier.fillMaxWidth().drawWithContent { drawContent(); if (position > 0) drawLine(divider, Offset.Zero, Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) }.combinedClickable(enabled = enabled,
             onClick = { if (selected.isEmpty()) editing = food else onFood(id) },
             onLongClickLabel = "Seleccionar alimento", onLongClick = { onLongFood(id) })
             .semantics(mergeDescendants = true) { this.selected = chosen; contentDescription = "${food.optString("name")}, ${food.optString("portion")}, ${food.optString("time")}, ${food.optString("calories")} kcal, ${food.optString("macros")}" }) {

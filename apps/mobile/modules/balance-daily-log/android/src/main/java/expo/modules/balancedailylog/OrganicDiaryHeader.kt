@@ -21,6 +21,7 @@ import java.time.LocalDate
       TextButton(onClick = { onCalendar() }, enabled = enabled, modifier = Modifier.weight(1f)) {
         Text((if (visible == today) "Hoy · " else "") + visible.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", wireLocale)), fontSize = 18.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
       }
+      if (visible != today) TextButton(onClick = { go(today) }, enabled = enabled) { Text("Hoy", fontSize = 12.sp) }
       IconButton(onClick = { go(visible.plusDays(1)) }, enabled = enabled, modifier = Modifier.semantics { contentDescription = "Día siguiente" }) { Icon(WireIcons.Right, null, Modifier.size(18.dp)) }
     }
     val headerDay = days.optJSONObject(visible.toString()) ?: empty

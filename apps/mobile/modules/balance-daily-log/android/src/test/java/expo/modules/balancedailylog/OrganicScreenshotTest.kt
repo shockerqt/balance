@@ -2,17 +2,24 @@ package expo.modules.balancedailylog
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.isToggleable
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -21,6 +28,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,7 +43,16 @@ import java.time.LocalDate
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w390dp-h844dp-mdpi")
 class OrganicScreenshotTest {
-  @get:Rule val compose = createComposeRule()
+  @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+  @Before fun fullViewport() {
+    // Match the reference's entire 390 x 844 content viewport, excluding system chrome.
+    compose.activityRule.scenario.onActivity { activity ->
+      WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+      WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        .hide(WindowInsetsCompat.Type.systemBars())
+    }
+  }
 
   @Test fun forestDarkDiary() = diary(dark = true, populated = true)
   @Test fun forestLightDiary() = diary(dark = false, populated = true)
@@ -62,7 +79,7 @@ class OrganicScreenshotTest {
     var nutritionOpened = false
     compose.setContent {
       WireframeTheme(forest(dark)) {
-        Surface(Modifier.fillMaxSize()) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
           Column(Modifier.fillMaxSize()) {
             WireDiaryHeader(visible = date, today = date, days = data.getJSONObject("days"),
               empty = JSONObject().put("calories", "0").put("target", "2000"), enabled = true,
@@ -78,14 +95,19 @@ class OrganicScreenshotTest {
         }
       }
     }
-    compose.onNodeWithText("Alimentos").assertIsDisplayed().assertIsSelected()
+    val name = "forest-${if (dark) "dark" else "light"}-${if (populated) "diary" else "empty"}"
+    screenshot("$name-initial")
+    if (populated) {
+      try { compose.onNodeWithText("08:00").performClick() }
+      finally { screenshot(name) }
+    } else screenshot(name)
+    compose.onNodeWithText("Alimentos").assertIsDisplayed()
     compose.onNodeWithContentDescription("Día anterior").assertIsDisplayed().performClick()
     compose.runOnIdle { assertEquals(date.minusDays(1), movedTo) }
     compose.onNodeWithContentDescription("Ver detalle nutricional", substring = true)
       .assertIsDisplayed().performClick()
     compose.runOnIdle { assertTrue(nutritionOpened) }
     if (populated) {
-      compose.onNodeWithText("08:00").assertIsDisplayed().performClick()
       compose.onNodeWithText("Avena de prueba", useUnmergedTree = true).assertIsDisplayed()
       compose.onNodeWithContentDescription("Agregar alimento a las 08:00")
         .assertIsEnabled().performClick()
@@ -96,10 +118,150 @@ class OrganicScreenshotTest {
     compose.onNodeWithContentDescription("Registrar alimento o peso")
       .assertIsDisplayed().assertIsEnabled().performClick()
     compose.runOnIdle { assertEquals(2, adds) }
-    // Save before navigation assertions so a later semantic failure retains the render.
-    screenshot("forest-${if (dark) "dark" else "light"}-${if (populated) "diary" else "empty"}")
     compose.onNodeWithText("Perfil").performClick()
     compose.runOnIdle { assertEquals(3, destination) }
+  }
+
+  @Test fun forestDarkProfile() = destination(3, true)
+  @Test fun forestLightProfile() = destination(3, false)
+  @Test fun forestDarkMeasurements() = destination(1, true)
+  @Test fun forestLightMeasurements() = destination(1, false)
+  @Test fun forestDarkSummary() = destination(2, true)
+  @Test fun forestLightSummary() = destination(2, false)
+
+  private fun destination(target: Int, dark: Boolean) {
+    val today = LocalDate.of(2026, 10, 9)
+    val days = JSONObject()
+    repeat(7) { offset ->
+      days.put(today.minusDays(offset.toLong()).toString(), JSONObject()
+        .put("recorded", true).put("weightKg", 70.0 + offset * .1)
+        .put("totals", JSONObject().put("calories", 1800 + offset * 50)
+          .put("protein", 100 + offset).put("carbs", 200 + offset).put("fat", 60)))
+    }
+    val data = JSONObject().put("today", today.toString()).put("days", days)
+      .put("showWeight", true).put("preferencesReady", true)
+      .put("profile", JSONObject().put("name", "Perfil sintético").put("guest", true))
+    val actions = mutableListOf<Pair<String, Map<String, Any>>>()
+    var measurementDate: String? = null
+    var weightOpened = false
+    var opened: Pair<LocalDate, Boolean>? = null
+    var nav = -1
+    var adds = 0
+    compose.setContent {
+      WireframeTheme(forest(dark)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
+          Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f)) {
+              WireDestination(destination = target, data = data, enabled = true,
+                measurementDate = today.toString(), onMeasurementDate = { measurementDate = it },
+                onWeight = { weightOpened = true }, onOpenDate = { date, body -> opened = date to body },
+                onAction = { action, payload -> actions.add(action to payload) })
+            }
+            WireNavigation(target, true, { nav = it }, { adds++ })
+          }
+        }
+      }
+    }
+    val label = mapOf(1 to "measurements", 2 to "summary", 3 to "profile").getValue(target)
+    val name = "forest-${if (dark) "dark" else "light"}-$label"
+    screenshot(name)
+    when (target) {
+      3 -> {
+        compose.onNodeWithText("Perfil sintético").assertIsDisplayed()
+        compose.onNode(isToggleable()).assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals("preference" to mapOf("enabled" to false), actions.last()) }
+        listOf("Biblioteca" to "library", "Importar MacroFactor" to "import",
+          "Cuenta y configuración" to "settings").forEach { (text, action) ->
+          compose.onNodeWithText(text).performScrollTo().assertIsDisplayed().performClick()
+          compose.runOnIdle { assertEquals(action to emptyMap<String, Any>(), actions.last()) }
+        }
+      }
+      1 -> {
+        compose.onNodeWithText("Editar peso").performScrollTo().assertIsEnabled().performClick()
+        compose.runOnIdle { assertTrue(weightOpened) }
+        compose.onNodeWithContentDescription("Mes siguiente").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals("2026-11-01", measurementDate) }
+      }
+      2 -> {
+        compose.onNodeWithContentDescription("Energía registrada, desde", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("Abrir registros de esa fecha")[0].performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(today to false, opened) }
+        compose.onNodeWithText("Cuerpo").performScrollTo().performClick()
+        screenshot("$name-body")
+        compose.onNodeWithText("Abrir registros de esa fecha").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(today to true, opened) }
+      }
+    }
+    compose.onNodeWithContentDescription("Registrar alimento o peso").assertIsEnabled().performClick()
+    compose.onNodeWithText("Alimentos").performClick()
+    compose.runOnIdle { assertEquals(1, adds); assertEquals(0, nav) }
+  }
+
+  /** Reference 3b801d9: synthetic recreation of the visible diary, never account data. */
+  @Test fun forestDarkReference3b801d9() {
+    val date = LocalDate.of(2026, 10, 9)
+    val foods = JSONArray()
+    fun food(id: String, name: String, portion: String, time: String, kcal: Int,
+      protein: Int, carbs: Int, fat: Int) {
+      foods.put(JSONObject().put("id", "reference-$id").put("name", name).put("portion", portion)
+        .put("time", time).put("calories", kcal.toString())
+        .put("macros", "P $protein g · C $carbs g · G $fat g")
+        .put("totals", JSONObject().put("calories", kcal).put("protein", protein)
+          .put("carbs", carbs).put("fat", fat)))
+    }
+    // The reference's folded groups expose totals/counts only; names below are invented.
+    repeat(4) { i -> food("breakfast-$i", "Desayuno sintético ${i + 1}", "1 porción", "08:00",
+      111, if (i == 0) 8 else 6, if (i == 0) 12 else 9, if (i == 0) 7 else 5) }
+    repeat(4) { i -> food("snack-$i", "Colación sintética ${i + 1}", "1 porción", "11:00",
+      if (i == 0) 62 else 61, if (i == 0) 7 else 4, if (i == 0) 10 else 9, if (i == 0) 0 else 1) }
+    food("chicken", "Pechuga de pollo", "150 g", "13:10", 248, 46, 0, 5)
+    food("rice", "Arroz integral", "450 g", "13:12", 506, 11, 107, 6)
+    food("salad", "Ensalada de tomate y pepino", "1 plato · 180 g", "13:12", 38, 2, 8, 0)
+    food("oil", "Aceite de oliva", "1 cucharadita · 5 g", "13:12", 45, 0, 0, 5)
+    repeat(2) { i -> food("dinner-$i", "Cena sintética ${i + 1}", "1 porción", "18:00", 115, 4,
+      if (i == 0) 11 else 10, 7) }
+    val day = JSONObject().put("foods", foods).put("calories", "2557").put("target", "2200")
+      .put("progress", 2557.0 / 2200).put("macros", JSONArray()
+        .put(JSONObject().put("name", "Proteínas").put("value", "155"))
+        .put(JSONObject().put("name", "Carbohidratos").put("value", "314"))
+        .put(JSONObject().put("name", "Grasas").put("value", "81")))
+    // Header is the whole-day reference; the visible group subtotal is intentionally partial.
+    val days = JSONObject().put(date.toString(), day)
+    val data = JSONObject().put("today", date.toString()).put("days", days).put("showWeight", false)
+    var addTime: String? = null
+    compose.setContent {
+      WireframeTheme(forest(true)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
+          Column(Modifier.fillMaxSize()) {
+            WireDiaryHeader(date, date, days, JSONObject().put("target", "2200"), true, {}, {}, {})
+            Box(Modifier.weight(1f)) {
+              DayContent(date, day, data, date, emptySet(), true, {}, {}, {}, { addTime = it },
+                { _, _, _, _ -> })
+            }
+            WireNavigation(0, true, {}, {})
+          }
+        }
+      }
+    }
+    screenshot("forest-dark-reference-3b801d9-collapsed")
+    try { compose.onNodeWithText("13:00").performClick() }
+    finally { screenshot("forest-dark-reference-3b801d9-2026-10-09") }
+    listOf("444 kcal", "245 kcal", "837 kcal").forEach {
+      compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
+    }
+    // Compare geometry within exactly the same viewport; do not claim a pixel golden match.
+    val header = compose.onNodeWithContentDescription("Día anterior").fetchSemanticsNode().boundsInRoot
+    val group = compose.onNodeWithText("13:00", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val chicken = compose.onNodeWithText("Pechuga de pollo", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val oil = compose.onNodeWithText("Aceite de oliva", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    val nav = compose.onNodeWithContentDescription("Registrar alimento o peso").fetchSemanticsNode().boundsInRoot
+    assertTrue("Header, group and food order", header.bottom < group.top && group.bottom < chicken.top && chicken.bottom < oil.top)
+    assertTrue("Expanded foods fit above navigation", oil.bottom < nav.top && nav.bottom <= 844f)
+    listOf("Pechuga de pollo", "Arroz integral", "Ensalada de tomate y pepino", "Aceite de oliva").forEach {
+      compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
+    }
+    compose.onNodeWithContentDescription("Agregar alimento a las 13:00").performClick()
+    compose.runOnIdle { assertEquals("13:00", addTime) }
   }
 
   private fun screenshot(name: String) {
@@ -111,8 +273,7 @@ class OrganicScreenshotTest {
       assertTrue("PNG encoder failed", bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
     }
     assertEquals("mdpi viewport width", 390, bitmap.width)
-    // Activity content excludes system bars on some Robolectric/Compose versions.
-    assertTrue("Unexpected viewport height: ${bitmap.height}", bitmap.height in 760..844)
+    assertEquals("Full reference viewport height", 844, bitmap.height)
     val pixels = IntArray(bitmap.width * bitmap.height)
     bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     assertTrue("Transparent render", pixels.count { Color.alpha(it) > 250 } > pixels.size * .95)
