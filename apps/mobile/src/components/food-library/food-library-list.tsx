@@ -94,13 +94,11 @@ export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
       renderItem={({ item, index, section }) => <FoodLibraryRow food={item} first={index === 0} last={index === section.data.length - 1} onPress={onPressFood} />}
       renderSectionHeader={({ section }) => (
         <View style={styles.sectionHeader}>
-          <Text variant="label">{section.title}</Text>
-          <Text variant="caption" tone="muted">
-            {section.data.length} · {section.caption}
-          </Text>
+          <Text variant="caption" tone="secondary">{filter === 'official' ? 'Referencias oficiales' : filter === 'personal' ? 'Tus alimentos' : 'Tus alimentos y referencias'}</Text>
+          <Text variant="caption" tone="secondary">{section.data.length} alimentos</Text>
         </View>
       )}
-      stickySectionHeadersEnabled
+      stickySectionHeadersEnabled={false}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
@@ -150,7 +148,7 @@ const useStyles = makeStyles((t) => ({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: t.space.md,
-    paddingHorizontal: t.space.lg,
+    paddingHorizontal: 4,
     paddingTop: t.space.md,
     paddingBottom: t.space.sm,
     borderTopWidth: 0,

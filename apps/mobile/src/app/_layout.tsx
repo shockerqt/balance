@@ -27,7 +27,7 @@ function Navigation() {
   return (
     <NavigationThemeProvider value={theme.scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerBackground: () => <View style={[{ flex: 1 }, gradientBackground(theme.gradients.header)]} /> }}>
+      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerTitleStyle: { fontFamily: 'Outfit', fontSize: 21, fontWeight: '500' }, headerBackground: () => <View style={[{ flex: 1 }, gradientBackground(theme.gradients.header)]} /> }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="auth-callback" />

@@ -50,7 +50,7 @@ fallback. Native CI compiles the existing module and runs its JVM unit tests.
 Physical text scaling/TalkBack/keyboard/insets, native gradients and continuity
 need review on the Android device; browser design acceptance does not prove them.
 
-This changes Kotlin, fonts and native configuration. Candidate app1.7.0/code10
+This changes Kotlin, fonts and native configuration. Corrective candidate app1.8.0/code11
 uses a new appVersion runtime. `NEW_APK_REQUIRED` is expected until a new exact
 APK is verified and the baseline is promoted through its declared delivery flow.
 Do not bypass the baseline, publish an OTA locally, or present this as JS-only.
