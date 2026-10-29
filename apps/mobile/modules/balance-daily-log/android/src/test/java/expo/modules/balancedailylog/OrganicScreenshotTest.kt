@@ -1,6 +1,7 @@
 package expo.modules.balancedailylog
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
@@ -12,10 +13,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.onAllNodesWithText
@@ -272,7 +271,12 @@ class OrganicScreenshotTest {
 
   private fun screenshot(name: String) {
     compose.waitForIdle()
-    val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+    // PixelCopy-based captureToImage waits for a compositor absent in Robolectric.
+    // Draw the real Android decor/Compose view with native Skia on the UI thread.
+    val bitmap = compose.runOnIdle {
+      val view = compose.activity.window.decorView
+      Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+    }
     val directory = File(checkNotNull(System.getProperty("organic.screenshots.dir")))
     check(directory.isDirectory || directory.mkdirs())
     File(directory, "$name.png").outputStream().use {
