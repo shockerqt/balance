@@ -116,6 +116,9 @@ export class SyncClient {
   private activeEnqueues = new Map<string, Map<string, number>>();
   private outboxLoad: { namespace: string; generation: number; promise: Promise<void> } | null = null;
   private statusErrors = new Map<string, NonNullable<SyncStatusSnapshot['error']>>();
+  // Failure metadata only: the original editor/store retains ownership of the
+  // rejected document. Retry must never invent a replacement upload queue.
+  private failedEnqueueRevisions = new Map<string, number>();
   private statusListeners = new Set<() => void>();
   private statusSnapshot: SyncStatusSnapshot = Object.freeze({
     phase: 'inactive', receivedDocuments: 0, pendingChanges: 0, lastSyncedAt: null, error: null,
@@ -130,7 +133,9 @@ export class SyncClient {
 
   retrySync = async (): Promise<void> => {
     if (this.namespace === 'guest' || !this.accessToken) return;
-    this.statusErrors.clear();
+    for (const key of this.statusErrors.keys()) {
+      if (!key.startsWith('enqueue:')) this.statusErrors.delete(key);
+    }
     this.completedCollections.clear();
     this.publishStatus();
     if (!this.isReady()) {
@@ -204,6 +209,7 @@ export class SyncClient {
     this.invalidateConnectionStatus();
     this.outboxLoad = null;
     this.statusErrors.clear();
+    this.failedEnqueueRevisions.clear();
     this.lastSyncedAt = null;
     this.cancelPending(new Error('SYNC_NAMESPACE_CHANGED'));
     this.resyncs.clear();
@@ -515,9 +521,18 @@ export class SyncClient {
       }
     });
     this.enqueueChains.set(namespace, operation.catch(() => undefined));
-    try { await operation; }
-    catch (error) {
-      if (this.namespace === namespace) this.statusErrors.set('enqueue', 'local');
+    try {
+      await operation;
+      const failedRevision = this.failedEnqueueRevisions.get(key);
+      if (this.namespace === namespace && failedRevision !== undefined && document.updatedAt >= failedRevision) {
+        this.failedEnqueueRevisions.delete(key);
+        this.statusErrors.delete(`enqueue:${key}`);
+      }
+    } catch (error) {
+      if (this.namespace === namespace) {
+        this.failedEnqueueRevisions.set(key, Math.max(document.updatedAt, this.failedEnqueueRevisions.get(key) ?? document.updatedAt));
+        this.statusErrors.set(`enqueue:${key}`, 'local');
+      }
       throw error;
     } finally {
       const pending = this.activeEnqueues.get(namespace);

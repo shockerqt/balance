@@ -286,3 +286,31 @@ test('an enqueue spanning A to B to A remains pending until its late disk write 
   assert.equal(JSON.parse(f.data.get(keyA)).length, 0);
   assert.equal(f.data.has(outboxKey('user:B')), false, 'A write does not mutate B queue');
 });
+
+
+test('a failed enqueue stays visibly incomplete through retry and other/older writes until its revision is enqueued and acknowledged', async () => {
+  const f = fixture(); const socket = await f.boot(); await f.finishOther(socket);
+  const key = outboxKey('user:fixture');
+  f.controls.beforeSet = storageKey => {
+    if (storageKey === key) throw new Error('synthetic enqueue write failure');
+  };
+  await assert.rejects(f.client.enqueue('mealLogs', meal(1)), /synthetic enqueue write failure/); await settle();
+  assert.equal(f.client.getStatusSnapshot().phase, 'error');
+  assert.equal(f.client.getStatusSnapshot().error, 'local');
+  assert.equal(socket.pending('push'), undefined);
+  assert.equal(f.data.has(key), false, 'the failed change was never queued durably');
+  const retry = f.client.retrySync(); await settle(); await f.finishOther(socket); await retry; await settle();
+  assert.equal(f.client.getStatusSnapshot().phase, 'error', 'downloads and an empty outbox cannot resolve an unqueued write');
+  assert.equal(f.client.getStatusSnapshot().error, 'local');
+  f.controls.beforeSet = undefined;
+  await f.client.enqueue('mealLogs', meal(2)); await settle(); socket.pushAck(); await settle();
+  assert.equal(f.client.getStatusSnapshot().phase, 'error', 'another document cannot clear the failed change');
+  await f.client.enqueue('mealLogs', { ...meal(1), updatedAt: 999 }); await settle(); socket.pushAck(); await settle();
+  assert.equal(f.client.getStatusSnapshot().phase, 'error', 'an older successful revision cannot clear the newer failed change');
+  await f.client.enqueue('mealLogs', meal(1)); await settle();
+  assert.notEqual(f.client.getStatusSnapshot().phase, 'synced', 'the resolved enqueue still needs the server acknowledgement');
+  socket.pushAck(); await settle();
+  assert.equal(f.client.getStatusSnapshot().phase, 'synced');
+  assert.equal(f.client.getStatusSnapshot().error, null);
+  assert.equal(f.client.getStatusSnapshot().pendingChanges, 0);
+});
