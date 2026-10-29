@@ -59,7 +59,7 @@
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
     "test:feed": "tsx --test tests/hour-rail.test.mjs tests/food-selection.test.mjs tests/prepared-day-window.test.mjs",
     "test:native-daily": "tsx --test tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs tests/native-food-entry-lifecycle.test.cjs tests/native-interface.test.mjs tests/native-interface-lifecycle.test.cjs && npm run test:theme",
-    "test:theme": "tsx --test tests/organic-theme.test.mjs"
+    "test:theme": "tsx --test tests/organic-theme.test.mjs tests/theme-provider-lifecycle.test.cjs"
   },
   "private": true
 }

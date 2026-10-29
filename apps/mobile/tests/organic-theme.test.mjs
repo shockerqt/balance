@@ -8,6 +8,7 @@ function contrast(a,b) { const x=luminance(typeof a==='string'?rgb(a):a),y=lumin
 test('all accepted schemes preserve readable solid roles and every gradient interpolation',()=>{
  for(const source of Object.keys(organicPalettes))for(const mode of ['light','dark']){
   const t=makeOrganicTheme(source,mode),c=t.colors;
+  assert.match(c.border,/^#[0-9a-fA-F]{6}$/,'native parseColor and RN must agree on opaque role values');
   for(const [ink,bg]of [[c.text,c.background],[c.textSecondary,c.surface],[c.textSecondary,c.surfaceRaised],[c.onPrimary,c.primary],[c.onSecondary,c.secondary]])assert(contrast(ink,bg)>=4.5,`${source}/${mode}: ${ink} on ${bg}`);
   for(const [name,ink]of [['header',c.textSecondary],['action',c.onPrimary]]){
    const stops=t.gradients[name].map(rgb);for(let i=1;i<stops.length;i++)for(let n=0;n<=100;n++)assert(contrast(ink,stops[i-1].map((v,k)=>v+(stops[i][k]-v)*n/100))>=4.5,`${source}/${mode}/${name}`);

@@ -16,7 +16,7 @@ export function makeOrganicTheme(source: ColorSource, scheme: 'light' | 'dark', 
   const action = dynamic ? [roles.primary, end, roles.primary] : [...own.action];
   return { key: `${source}-${scheme}`, name: paletteNames[source], scheme,
     colors: { ...roles, primaryPressed: roles.primary, textMuted: roles.textSecondary,
-      border: scheme === 'dark' ? '#ffffff18' : '#00000018', scrim: '#00000088', shadow: '#000000',
+      border: '#' + [0, 1, 2].map(i => Math.round(component(roles.surface, i) * .9 + component(roles.text, i) * .1).toString(16).padStart(2, '0')).join(''), scrim: '#00000088', shadow: '#000000',
       danger: scheme === 'dark' ? '#ffb4ab' : '#ba1a1a', success: roles.primary,
       macroProtein: roles.text, macroCarbs: roles.textSecondary, macroFat: roles.textSecondary, macroFiber: roles.textSecondary },
     gradients: { header, action }, type, space, radius, border };
