@@ -139,7 +139,7 @@ function launch(physical, serverMeals = []) {
     stores = { meals: meals.useMealStore(), weights: weights.useWeightStore(), preferences: preferences.usePreferencesStore(), library: library.useFoodLibraryStore() };
     return React.createElement(React.Fragment, null,
       React.createElement(FocusContext.Provider, { value: dailyFocused }, React.createElement(daily)),
-      React.createElement(FocusContext.Provider, { value: focused }, React.createElement(entry))); 
+      React.createElement(FocusContext.Provider, { value: focused }, React.createElement(entry)));
   }
   const tree = () => React.createElement(preferences.PreferencesProvider, null,
     React.createElement(weights.WeightProvider, null, React.createElement(meals.MealStoreProvider, null,
@@ -432,4 +432,3 @@ test('12k history advances 240 unique pages with actual owners and a retained na
     } finally { await restarted.close(); }
   } finally { await app.close(); }
 });
-
