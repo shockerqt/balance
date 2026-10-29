@@ -181,7 +181,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           val error = localError.ifEmpty { status.optString("error").takeUnless { it == dismissedError } ?: "" }
           if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.semantics { contentDescription = "Error: $error" })
-          Button(onClick = { submit() }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+          OrganicButton(onClick = { submit() }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             if (saving) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
             Text(if (saving) "Guardando…" else "Registrar alimento")
           }

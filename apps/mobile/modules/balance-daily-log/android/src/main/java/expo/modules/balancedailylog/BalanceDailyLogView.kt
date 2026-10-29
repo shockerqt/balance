@@ -266,7 +266,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Registrar", style = MaterialTheme.typography.titleLarge)
       Text(wireLongDate(LocalDate.parse(measurementDate)), color = MaterialTheme.colorScheme.onSurfaceVariant)
-      Button(onClick = {
+      OrganicButton(onClick = {
         registering = false; destination = 0
         val target = LocalDate.parse(measurementDate)
         scope.launch { pager.scrollToPage(DailyLogDates.page(target)) }

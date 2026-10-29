@@ -3,6 +3,10 @@ package expo.modules.balancedailylog
 import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Brush
@@ -81,4 +85,12 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
       medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(28.dp)
     ), content = content)
   }
+}
+
+@Composable internal fun OrganicButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
+  Button(onClick = onClick, enabled = enabled,
+    modifier = modifier.alpha(if (enabled) 1f else .38f).background(LocalOrganicGradients.current.action, MaterialTheme.shapes.large),
+    shape = MaterialTheme.shapes.large,
+    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary, disabledContainerColor = Color.Transparent, disabledContentColor = MaterialTheme.colorScheme.onPrimary),
+    content = content)
 }
