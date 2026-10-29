@@ -375,18 +375,25 @@ class OrganicScreenshotTest {
     finally { screenshot("$name-footer-250") }
     quantity.assertTextContains("250", substring = false)
     compose.onNodeWithText("¿Descartar este registro?").assertDoesNotExist()
+    if (dark) {
+      compose.onNodeWithTag("organic-catalog-synthetic-second").performScrollTo().performClick()
+      compose.onNodeWithText("Descartar").performClick()
+      quantity.assertTextContains("100", substring = false)
+      compose.onNodeWithTag("organic-catalog-synthetic-second").assertIsSelected()
+      screenshot("$name-footer-confirmed-second")
+    }
     compose.runOnIdle { assertTrue("No event before local save", events.isEmpty()) }
     compose.onNodeWithText("Registrar alimento").assertIsDisplayed().assertIsEnabled().performClick()
     compose.runOnIdle {
       assertEquals("Exactly one local event", 1, events.size)
       assertEquals("save", events.single().first)
       val payload = checkNotNull(events.single().second)
-      assertEquals("synthetic-template", payload.getString("templateId"))
-      assertEquals(42L, payload.getLong("templateRevision"))
-      assertEquals("250", payload.getString("quantity"))
+      assertEquals(if (dark) "synthetic-second" else "synthetic-template", payload.getString("templateId"))
+      assertEquals(if (dark) 43L else 42L, payload.getLong("templateRevision"))
+      assertEquals(if (dark) "100" else "250", payload.getString("quantity"))
       assertEquals("2026-10-09", payload.getString("date"))
       assertEquals("13:00", payload.getString("time"))
-      assertEquals("Avena sintética", payload.getString("name"))
+      assertEquals(if (dark) "Segundo alimento sintético" else "Avena sintética", payload.getString("name"))
       assertEquals("g", payload.getString("unit"))
       assertEquals("", payload.getString("portionId"))
     }
