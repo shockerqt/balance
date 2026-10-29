@@ -178,18 +178,18 @@ class OrganicScreenshotTest {
         }
       }
       1 -> {
-        compose.onNodeWithText("Editar peso").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithContentDescription("Editar peso").performScrollTo().assertIsEnabled().performClick()
         compose.runOnIdle { assertTrue(weightOpened) }
         compose.onNodeWithContentDescription("Mes siguiente").performScrollTo().performClick()
         compose.runOnIdle { assertEquals("2026-11-01", measurementDate) }
       }
       2 -> {
         compose.onNodeWithContentDescription("Energía registrada, desde", substring = true).assertIsDisplayed()
-        compose.onAllNodesWithText("Abrir registros de esa fecha")[0].performScrollTo().performClick()
+        compose.onAllNodesWithText("Abrir registros")[0].performScrollTo().performClick()
         compose.runOnIdle { assertEquals(today to false, opened) }
         compose.onNodeWithText("Cuerpo").performScrollTo().performClick()
         screenshot("$name-body")
-        compose.onNodeWithText("Abrir registros de esa fecha").performScrollTo().performClick()
+        compose.onNodeWithText("Abrir registros").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(today to true, opened) }
       }
     }

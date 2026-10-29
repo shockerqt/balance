@@ -109,11 +109,18 @@ import java.time.format.DateTimeFormatter
       item {
         val day = days.optJSONObject(selected)
         val hasWeight = day != null && !day.isNull("weightKg")
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-          Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(wireDate(date), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(if (hasWeight) "${wireNumber(day!!.optDouble("weightKg"))} kg" else "Sin peso registrado", style = MaterialTheme.typography.headlineSmall)
-            OrganicButton(onClick = onWeight, enabled = enabled && date <= today) { Text(if (hasWeight) "Editar peso" else "Registrar peso") }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+          Text(wireLongDate(date), fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 18.sp)
+          if (hasWeight) Surface(onClick = onWeight, enabled = enabled && date <= today, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Editar peso" }) {
+            Row(Modifier.heightIn(min = 64.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+              Text("Peso", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Text("${wireNumber(day!!.optDouble("weightKg"))} kg", fontSize = 24.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, color = MaterialTheme.colorScheme.primary)
+              Icon(WireIcons.Right, null, Modifier.size(16.dp))
+            }
+          } else {
+            Text("Sin peso registrado este día.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = onWeight, enabled = enabled && date <= today) { Text("Registrar peso") }
             if (date > today) Text("Elige hoy o una fecha anterior para registrar peso.", style = MaterialTheme.typography.bodySmall)
           }
         }
@@ -206,7 +213,7 @@ import java.time.format.DateTimeFormatter
 
 @Composable internal fun WirePageHeader(title: String, subtitle: String? = null) {
   Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 28.sp, fontWeight = FontWeight.Medium)
     if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }
 }
@@ -215,9 +222,9 @@ import java.time.format.DateTimeFormatter
   Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
     labels.forEachIndexed { i, label ->
       Surface(onClick = { onSelect(i) }, enabled = enabled, color = if (i == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-        shape = RoundedCornerShape(if (i == selected) 16.dp else 5.dp), modifier = Modifier.weight(1f).semantics { this.selected = i == selected; role = Role.Tab }) {
+        shape = if (i == selected) RoundedCornerShape(24.dp) else RoundedCornerShape(topStart = if (i == 0) 24.dp else 5.dp, bottomStart = if (i == 0) 24.dp else 5.dp, topEnd = if (i == labels.lastIndex) 24.dp else 5.dp, bottomEnd = if (i == labels.lastIndex) 24.dp else 5.dp), modifier = Modifier.weight(1f).semantics { this.selected = i == selected; role = Role.Tab }) {
         Box(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-          Text(label, fontSize = 13.sp, color = if (i == selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+          Text(label, fontSize = 13.sp, fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Normal, textDecoration = if (i == selected) androidx.compose.ui.text.style.TextDecoration.Underline else null, color = if (i == selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
         }
       }
     }
