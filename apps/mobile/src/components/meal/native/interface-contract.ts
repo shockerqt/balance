@@ -51,6 +51,38 @@ export function projectInterfaceDays(logs: Record<string, DayLog>, weights: Reco
   }));
 }
 
+// One instance per account's native host. Keep the complete live date set,
+// but reuse derived days unless their log, weight or canonical docs changed.
+export function createInterfaceDaysProjector() {
+  type Day = ReturnType<typeof projectInterfaceDays>[string];
+  type Cached = { log: DayLog | undefined; weight: WeightLogDoc | undefined; documents: (MealLogDoc | undefined)[]; value: Day };
+  let previous = new Map<string, Cached>();
+  return (logs: Record<string, DayLog>, weights: Record<string, WeightLogDoc>, documents: MealLogDoc[]) => {
+    const byId = new Map(documents.filter(d => !d._deleted).map(d => [d.id, d]));
+    const next = new Map<string, Cached>();
+    const days: Record<string, Day> = {};
+    for (const date of new Set([...Object.keys(logs), ...Object.keys(weights)])) {
+      if (!isDateId(date)) continue;
+      const log = logs[date], weight = weights[date];
+      const refs = (log?.foods ?? []).map(food => byId.get(food.id));
+      const cached = previous.get(date);
+      if (cached && cached.log === log && cached.weight === weight && cached.documents.length === refs.length &&
+          cached.documents.every((doc, i) => doc === refs[i])) {
+        next.set(date, cached);
+        days[date] = cached.value;
+      } else {
+        const value = projectInterfaceDays(log ? { [date]: log } : {}, weight ? { [date]: weight } : {},
+          refs.filter((doc): doc is MealLogDoc => doc !== undefined))[date];
+        const entry = { log, weight, documents: refs, value };
+        next.set(date, entry);
+        days[date] = value;
+      }
+    }
+    previous = next;
+    return days;
+  };
+}
+
 export type InterfaceEvent = {
   session: string; sequence: number; commandRevision: number; date: string;
   action: 'weight-save' | 'weight-delete' | 'preference' | 'edit-save' | 'library' | 'settings' | 'import' | 'register';

@@ -16,7 +16,12 @@ const outboxKey = ns => `@balance_sync_outbox_v2:${ns}`;
 const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const meal = n => ({ id: uuid(n), templateId: uuid(999), nameSnapshot: 'Synthetic', nutritionSnapshot: { schemaVersion: 2, canonicalUnit: 'g', nutritionPer100: { calories: 100, protein: 1, carbs: 2, fat: 3 } }, canonicalQuantity: 100, entry: { enteredQuantity: 100 }, consumedAt: 1700000000000, updatedAt: 1000, _deleted: false });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const settle = () => new Promise(resolve => setImmediate(resolve));
+const zeroTimers = new Set();
+const settle = async () => {
+  await new Promise(resolve => setImmediate(resolve));
+  for (const fire of [...zeroTimers]) { zeroTimers.delete(fire); fire(); }
+  await new Promise(resolve => setImmediate(resolve));
+};
 
 function fixture({ data = new Map(), controls = {} } = {}) {
   const sockets = [], timers = new Map(), applied = new Map(), rejected = [], snapshots = [];
@@ -52,7 +57,11 @@ function fixture({ data = new Map(), controls = {} } = {}) {
   };
   const module = { exports: {} };
   vm.runInNewContext(code, { module, exports: module.exports, WebSocket: Socket,
-    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
+    setTimeout(fn, delay) {
+      const id = ++timerId; timers.set(id, { fn, delay });
+      if (delay === 0) zeroTimers.add(() => { if (timers.delete(id)) fn(); });
+      return id;
+    },
     clearTimeout(id) { timers.delete(id); },
     require(name) {
       if (name === 'react-native') return { AppState: { addEventListener: () => ({ remove() {} }) } };

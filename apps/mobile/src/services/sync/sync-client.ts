@@ -96,6 +96,7 @@ export class SyncClient {
   private namespace = 'guest';
   private namespaceGeneration = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private reconnectWithoutDelay = false;
   private closedByUser = false;
@@ -159,6 +160,8 @@ export class SyncClient {
   }
 
   private invalidateConnectionStatus(): void {
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
     this.connectionEpoch += 1;
     this.resyncs.clear();
     this.resyncAgain.clear();
@@ -357,6 +360,8 @@ export class SyncClient {
   }
 
   disconnect(): void {
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
     this.clearAuthTimer();
     this.ready = false;
     this.expiredToken = null;
@@ -508,7 +513,14 @@ export class SyncClient {
         this.outbox = entries;
         this.outboxLoadedFor = namespace;
         if (this.flushPromise) this.flushAfterCurrent = true;
-        void this.flushOutbox();
+        // Let the caller observe its durable local receipt before a fast ACK
+        // can trigger expensive provider consolidation in the same microtasks.
+        if (this.flushTimer === null) {
+          this.flushTimer = setTimeout(() => {
+            this.flushTimer = null;
+            if (this.isCurrent(namespace, generation)) void this.flushOutbox();
+          }, 0);
+        }
         this.publishStatus();
       } else if (this.namespace === namespace) {
         // A durable enqueue can outlive logout and return to the same account.
@@ -781,6 +793,14 @@ export class SyncClient {
     } catch (parseError) {
       pending.reject(parseError);
     }
+  }
+
+  async pendingDocuments(collection: SyncCollection, expectedNamespace: string): Promise<SyncDocument[]> {
+    const generation = this.namespaceGeneration;
+    if (this.namespace !== expectedNamespace) return [];
+    await this.loadOutbox();
+    if (!this.isCurrent(expectedNamespace, generation)) return [];
+    return Array.from(this.outbox.values()).filter(entry => entry.collection === collection).map(entry => entry.document);
   }
 
   private async loadOutbox(): Promise<void> {
