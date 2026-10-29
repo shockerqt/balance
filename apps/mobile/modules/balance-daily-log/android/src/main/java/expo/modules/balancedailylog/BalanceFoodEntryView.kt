@@ -156,7 +156,18 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           OrganicTextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f).testTag("organic-consumption-quantity"))
           Box(Modifier.weight(1f)) {
-            OutlinedButton(onClick = { portionMenu = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(portion?.optString("name") ?: unit) }
+            FilledTonalButton(onClick = { portionMenu = true }, enabled = enabled,
+              shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+              colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainer, contentColor = MaterialTheme.colorScheme.onSurface),
+              modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { contentDescription = "Unidad o porción: ${portion?.optString("name") ?: unit}" }) {
+              Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Unidad", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Text(portion?.optString("name") ?: unit, modifier = Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                  Icon(WireIcons.Down, null, Modifier.size(16.dp))
+                }
+              }
+            }
             DropdownMenu(expanded = portionMenu, onDismissRequest = { portionMenu = false }) {
               val units = if (chosen == null) listOf("g", "ml") else listOf(unit)
               units.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { if (chosen != null && portionId.isNotEmpty()) quantity = canonical?.let { FoodEntryModel.input(it) } ?: "100"; unit = option; portionId = ""; portionMenu = false; dirty = true }) }
