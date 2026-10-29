@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
-import { makeStyles, useTheme } from '@/theme';
+import { makeStyles } from '@/theme';
 import { Button, Field, Input, Sheet, Text } from '@/components/ui';
 import { CHILEAN_FOOD_SEALS, foodSealLabel } from '@/lib/chilean-food-seals';
 import { parseFoodPortion } from '@/lib/food-portions';
@@ -13,7 +13,6 @@ import { parseFoodPortion } from '@/lib/food-portions';
 
 export default function CreateFoodScreen() {
   const styles = useStyles();
-  const theme = useTheme();
   const router = useRouter();
   const { addCustomFood } = useFoodLibraryStore();
 
@@ -60,51 +59,66 @@ export default function CreateFoodScreen() {
   };
 
   const macros = [
-    { label: 'Calorías', value: calories, set: setCalories },
-    { label: 'Proteína', value: protein, set: setProtein },
-    { label: 'Carbohidratos', value: carbs, set: setCarbs },
-    { label: 'Grasas', value: fat, set: setFat },
-    { label: 'Fibra', value: fiber, set: setFiber },
+    { label: 'Calorías (kcal)', value: calories, set: setCalories },
+    { label: 'Proteína (g)', value: protein, set: setProtein },
+    { label: 'Carbohidratos (g)', value: carbs, set: setCarbs },
+    { label: 'Grasas (g)', value: fat, set: setFat },
   ];
 
   return (
     <Sheet
       title="Crear alimento"
       subtitle="Los valores son por porción base"
-      closeLabel="Cancelar">
+      closeLabel="Cancelar"
+      footer={<Button title="Guardar y ajustar porción" onPress={save} disabled={!name.trim()} />}>
       <ScrollView
-        contentContainerStyle={[styles.content, { gap: theme.space.xl }]}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled">
-        <Field label="Nombre">
+        <Text tone="secondary">Tu alimento · ficha personal</Text>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Identidad y porción</Text>
+        <FoodField label="Nombre">
           <Input
+            style={styles.input}
             value={name}
             onChangeText={setName}
             placeholder="Pan de masa madre"
             autoFocus
           />
-        </Field>
+        </FoodField>
 
-        <Field label="Porción base" hint="La cantidad a la que corresponden los valores">
-          <Input value={portion} onChangeText={setPortion} placeholder="100g" />
-        </Field>
+        <FoodField label="Porción base" hint="La cantidad a la que corresponden los valores">
+          <Input style={styles.input} value={portion} onChangeText={setPortion} placeholder="100g" />
+        </FoodField>
 
-        <View style={[styles.macros, { gap: theme.space.lg }]}>
+        </View>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Información por {portion.trim() || 'porción'}</Text>
+        <View style={styles.macros}>
           {macros.map((m) => (
-            <Field key={m.label} label={m.label} style={styles.macroField}>
+            <FoodField key={m.label} label={m.label} style={styles.macroField}>
               <Input
+                style={styles.input}
                 variant="number"
                 value={m.value}
                 onChangeText={m.set}
                 keyboardType="numeric"
                 placeholder="0"
               />
-            </Field>
+            </FoodField>
           ))}
         </View>
 
-        <Field label="Sellos" hint="Los que trae el envase, si corresponde">
-          <View style={[styles.seals, { gap: theme.space.sm }]}>
+        </View>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Opcionales</Text>
+          <FoodField label="Fibra (g)">
+            <Input style={styles.input} variant="number" value={fiber} onChangeText={setFiber} keyboardType="numeric" placeholder="0" />
+          </FoodField>
+        <FoodField label="Sellos" hint="Los que trae el envase, si corresponde">
+          <View style={styles.seals}>
             {CHILEAN_FOOD_SEALS.map((seal) => {
               const on = seals.has(seal);
               return (
@@ -122,7 +136,9 @@ export default function CreateFoodScreen() {
               );
             })}
           </View>
-        </Field>
+        </FoodField>
+
+        </View>
 
         {error ? (
           <Text accessibilityRole="alert" variant="body" tone="danger" selectable>
@@ -130,17 +146,35 @@ export default function CreateFoodScreen() {
           </Text>
         ) : null}
 
-        <Button title="Guardar y ajustar porción" onPress={save} disabled={!name.trim()} />
       </ScrollView>
     </Sheet>
   );
 }
 
+function FoodField({ label, hint, children, style, ...rest }: React.ComponentProps<typeof Field>) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.field, style]} {...rest}>
+      <Text tone="secondary">{label}</Text>
+      {React.Children.map(children, (child) =>
+        React.isValidElement<React.ComponentProps<typeof Input>>(child) && child.type === Input
+          ? React.cloneElement(child, { accessibilityLabel: child.props.accessibilityLabel ?? label })
+          : child
+      )}
+      {hint ? <Text variant="caption" tone="secondary">{hint}</Text> : null}
+    </View>
+  );
+}
+
 const useStyles = makeStyles((t) => ({
-  content: { padding: t.space.xl, paddingBottom: t.space.xxxl },
-  macros: { flexDirection: 'row', flexWrap: 'wrap' },
-  macroField: { flexGrow: 1, flexBasis: '45%' },
-  seals: { flexDirection: 'row', flexWrap: 'wrap' },
+  scroll: { backgroundColor: t.colors.background },
+  input: { minHeight: 48, borderRadius: 14 },
+  field: { gap: t.space.sm },
+  content: { padding: t.space.xl, paddingBottom: t.space.xxxl, gap: t.space.xl },
+  group: { padding: t.space.xl, gap: t.space.lg, borderRadius: t.radius.xl, backgroundColor: t.colors.surface },
+  macros: { flexDirection: 'row', flexWrap: 'wrap', rowGap: t.space.lg, columnGap: '4%' },
+  macroField: { width: '48%', minWidth: 0 },
+  seals: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
   seal: {
     paddingHorizontal: t.space.md,
     paddingVertical: t.space.sm,

@@ -1,6 +1,8 @@
 package expo.modules.balancedailylog
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -8,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -25,17 +28,21 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 @Composable internal fun WireNavigation(destination: Int, enabled: Boolean, onSelect: (Int) -> Unit, onAdd: () -> Unit) {
-  Row(Modifier.fillMaxWidth().heightIn(min = 68.dp), verticalAlignment = Alignment.CenterVertically) {
+  Row(Modifier.testTag("organic-navigation").fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+    val icons = listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)
     listOf("Alimentos", "Mediciones", "+", "Resumen", "Perfil").forEachIndexed { index, label ->
       val target = if (index > 2) index - 1 else index
       if (index == 2) Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        FilledIconButton(onClick = onAdd, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null) }
-      } else NavigationBarItem(selected = destination == target, onClick = { onSelect(target) }, enabled = enabled,
-        icon = { Icon(listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)[index], null) },
-        label = { Text(label, fontSize = 9.sp, maxLines = 1) }, alwaysShowLabel = true,
-        colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.primary,
-          selectedTextColor = MaterialTheme.colorScheme.onSurface, indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-          unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
+        FilledIconButton(onClick = onAdd, enabled = enabled, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary), shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 10.dp, bottomStart = 22.dp), modifier = Modifier.size(56.dp).background(LocalOrganicGradients.current.action, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 10.dp, bottomStart = 22.dp)).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null, Modifier.size(24.dp)) }
+      } else Surface(onClick = { onSelect(target) }, enabled = enabled, color = Color.Transparent,
+        modifier = Modifier.weight(1f).semantics { selected = destination == target; role = Role.Tab }) {
+        Column(Modifier.heightIn(min = 58.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+          Box(Modifier.background(if (destination == target) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, RoundedCornerShape(16.dp)).padding(horizontal = 15.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
+            Icon(icons[index], null, Modifier.size(20.dp), tint = if (destination == target) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          Text(label, fontSize = 10.sp, maxLines = 1, color = if (destination == target) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (destination == target) FontWeight.SemiBold else FontWeight.Normal)
+        }
+      }
     }
   }
 }
@@ -59,8 +66,9 @@ import java.time.format.DateTimeFormatter
   val month = YearMonth.parse(monthText)
   val days = data.optJSONObject("days") ?: JSONObject()
   LaunchedEffect(selected) { monthText = YearMonth.from(date).toString() }
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Mediciones", "Peso")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { Text("Mediciones", style = MaterialTheme.typography.headlineSmall); Text("Peso", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     if (!data.optBoolean("showWeight")) item {
       Text("El seguimiento de peso está desactivado. Puedes activarlo en Perfil.")
     } else {
@@ -101,11 +109,18 @@ import java.time.format.DateTimeFormatter
       item {
         val day = days.optJSONObject(selected)
         val hasWeight = day != null && !day.isNull("weightKg")
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-          Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(wireDate(date), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(if (hasWeight) "${wireNumber(day!!.optDouble("weightKg"))} kg" else "Sin peso registrado", style = MaterialTheme.typography.headlineSmall)
-            Button(onClick = onWeight, enabled = enabled && date <= today) { Text(if (hasWeight) "Editar peso" else "Registrar peso") }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+          Text(wireLongDate(date), fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 18.sp)
+          if (hasWeight) Surface(onClick = onWeight, enabled = enabled && date <= today, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Editar peso" }) {
+            Row(Modifier.heightIn(min = 64.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+              Text("Peso", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Text("${wireNumber(day!!.optDouble("weightKg"))} kg", fontSize = 24.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, color = MaterialTheme.colorScheme.primary)
+              Icon(WireIcons.Right, null, Modifier.size(16.dp))
+            }
+          } else {
+            Text("Sin peso registrado este día.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = onWeight, enabled = enabled && date <= today) { Text("Registrar peso") }
             if (date > today) Text("Elige hoy o una fecha anterior para registrar peso.", style = MaterialTheme.typography.bodySmall)
           }
         }
@@ -114,11 +129,12 @@ import java.time.format.DateTimeFormatter
       if (error != null) item { Text(error.optString("message"), color = MaterialTheme.colorScheme.error) }
     }
   }
+  }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(date), yearRange = 1900..9999)
-    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { TextButton(onClick = {
+    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { OrganicButton(onClick = {
       state.selectedDateMillis?.let { onDate(DailyLogDates.fromUtcMillis(it).toString()) }; picker = false
-    }) { Text("Elegir fecha") } }, dismissButton = { TextButton(onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
+    }) { Text("Elegir fecha") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
   }
 }
 
@@ -129,50 +145,59 @@ import java.time.format.DateTimeFormatter
   var error by remember { mutableStateOf("") }
   var deleting by remember { mutableStateOf(false) }
   val allowed = date <= LocalDate.parse(data.optString("today")) && data.optBoolean("showWeight")
-  AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
+  AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(wireDate(date))
-      OutlinedTextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+      OrganicTextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
       Text("De 1 a 500 kg · precisión de 0,1 kg", style = MaterialTheme.typography.bodySmall)
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
       if (existing) TextButton(onClick = { deleting = true }, enabled = allowed) { Text("Eliminar peso", color = MaterialTheme.colorScheme.error) }
     }
-  }, confirmButton = { TextButton(onClick = {
+  }, confirmButton = { OrganicButton(onClick = {
     if (allowed && WireframeModel.weightGrams(quantity) != null) onAction("weight-save", mapOf("quantity" to quantity))
     else error = "Revisa el peso y la fecha."
-  }, enabled = allowed) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-  if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso del ${wireDate(date)}?") },
-    confirmButton = { TextButton(onClick = { onAction("weight-delete", emptyMap()) }) { Text("Eliminar") } },
-    dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancelar") } })
+  }, enabled = allowed) { Text("Guardar") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = onDismiss) { Text("Cancelar") } })
+  if (deleting) AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso del ${wireDate(date)}?") },
+    confirmButton = { OrganicButton(onClick = { onAction("weight-delete", emptyMap()) }) { Text("Eliminar") } },
+    dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { deleting = false }) { Text("Cancelar") } })
 }
 
 @Composable private fun WireProfile(data: JSONObject, enabled: Boolean, onAction: (String, Map<String, Any>) -> Unit) {
   val profile = data.optJSONObject("profile") ?: JSONObject()
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Perfil", "Tu cuenta y tus herramientas")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Section)) {
-    item { Text("Perfil", style = MaterialTheme.typography.headlineSmall) }
     item {
-      Text(profile.optString("name"), style = MaterialTheme.typography.titleLarge)
-      Text(if (profile.optBoolean("guest")) "Datos en este dispositivo" else "Cuenta conectada", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    item { HorizontalDivider(); Text("Preferencias", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium) }
-    item {
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text("Seguimiento de peso"); Text("Conserva el historial al desactivar", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Switch(data.optBoolean("showWeight"), { onAction("preference", mapOf("enabled" to it)) }, enabled = enabled && data.optBoolean("preferencesReady"))
+      Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Box(Modifier.size(56.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) { Icon(WireIcons.Profile, null, Modifier.size(28.dp)) }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(profile.optString("name"), style = MaterialTheme.typography.titleLarge)
+          Text(if (profile.optBoolean("guest")) "Datos en este dispositivo" else "Cuenta conectada", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        }
       }
-      if (!data.isNull("preferencesError")) Text(data.optString("preferencesError"), color = MaterialTheme.colorScheme.error)
     }
-    item { Text("Unidades", style = MaterialTheme.typography.titleMedium); Text("Peso: kg · Alimentos: g / ml · Energía: kcal", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
     item {
-      Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        WireToolRow("Administrar biblioteca", WireIcons.Diary, enabled) { onAction("library", emptyMap()) }
-        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
+      OrganicSection("Preferencias") {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Seguimiento de peso", fontSize = 13.sp)
+            Text("Tu historial se conserva al desactivar", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          Switch(data.optBoolean("showWeight"), { onAction("preference", mapOf("enabled" to it)) }, enabled = enabled && data.optBoolean("preferencesReady"))
+        }
+        if (!data.isNull("preferencesError")) Text(data.optString("preferencesError"), color = MaterialTheme.colorScheme.error)
+        Text("kg · g / ml · kcal", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+    }
+    item {
+      OrganicSection("Herramientas") {
+        WireToolRow("Biblioteca", WireIcons.Diary, enabled) { onAction("library", emptyMap()) }
         WireToolRow("Importar MacroFactor", WireIcons.Import, enabled) { onAction("import", emptyMap()) }
-        HorizontalDivider(Modifier.padding(horizontal = WireSpace.Page))
         WireToolRow("Cuenta y configuración", WireIcons.Settings, enabled) { onAction("settings", emptyMap()) }
       }
     }
   }
+}
 }
 
 @Composable private fun WireToolRow(label: String, icon: ImageVector, enabled: Boolean, click: () -> Unit) {
@@ -180,8 +205,37 @@ import java.time.format.DateTimeFormatter
   val content = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f)
   val secondary = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.38f)
   Surface(onClick = click, enabled = enabled, color = Color.Transparent, modifier = Modifier.semantics { role = Role.Button }) {
-    ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) }, leadingContent = { Icon(icon, null, tint = secondary) },
+    ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) },
       trailingContent = { Icon(WireIcons.Right, null, Modifier.size(18.dp), tint = secondary) },
       colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+  }
+}
+
+@Composable internal fun WirePageHeader(title: String, subtitle: String? = null) {
+  Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 28.sp, fontWeight = FontWeight.Medium)
+    if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+}
+
+@Composable internal fun OrganicSegments(labels: List<String>, selected: Int, enabled: Boolean, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+  Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    labels.forEachIndexed { i, label ->
+      Surface(onClick = { onSelect(i) }, enabled = enabled, color = if (i == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        shape = if (i == selected) RoundedCornerShape(24.dp) else RoundedCornerShape(topStart = if (i == 0) 24.dp else 5.dp, bottomStart = if (i == 0) 24.dp else 5.dp, topEnd = if (i == labels.lastIndex) 24.dp else 5.dp, bottomEnd = if (i == labels.lastIndex) 24.dp else 5.dp), modifier = Modifier.weight(1f).semantics { this.selected = i == selected; role = Role.Tab }) {
+        Box(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+          Text(label, fontSize = 13.sp, fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Normal, textDecoration = if (i == selected) androidx.compose.ui.text.style.TextDecoration.Underline else null, color = if (i == selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+      }
+    }
+  }
+}
+
+@Composable internal fun OrganicSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+  Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+      Text(title, fontSize = 18.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontWeight = FontWeight.Medium)
+      content()
+    }
   }
 }

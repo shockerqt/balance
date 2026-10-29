@@ -40,6 +40,7 @@ export const useFoodLibrarySections = (
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, 'es-CL'));
 
+    if (filter === 'all') return visible.length ? [{ key: 'all', title: 'ALIMENTOS', caption: 'Personal y oficial', data: visible }] : [];
     const personal = visible.filter((food) => !food.isOfficial);
     const official = visible.filter((food) => food.isOfficial);
 
@@ -90,16 +91,14 @@ export const FoodLibraryList: React.FC<FoodLibraryListProps> = ({
     <SectionList
       sections={sections}
       keyExtractor={(food) => food.id}
-      renderItem={({ item }) => <FoodLibraryRow food={item} onPress={onPressFood} />}
+      renderItem={({ item, index, section }) => <FoodLibraryRow food={item} first={index === 0} last={index === section.data.length - 1} onPress={onPressFood} />}
       renderSectionHeader={({ section }) => (
         <View style={styles.sectionHeader}>
-          <Text variant="label">{section.title}</Text>
-          <Text variant="caption" tone="muted">
-            {section.data.length} · {section.caption}
-          </Text>
+          <Text variant="caption" tone="secondary">{filter === 'official' ? 'Referencias oficiales' : filter === 'personal' ? 'Tus alimentos' : 'Tus alimentos y referencias'}</Text>
+          <Text variant="caption" tone="secondary">{section.data.length} alimentos</Text>
         </View>
       )}
-      stickySectionHeadersEnabled
+      stickySectionHeadersEnabled={false}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
@@ -142,20 +141,20 @@ const IconEmpty = () => {
 };
 
 const useStyles = makeStyles((t) => ({
-  content: { paddingBottom: t.space.xxxl * 3 + t.space.lg },
+  content: { paddingHorizontal: 16, paddingBottom: t.space.xxxl * 3 + t.space.lg },
   emptyContent: { flexGrow: 1 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: t.space.md,
-    paddingHorizontal: t.space.lg,
+    paddingHorizontal: 4,
     paddingTop: t.space.md,
     paddingBottom: t.space.sm,
-    borderTopWidth: t.border.rule,
-    borderBottomWidth: t.border.hairline,
+    borderTopWidth: 0,
+    borderBottomWidth: 0,
     borderColor: t.colors.text,
-    backgroundColor: t.colors.surfaceRaised
+    backgroundColor: t.colors.background
   },
   empty: {
     flex: 1,
@@ -170,7 +169,7 @@ const useStyles = makeStyles((t) => ({
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: t.border.rule,
+    borderWidth: 0,
     borderColor: t.colors.text,
     borderRadius: t.radius.pill
   }

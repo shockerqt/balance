@@ -16,6 +16,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -36,16 +37,13 @@ import kotlin.math.abs
       if (if (body) !day.isNull("weightKg") else day.optBoolean("recorded")) date to day else null
     }.toList()
   }
+  Column(Modifier.fillMaxSize()) {
+  WirePageHeader("Resumen", "Tendencias de tus registros")
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { Text("Resumen", style = MaterialTheme.typography.headlineSmall) }
     item {
-      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        SegmentedButton(selected = !body, onClick = { body = false }, shape = SegmentedButtonDefaults.itemShape(0, 2), label = { Text("Alimentación") }, enabled = enabled)
-        SegmentedButton(selected = body, onClick = { body = true }, shape = SegmentedButtonDefaults.itemShape(1, 2), label = { Text("Cuerpo") }, enabled = enabled)
-      }
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(7, 30, 90).forEach { n -> FilterChip(period == n, { period = n }, label = { Text("$n días") }, enabled = enabled) }
-      }
+      OrganicSegments(listOf("Alimentación", "Cuerpo"), if (body) 1 else 0, enabled, { body = it == 1 })
+      Spacer(Modifier.height(12.dp))
+      OrganicSegments(listOf("7 días", "30 días", "90 días"), listOf(7, 30, 90).indexOf(period), enabled, { period = listOf(7, 30, 90)[it] })
       TextButton(onClick = { picker = true }, enabled = enabled) {
         Icon(WireIcons.Calendar, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Hasta ${wireDate(end)}")
       }
@@ -62,11 +60,12 @@ import kotlin.math.abs
     }
     item { Text(if (body) "La línea une mediciones reales según el tiempo transcurrido." else "Los días sin alimentos registrados se muestran sin datos. Las curvas se interrumpen en esas fechas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
   }
+  }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(end), yearRange = 1900..9999)
-    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { TextButton(onClick = {
+    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { OrganicButton(onClick = {
       state.selectedDateMillis?.let { endText = DailyLogDates.fromUtcMillis(it).toString() }; picker = false
-    }) { Text("Elegir fecha final") } }, dismissButton = { TextButton(onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
+    }) { Text("Elegir fecha final") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
   }
 }
 
@@ -74,6 +73,7 @@ import kotlin.math.abs
 @Composable private fun WirePlot(title: String, unit: String, records: List<Pair<LocalDate, JSONObject>>, start: LocalDate, end: LocalDate,
   keys: List<String>, labels: List<String>, bars: Boolean, body: Boolean, enabled: Boolean, onOpen: (LocalDate) -> Unit) {
   var selectedText by rememberSaveable { mutableStateOf(records.last().first.toString()) }
+  var dateMenu by remember { mutableStateOf(false) }
   val selected = records.indexOfFirst { it.first.toString() == selectedText }.let { if (it < 0) records.lastIndex else it }
   val selectedRecord = records[selected]
   fun values(record: Pair<LocalDate, JSONObject>) = keys.map { key ->
@@ -87,8 +87,8 @@ import kotlin.math.abs
   val paints = listOf(colors.primary, colors.onSurface, colors.onSurfaceVariant)
   val ticks = listOf(top, (top + minimum) / 2, minimum)
   fun pattern(series: Int) = if (series == 0) null else PathEffect.dashPathEffect(floatArrayOf(if (series == 1) 10f else 3f, 5f))
-  Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = colors.surface)) {
-    Column(Modifier.padding(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Medium)) {
+  Surface(Modifier.fillMaxWidth(), color = androidx.compose.ui.graphics.Color.Transparent) {
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         Text(unit, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
@@ -101,6 +101,14 @@ import kotlin.math.abs
                 strokeWidth = 2.dp.toPx(), pathEffect = pattern(series))
             }
             Text(label, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+          }
+        }
+      }
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(wireDate(selectedRecord.first), fontSize = 11.sp, color = colors.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          values(selectedRecord).forEachIndexed { i, n ->
+            Text("${if (keys.size > 1) labels[i].take(1) + " " else ""}${wireNumber(n)} $unit", fontSize = if (keys.size == 1) 20.sp else 12.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily)
           }
         }
       }
@@ -122,7 +130,7 @@ import kotlin.math.abs
         fun x(date: LocalDate) = (ChronoUnit.DAYS.between(start, date).toFloat() + 0.5f) / (span + 1) * size.width
         val inset = 4.dp.toPx()
         fun y(value: Double) = size.height - inset - (((value - minimum) / (top - minimum)).toFloat().coerceIn(0f, 1f) * (size.height - inset * 2))
-        ticks.forEach { tick -> drawLine(colors.outlineVariant, Offset(0f, y(tick)), Offset(size.width, y(tick)), strokeWidth = 0.5.dp.toPx()) }
+        ticks.forEach { tick -> drawLine(colors.outline.copy(alpha = .5f), Offset(0f, y(tick)), Offset(size.width, y(tick)), strokeWidth = 0.5.dp.toPx()) }
         drawLine(colors.primary.copy(alpha = 0.5f), Offset(x(selectedRecord.first), 0f), Offset(x(selectedRecord.first), size.height), 1.dp.toPx())
         records.forEachIndexed { i, record ->
           val v = values(record)
@@ -145,19 +153,19 @@ import kotlin.math.abs
         Text(wireDate(start), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
         Text(wireDate(end), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
       }
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        IconButton(onClick = { selectedText = records[selected - 1].first.toString() }, enabled = enabled && selected > 0) { Icon(WireIcons.Left, "Fecha anterior") }
-        Text(wireDate(selectedRecord.first), style = MaterialTheme.typography.labelMedium)
-        IconButton(onClick = { selectedText = records[selected + 1].first.toString() }, enabled = enabled && selected < records.lastIndex) { Icon(WireIcons.Right, "Fecha siguiente") }
-      }
-      values(selectedRecord).forEachIndexed { i, n ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text(labels[i], style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-          Text("${wireNumber(n)} $unit", style = MaterialTheme.typography.bodySmall)
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) {
+          TextButton(onClick = { dateMenu = true }, enabled = enabled) {
+            Text(wireDate(selectedRecord.first), fontSize = 12.sp)
+            Spacer(Modifier.width(6.dp)); Icon(WireIcons.Down, null, Modifier.size(16.dp))
+          }
+          DropdownMenu(expanded = dateMenu, onDismissRequest = { dateMenu = false }) {
+            records.forEach { record -> DropdownMenuItem(text = { Text(wireDate(record.first)) }, onClick = { selectedText = record.first.toString(); dateMenu = false }) }
+          }
         }
-      }
-      TextButton(onClick = { onOpen(selectedRecord.first) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-        Text("Abrir registros de esa fecha"); Spacer(Modifier.width(8.dp)); Icon(WireIcons.Right, null, Modifier.size(18.dp))
+        TextButton(onClick = { onOpen(selectedRecord.first) }, enabled = enabled) {
+          Text("Abrir registros", fontSize = 12.sp); Spacer(Modifier.width(4.dp)); Icon(WireIcons.Right, null, Modifier.size(16.dp))
+        }
       }
     }
   }

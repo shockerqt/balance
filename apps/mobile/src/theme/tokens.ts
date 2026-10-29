@@ -1,4 +1,4 @@
-import { TextStyle } from 'react-native';
+import type { TextStyle } from 'react-native';
 
 /* ============================================================
    Contrato del tema.
@@ -13,6 +13,10 @@ import { TextStyle } from 'react-native';
 export interface PaletteColors {
   /** Fondo de la pantalla */
   background: string;
+  outline: string;
+  secondary: string;
+  onSecondary: string;
+  amber: string;
   /** Superficie elevada: tarjetas, cabeceras */
   surface: string;
   /** Superficie por encima de `surface`: cajas dentro de tarjetas */
@@ -66,18 +70,19 @@ export type TypeVariant =
   | 'numberLarge';
 
 export const type: Record<TypeVariant, TextStyle> = {
-  display: { fontSize: 28, fontWeight: '700', letterSpacing: -0.4 },
-  title: { fontSize: 18, fontWeight: '700', letterSpacing: -0.2 },
-  heading: { fontSize: 15, fontWeight: '600' },
+  display: { fontSize: 28, fontWeight: '500', letterSpacing: -0.4 },
+  title: { fontSize: 18, fontWeight: '500', letterSpacing: -0.2 },
+  heading: { fontSize: 15, fontWeight: '500' },
   body: { fontSize: 13, fontWeight: '400' },
-  bodyStrong: { fontSize: 13, fontWeight: '600' },
+  bodyStrong: { fontSize: 14, fontWeight: '500' },
   /** Etiquetas en caja alta: el renglon de cabecera del libro. */
   label: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
   caption: { fontSize: 11, fontWeight: '500' },
   /** Toda cifra va tabular: en un libro las columnas deben alinearse. */
-  number: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  number: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
   numberLarge: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
 };
+for (const [role, style] of Object.entries(type)) style.fontFamily = ['display', 'title', 'heading', 'numberLarge'].includes(role) ? 'Outfit' : ['bodyStrong', 'number'].includes(role) ? 'InterMedium' : 'Inter';
 
 /** Escala de espaciado. Multiplos de 4. */
 export const space = {
@@ -95,7 +100,7 @@ export const radius = {
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 20,
+  xl: 24,
   pill: 999,
 } as const;
 
@@ -120,6 +125,7 @@ export interface Theme {
   /** `dark` alimenta la StatusBar y los temas de expo-router */
   scheme: 'light' | 'dark';
   colors: PaletteColors;
+  gradients: { header: string[]; action: string[] };
   type: typeof type;
   space: typeof space;
   radius: typeof radius;

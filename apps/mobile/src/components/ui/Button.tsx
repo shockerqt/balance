@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, TouchableOpacity, TouchableOpacityProps } from 'react-native';
 import { useTheme } from '@/theme';
+import { gradientBackground } from '@/theme/gradient';
 import { Text } from './Text';
 
 /* Botones del sistema. Los tres estilos que las pantallas venian
@@ -60,10 +61,11 @@ export const Button: React.FC<ButtonProps> = ({
           paddingVertical: size === 'lg' ? theme.space.lg : theme.space.md,
           paddingHorizontal: theme.space.xl,
           gap: theme.space.sm,
-          borderWidth: variant === 'ghost' ? theme.border.hairline : 0,
+          borderWidth: 0,
           borderColor: theme.colors.border,
           opacity: isDisabled ? 0.5 : 1,
         },
+        variant === 'primary' && gradientBackground(theme.gradients.action, 135),
         style,
       ]}
       {...rest}>

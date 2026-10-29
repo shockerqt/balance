@@ -14,6 +14,7 @@
     "expo-dev-client": "~57.0.11",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.2",
+    "expo-font": "~57.0.1",
     "expo-linking": "~57.0.4",
     "expo-router": "~57.0.12",
     "expo-secure-store": "~57.0.1",
@@ -58,7 +59,8 @@
     "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
     "test:feed": "tsx --test tests/hour-rail.test.mjs tests/food-selection.test.mjs tests/prepared-day-window.test.mjs",
-    "test:native-daily": "tsx --test tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs tests/native-food-entry-lifecycle.test.cjs tests/native-interface.test.mjs tests/native-interface-lifecycle.test.cjs"
+    "test:native-daily": "tsx --test tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs tests/native-food-entry-lifecycle.test.cjs tests/native-interface.test.mjs tests/native-interface-lifecycle.test.cjs && npm run test:theme",
+    "test:theme": "tsx --test tests/organic-theme.test.mjs tests/theme-provider-lifecycle.test.cjs"
   },
   "private": true
 }
