@@ -183,16 +183,19 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       IconButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
         modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Icon(WireIcons.Calendar, null) }
     }
+    val headerDay = days.optJSONObject(visible.toString()) ?: empty
+    val headerMacros = wireObjects(headerDay.optJSONArray("macros")).take(3)
     Surface(onClick = { nutrition = true }, enabled = !locked && selected.isEmpty(), color = Color.Transparent,
-      modifier = Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page)) {
+      modifier = Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page).semantics(mergeDescendants = true) {
+        contentDescription = "${headerDay.optString("calories", "0")} de ${headerDay.optString("target")} kilocalorías. " + headerMacros.joinToString { "${it.optString("name")}: ${it.optString("value")} gramos" } + ". Ver detalle nutricional"
+      }) {
       Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        val headerDay = days.optJSONObject(visible.toString()) ?: empty
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(headerDay.optString("calories", "0"), style = MaterialTheme.typography.titleMedium)
           Text(" / ${headerDay.optString("target")} kcal", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-          Icon(WireIcons.Right, "Detalle nutricional del día", Modifier.size(16.dp))
+          Icon(WireIcons.Right, null, Modifier.size(16.dp))
         }
-        Text(wireObjects(headerDay.optJSONArray("macros")).take(3).mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")} g" }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+        Text(headerMacros.mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")} g" }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
       }
     }
     val weekStart = visible.minusDays((visible.dayOfWeek.value - 1).toLong())
