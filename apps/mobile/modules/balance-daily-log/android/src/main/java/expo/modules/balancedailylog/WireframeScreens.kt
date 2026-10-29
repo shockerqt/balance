@@ -132,9 +132,9 @@ import java.time.format.DateTimeFormatter
   }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(date), yearRange = 1900..9999)
-    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { TextButton(onClick = {
+    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { OrganicButton(onClick = {
       state.selectedDateMillis?.let { onDate(DailyLogDates.fromUtcMillis(it).toString()) }; picker = false
-    }) { Text("Elegir fecha") } }, dismissButton = { TextButton(onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
+    }) { Text("Elegir fecha") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
   }
 }
 
@@ -145,7 +145,7 @@ import java.time.format.DateTimeFormatter
   var error by remember { mutableStateOf("") }
   var deleting by remember { mutableStateOf(false) }
   val allowed = date <= LocalDate.parse(data.optString("today")) && data.optBoolean("showWeight")
-  AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
+  AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(wireDate(date))
       OrganicTextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
@@ -153,13 +153,13 @@ import java.time.format.DateTimeFormatter
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
       if (existing) TextButton(onClick = { deleting = true }, enabled = allowed) { Text("Eliminar peso", color = MaterialTheme.colorScheme.error) }
     }
-  }, confirmButton = { TextButton(onClick = {
+  }, confirmButton = { OrganicButton(onClick = {
     if (allowed && WireframeModel.weightGrams(quantity) != null) onAction("weight-save", mapOf("quantity" to quantity))
     else error = "Revisa el peso y la fecha."
-  }, enabled = allowed) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-  if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso del ${wireDate(date)}?") },
-    confirmButton = { TextButton(onClick = { onAction("weight-delete", emptyMap()) }) { Text("Eliminar") } },
-    dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancelar") } })
+  }, enabled = allowed) { Text("Guardar") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = onDismiss) { Text("Cancelar") } })
+  if (deleting) AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { deleting = false }, title = { Text("¿Eliminar el peso del ${wireDate(date)}?") },
+    confirmButton = { OrganicButton(onClick = { onAction("weight-delete", emptyMap()) }) { Text("Eliminar") } },
+    dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { deleting = false }) { Text("Cancelar") } })
 }
 
 @Composable private fun WireProfile(data: JSONObject, enabled: Boolean, onAction: (String, Map<String, Any>) -> Unit) {

@@ -253,27 +253,27 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   if (calendar) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(settled), yearRange = 1900..9999)
     DatePickerDialog(onDismissRequest = { calendar = false },
-      confirmButton = { TextButton(onClick = {
+      confirmButton = { OrganicButton(onClick = {
         state.selectedDateMillis?.let { go(DailyLogDates.fromUtcMillis(it)) }; calendar = false
       }, enabled = state.selectedDateMillis != null) { Text("Ir al día") } },
-      dismissButton = { TextButton(onClick = { calendar = false }) { Text("Cancelar") } }) {
+      dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { calendar = false }) { Text("Cancelar") } }) {
       DatePicker(state = state, title = { Text("Elegir fecha", Modifier.padding(24.dp)) })
     }
   }
-  if (deleteConfirmation) AlertDialog(onDismissRequest = { deleteConfirmation = false },
+  if (deleteConfirmation) AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { deleteConfirmation = false },
     title = { Text("Eliminar ${selected.size} registros") },
     text = { Text("Se eliminarán los alimentos seleccionados de este día.") },
-    confirmButton = { TextButton(onClick = { action("delete", selected.toList()); selected = emptySet(); deleteConfirmation = false }) { Text("Eliminar") } },
-    dismissButton = { TextButton(onClick = { deleteConfirmation = false }) { Text("Cancelar") } })
+    confirmButton = { OrganicButton(onClick = { action("delete", selected.toList()); selected = emptySet(); deleteConfirmation = false }) { Text("Eliminar") } },
+    dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { deleteConfirmation = false }) { Text("Cancelar") } })
   if (moveTime) {
     val firstTime = foods(settledDay).firstOrNull { it.optString("id") in selected }?.optString("time") ?: "12:00"
     val state = rememberTimePickerState(initialHour = firstTime.substringBefore(":").toIntOrNull() ?: 12,
       initialMinute = firstTime.substringAfter(":").toIntOrNull() ?: 0, is24Hour = true)
-    AlertDialog(onDismissRequest = { moveTime = false }, title = { Text("Cambiar hora") },
+    AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { moveTime = false }, title = { Text("Cambiar hora") },
       text = { TimeInput(state = state) },
-      confirmButton = { TextButton(onClick = {
+      confirmButton = { OrganicButton(onClick = {
         action("move", selected.toList(), String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
         selected = emptySet(); moveTime = false
-      }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = { moveTime = false }) { Text("Cancelar") } })
+      }) { Text("Guardar") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { moveTime = false }) { Text("Cancelar") } })
   }
 }

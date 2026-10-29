@@ -141,7 +141,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   var time by rememberSaveable(food.optString("id")) { mutableStateOf(food.optString("time")) }
   var error by remember { mutableStateOf("") }
   val portion = food.optJSONObject("portionSnapshot")
-  AlertDialog(onDismissRequest = onDismiss, title = { Text(food.optString("name")) }, text = {
+  AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = onDismiss, title = { Text(food.optString("name")) }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("${wireDate(date)} · la información nutricional histórica se conserva", style = MaterialTheme.typography.bodySmall)
       OrganicTextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
@@ -152,10 +152,10 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
       OrganicTextField(time, { time = it }, label = { Text("Hora · HH:mm") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
     }
-  }, confirmButton = { TextButton(onClick = {
+  }, confirmButton = { OrganicButton(onClick = {
     if (FoodEntryModel.decimal(quantity)?.let { it > 0 } == true && WireframeModel.validTime(date, time)) onSave(quantity, mode, time)
     else error = "Revisa la cantidad y la hora de Chile."
-  }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
+  }) { Text("Guardar") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = onDismiss) { Text("Cancelar") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

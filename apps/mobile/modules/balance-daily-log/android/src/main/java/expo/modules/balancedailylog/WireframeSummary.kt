@@ -63,9 +63,9 @@ import kotlin.math.abs
   }
   if (picker && enabled) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(end), yearRange = 1900..9999)
-    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { TextButton(onClick = {
+    DatePickerDialog(onDismissRequest = { picker = false }, confirmButton = { OrganicButton(onClick = {
       state.selectedDateMillis?.let { endText = DailyLogDates.fromUtcMillis(it).toString() }; picker = false
-    }) { Text("Elegir fecha final") } }, dismissButton = { TextButton(onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
+    }) { Text("Elegir fecha final") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { picker = false }) { Text("Cancelar") } }) { DatePicker(state) }
   }
 }
 

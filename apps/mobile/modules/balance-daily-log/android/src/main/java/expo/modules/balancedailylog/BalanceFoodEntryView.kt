@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -97,6 +98,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   var dismissedError by remember { mutableStateOf("") }
   var pending by remember { mutableStateOf(false) }
   var discard by remember { mutableStateOf(false) }
+  var pendingPick by remember { mutableStateOf<JSONObject?>(null) }
   var discardToSearch by remember { mutableStateOf(false) }
   var calendar by remember { mutableStateOf(false) }
   var clock by remember { mutableStateOf(false) }
@@ -126,7 +128,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     chosenJson = ""; name = query.trim(); unit = "g"; quantity = "100"; nutrientsJson = "{}"; portionId = ""
     editing = true; dirty = false; labelBasis = "per100"; labelSize = "100"; localError = ""
   }
-  fun leave() { discardToLabel = false; discardToSearch = false; if (!saving) { if (dirty) discard = true else emit("cancel", null) } }
+  fun leave() { pendingPick = null; discardToLabel = false; discardToSearch = false; if (!saving) { if (dirty) discard = true else emit("cancel", null) } }
   BackHandler(active) { leave() }
   fun pick(food: JSONObject) {
     chosenJson = food.toString(); name = food.optString("name")
@@ -149,6 +151,26 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       .put("labelBasis", labelBasis).put("labelSize", labelSize)
     pending = true; localError = ""; emit("save", input)
   }
+        val consumption: @Composable () -> Unit = {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+          OrganicTextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f).testTag("organic-consumption-quantity"))
+          Box(Modifier.weight(1f)) {
+            OutlinedButton(onClick = { portionMenu = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(portion?.optString("name") ?: unit) }
+            DropdownMenu(expanded = portionMenu, onDismissRequest = { portionMenu = false }) {
+              val units = if (chosen == null) listOf("g", "ml") else listOf(unit)
+              units.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { if (chosen != null && portionId.isNotEmpty()) quantity = canonical?.let { FoodEntryModel.input(it) } ?: "100"; unit = option; portionId = ""; portionMenu = false; dirty = true }) }
+              portions.forEach { option -> DropdownMenuItem(text = { Text(option.optString("name")) }, onClick = { portionId = option.optString("id"); quantity = FoodEntryModel.input(option.optDouble("portionQuantity")); portionMenu = false; dirty = true }) }
+            }
+          }
+        }
+        if (portion != null) Text("Equivale a ${FoodEntryModel.display(canonical)} $unit", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        fun total(key: String): Double? {
+          val n = if (nutrition.isNull(key)) null else nutrition.optDouble(key).takeIf { it.isFinite() }
+          return if (canonical == null || n == null) null else n * canonical / 100.0
+        }
+        if (total("calories") != null) Text("${FoodEntryModel.display(total("calories"))} kcal · P ${FoodEntryModel.display(total("protein"))} g · C ${FoodEntryModel.display(total("carbs"))} g · G ${FoodEntryModel.display(total("fat"))} g", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        }
   Scaffold(modifier = Modifier.fillMaxSize().imePadding(), containerColor = MaterialTheme.colorScheme.background,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = { Column {
@@ -176,6 +198,10 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     bottomBar = {
       if (editing) Surface(color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().padding(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
+          if (chosen != null) {
+            Text(name, style = MaterialTheme.typography.titleMedium)
+            consumption()
+          }
           val error = localError.ifEmpty { status.optString("error").takeUnless { it == dismissedError } ?: "" }
           if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.semantics { contentDescription = "Error: $error" })
@@ -186,7 +212,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
         }
       }
     }) { padding ->
-    if (!editing) {
+    if (!editing || chosen != null) {
       LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         item("search") {
           OrganicTextField(value = query, onValueChange = { query = it }, enabled = enabled, singleLine = true,
@@ -206,7 +232,12 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
         else if (results.isEmpty()) item("empty") { Text("No hay alimentos que coincidan. Puedes registrar uno sin guardarlo en la biblioteca.", Modifier.padding(vertical = 24.dp)) }
         items(results, key = { it.optString("id") }, contentType = { "food" }) { food ->
           val d = food.getJSONObject("details"); val n = d.getJSONObject("nutritionPer100")
-          Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth().clickable(enabled) { pick(food) }) {
+          Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp), color = if (chosen?.optString("id") == food.optString("id")) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().testTag("organic-catalog-${food.optString("id")}").semantics { selected = chosen?.optString("id") == food.optString("id") }.clickable(enabled) {
+              if (chosen?.optString("id") != food.optString("id")) {
+                if (dirty) { pendingPick = food; discardToLabel = false; discardToSearch = false; discard = true } else pick(food)
+              }
+            }) {
             Row(Modifier.heightIn(min = 80.dp).padding(horizontal = 18.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
               Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(food.optString("name"), fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -230,40 +261,6 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           label = { Text("Nombre del alimento") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         } else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
           Text("${if (chosen.optBoolean("isOfficial")) "Oficial" else "Biblioteca personal"} · información por 100 $unit", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        val consumption: @Composable () -> Unit = {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-          OrganicTextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f))
-          Box(Modifier.weight(1f)) {
-            OutlinedButton(onClick = { portionMenu = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(portion?.optString("name") ?: unit) }
-            DropdownMenu(expanded = portionMenu, onDismissRequest = { portionMenu = false }) {
-              val units = if (chosen == null) listOf("g", "ml") else listOf(unit)
-              units.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { if (chosen != null && portionId.isNotEmpty()) quantity = canonical?.let { FoodEntryModel.input(it) } ?: "100"; unit = option; portionId = ""; portionMenu = false; dirty = true }) }
-              portions.forEach { option -> DropdownMenuItem(text = { Text(option.optString("name")) }, onClick = { portionId = option.optString("id"); quantity = FoodEntryModel.input(option.optDouble("portionQuantity")); portionMenu = false; dirty = true }) }
-            }
-          }
-        }
-        if (portion != null) Text("Equivale a ${FoodEntryModel.display(canonical)} $unit", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (chosen != null) Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large) {
-          Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("En esta cantidad", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            fun total(key: String): Double? {
-              val n = if (nutrition.isNull(key)) null else nutrition.optDouble(key).takeIf { it.isFinite() }
-              return if (canonical == null || n == null) null else n * canonical / 100.0
-            }
-            Text("${FoodEntryModel.display(total("calories"))} kcal", fontSize = 36.sp, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-              listOf("protein" to "Proteínas", "carbs" to "Carbos", "fat" to "Grasas").forEach { (key, label) ->
-                Column { Text("${FoodEntryModel.display(total(key))} g", fontWeight = FontWeight.Medium); Text(label, style = MaterialTheme.typography.bodySmall) }
-              }
-            }
-          }
-        }
-        else {
-          Text("Consumo: ${FoodEntryModel.display(if (canonical == null || nutrition.isNull("calories")) null else nutrition.optDouble("calories") * canonical / 100)} kcal · ${FoodEntryModel.display(canonical)} $unit", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
-        }
-        if (chosen != null) consumption()
         if (chosen == null) {
           Text(if (labelBasis == "portion") "Información por porción" else "Información por 100 $unit", style = MaterialTheme.typography.titleMedium)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -314,21 +311,22 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       }
     }
   }
-  if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("¿Descartar este registro?") },
+  if (discard) AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { discard = false; pendingPick = null }, title = { Text("¿Descartar este registro?") },
     text = { Text("Los cambios de este alimento todavía no están guardados.") },
-    confirmButton = { TextButton(onClick = { discard = false; dirty = false; editing = false; chosenJson = ""; if (discardToLabel) { labels(); discardToLabel = false } else if (!discardToSearch) emit("cancel", null) }) { Text("Descartar") } },
-    dismissButton = { TextButton(onClick = { discard = false }) { Text("Seguir editando") } })
+    confirmButton = { OrganicButton(onClick = { val next = pendingPick; pendingPick = null; discard = false
+      if (next != null) pick(next) else { dirty = false; editing = false; chosenJson = ""; if (discardToLabel) { labels(); discardToLabel = false } else if (!discardToSearch) emit("cancel", null) } }) { Text("Descartar") } },
+    dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { discard = false; pendingPick = null }) { Text("Seguir editando") } })
   if (calendar) {
     val picker = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(LocalDate.parse(date)), yearRange = 1970..9999)
-    DatePickerDialog(onDismissRequest = { calendar = false }, confirmButton = { TextButton(onClick = {
+    DatePickerDialog(onDismissRequest = { calendar = false }, confirmButton = { OrganicButton(onClick = {
       picker.selectedDateMillis?.let { date = DailyLogDates.fromUtcMillis(it).toString(); dirty = true }; calendar = false
-    }, enabled = picker.selectedDateMillis != null) { Text("Elegir fecha") } }, dismissButton = { TextButton(onClick = { calendar = false }) { Text("Cancelar") } }) { DatePicker(picker) }
+    }, enabled = picker.selectedDateMillis != null) { Text("Elegir fecha") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { calendar = false }) { Text("Cancelar") } }) { DatePicker(picker) }
   }
   if (clock) {
     val picker = rememberTimePickerState(time.substringBefore(':').toInt(), time.substringAfter(':').toInt(), true)
-    AlertDialog(onDismissRequest = { clock = false }, title = { Text("Hora del registro") }, text = { TimePicker(picker) },
-      confirmButton = { TextButton(onClick = { time = String.format(Locale.ROOT, "%02d:%02d", picker.hour, picker.minute); dirty = true; clock = false }) { Text("Elegir hora") } },
-      dismissButton = { TextButton(onClick = { clock = false }) { Text("Cancelar") } })
+    AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { clock = false }, title = { Text("Hora del registro") }, text = { TimePicker(picker) },
+      confirmButton = { OrganicButton(onClick = { time = String.format(Locale.ROOT, "%02d:%02d", picker.hour, picker.minute); dirty = true; clock = false }) { Text("Elegir hora") } },
+      dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { clock = false }) { Text("Cancelar") } })
   }
 }
 @Composable private fun NutrientInput(field: JSONObject, value: String, enabled: Boolean, change: (String) -> Unit) {

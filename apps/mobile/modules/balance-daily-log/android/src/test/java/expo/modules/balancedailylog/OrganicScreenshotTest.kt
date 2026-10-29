@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.onAllNodesWithText
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -326,6 +328,69 @@ class OrganicScreenshotTest {
     assertEquals("Right column alignment", p.left, f.left, 1f)
     compose.onNodeWithText("Tu consumo").performScrollTo().assertIsDisplayed()
     screenshot("$name-consumption")
+  }
+
+  @Test fun forestDarkSelectedLibrary() = selectedLibrary(dark = true)
+  @Test fun forestLightSelectedLibrary() = selectedLibrary(dark = false)
+
+  private fun selectedLibrary(dark: Boolean) {
+    val template = JSONObject().put("id", "synthetic-template").put("updatedAt", 42)
+      .put("name", "Avena sintética").put("isOfficial", false)
+      .put("details", JSONObject().put("canonicalUnit", "g")
+        .put("nutritionPer100", JSONObject().put("calories", 100).put("protein", 10)
+          .put("carbs", 15).put("fat", 2)).put("portions", JSONArray()))
+    val second = JSONObject(template.toString()).put("id", "synthetic-second")
+      .put("updatedAt", 43).put("name", "Segundo alimento sintético")
+    val fields = JSONArray()
+    listOf("calories" to "Energía", "protein" to "Proteínas",
+      "carbs" to "Carbohidratos", "fat" to "Grasas").forEach { (key, label) ->
+      fields.put(JSONObject().put("key", key).put("label", label)
+        .put("unit", if (key == "calories") "kcal" else "g").put("required", true))
+    }
+    val data = JSONObject().put("date", "2026-10-09").put("time", "13:00")
+      .put("today", "2026-10-09").put("ready", true)
+      .put("templates", JSONArray().put(template).put(second)).put("nutrientFields", fields)
+    // This callback records events in memory only; it has no store or service adapter.
+    val events = mutableListOf<Pair<String, JSONObject?>>()
+    compose.setContent {
+      WireframeTheme(forest(dark)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp), color = MaterialTheme.colorScheme.background) {
+          FoodEntryScreen(data, JSONObject(), true) { event, payload -> events.add(event to payload) }
+        }
+      }
+    }
+    val name = "forest-${if (dark) "dark" else "light"}-selected-library"
+    screenshot("$name-search")
+    try { compose.onAllNodesWithText("Avena sintética")[0].performClick() }
+    finally { screenshot("$name-footer") }
+    compose.onNodeWithText("Buscar en tus alimentos").assertIsDisplayed()
+    compose.onNodeWithText("En esta cantidad").assertDoesNotExist()
+    val quantity = compose.onNodeWithTag("organic-consumption-quantity")
+    quantity.performTextReplacement("250")
+    try { compose.onNodeWithTag("organic-catalog-synthetic-second").performClick() }
+    finally { screenshot("$name-activity-under-discard") }
+    compose.onNodeWithText("¿Descartar este registro?").assertIsDisplayed()
+    compose.onNodeWithText("Seguir editando").performClick()
+    quantity.assertTextContains("250", substring = false)
+    try { compose.onNodeWithTag("organic-catalog-synthetic-template").performClick() }
+    finally { screenshot("$name-footer-250") }
+    quantity.assertTextContains("250", substring = false)
+    compose.onNodeWithText("¿Descartar este registro?").assertDoesNotExist()
+    compose.runOnIdle { assertTrue("No event before local save", events.isEmpty()) }
+    compose.onNodeWithText("Registrar alimento").assertIsDisplayed().assertIsEnabled().performClick()
+    compose.runOnIdle {
+      assertEquals("Exactly one local event", 1, events.size)
+      assertEquals("save", events.single().first)
+      val payload = checkNotNull(events.single().second)
+      assertEquals("synthetic-template", payload.getString("templateId"))
+      assertEquals(42L, payload.getLong("templateRevision"))
+      assertEquals("250", payload.getString("quantity"))
+      assertEquals("2026-10-09", payload.getString("date"))
+      assertEquals("13:00", payload.getString("time"))
+      assertEquals("Avena sintética", payload.getString("name"))
+      assertEquals("g", payload.getString("unit"))
+      assertEquals("", payload.getString("portionId"))
+    }
   }
 
   private fun screenshot(name: String) {

@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.*
@@ -106,7 +107,7 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
 
 @Composable internal fun OrganicButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
   Button(onClick = onClick, enabled = enabled,
-    modifier = modifier.alpha(if (enabled) 1f else .38f).background(LocalOrganicGradients.current.action, MaterialTheme.shapes.large),
+    modifier = modifier.heightIn(min = 48.dp).alpha(if (enabled) 1f else .38f).background(LocalOrganicGradients.current.action, MaterialTheme.shapes.large),
     shape = MaterialTheme.shapes.large,
     colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary, disabledContainerColor = Color.Transparent, disabledContentColor = MaterialTheme.colorScheme.onPrimary),
     content = content)
