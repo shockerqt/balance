@@ -50,13 +50,43 @@ export function emptyDayLog(dateId: string): DayLog {
   return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
 }
 
+// View-only cache. Immutable canonical document references are its keys; old
+// revisions are weakly held, and the day map retains only the current history.
+export function createMealDayProjector() {
+  const display = new WeakMap<MealLogDoc, { date: string; food: LoggedFoodItem }>();
+  let previous: Record<string, DayLog> = {};
+  let previousToday = '';
+  return (documents: MealLogDoc[]): Record<string, DayLog> => {
+    const grouped: Record<string, DayLog> = {};
+    const today = todayId();
+    for (const doc of documents) {
+      if (doc._deleted) continue;
+      let item = display.get(doc);
+      if (!item) {
+        item = { date: toDateId(new Date(doc.consumedAt)), food: logToLoggedFood(doc) };
+        display.set(doc, item);
+      }
+      const day = grouped[item.date] ?? (grouped[item.date] = emptyDayLog(item.date));
+      day.foods.push(item.food);
+    }
+    for (const date of Object.keys(grouped)) {
+      const old = previous[date], next = grouped[date];
+      if (previousToday === today && old && old.foods.length === next.foods.length &&
+          old.foods.every((food, i) => food === next.foods[i])) grouped[date] = old;
+    }
+    previous = grouped;
+    previousToday = today;
+    return grouped;
+  };
+}
 
-function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[]): MealLogDoc[] {
+function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[], keepCurrentRevision = false): MealLogDoc[] {
   const byId = new Map(previous.map((doc) => [doc.id, doc]));
   for (const value of incoming) {
     if (!isMealLogDoc(value)) continue;
     const current = byId.get(value.id);
-    if (!current || value.updatedAt > current.updatedAt || (value.updatedAt === current.updatedAt && value.id >= current.id)) byId.set(value.id, value);
+    if (!current || value.updatedAt > current.updatedAt ||
+        (!keepCurrentRevision && value.updatedAt === current.updatedAt && value.id >= current.id)) byId.set(value.id, value);
   }
   return Array.from(byId.values());
 }
@@ -108,6 +138,7 @@ const MealStoreContext = createContext<MealStoreContextType | undefined>(undefin
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
+  const scope = useMemo(() => ({ active: true }), [namespace]);
   const readyRef = useRef<Promise<void>>(Promise.resolve());
   const currentNamespace = useRef(namespace);
   currentNamespace.current = namespace;
@@ -132,24 +163,34 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     let cancelled = false;
+    scope.active = true;
     logsRef.current = [];
     cacheValid.current = false;
     setLogs([]);
     const ready = (async () => {
       if (namespace === 'guest') await recoverGuestImport().catch(() => null);
       const raw = await storage.getItem(collectionStorageKey(namespace, 'mealLogs')).catch(() => null);
-      if (cancelled || !raw) return;
+      if (cancelled) return;
+      let cached: MealLogDoc[] = [];
       try {
-        const parsed = JSON.parse(raw);
+        const parsed = raw ? JSON.parse(raw) : [];
         if (Array.isArray(parsed)) {
-          const next = mergeLogs(parsed.filter(isMealLogDoc), logsRef.current);
-          cacheValid.current = parsed.every(isMealLogDoc);
-          logsRef.current = next;
-          setLogs(next);
+          cached = parsed.filter(isMealLogDoc);
+          cacheValid.current = !!raw && parsed.every(isMealLogDoc);
         }
       } catch {
         // Ignore corrupt cache; PostgreSQL is authoritative after reconnect.
       }
+      // Durable outbox recovery is independent of cache validity, including a
+      // process interrupted after enqueue but before its first cache commit.
+      const pending = await syncClient.pendingDocuments('mealLogs', namespace).catch(() => []);
+      if (cancelled) return;
+      // A canonical conflict can be committed before outbox retirement fails
+      // or the process stops. Keep that durable revision on equal timestamps;
+      // pending/optimistic overlays still supply missing and newer documents.
+      const next = mergeLogs(mergeLogs(cached, pending, true), logsRef.current, true);
+      logsRef.current = next;
+      setLogs(next);
     })();
     readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
@@ -159,9 +200,13 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         await updateLogs(previous => mergeLogs(previous, documents));
         if (!cancelled) cacheValid.current = true;
       },
-      onPushConflicts: (documents) => {
-        if (cancelled || !documents.length) return;
-        return updateLogs(previous => mergeLogs(previous, documents));
+      onPushConflicts: async (documents) => {
+        // Even a conflict-free ACK must consolidate outbox-only saves before
+        // SyncClient can retire their durable queue entries.
+        await ready;
+        const pending = await syncClient.pendingDocuments('mealLogs', namespace);
+        if (cancelled) return;
+        await updateLogs(previous => mergeLogs(mergeLogs(previous, pending), documents));
       },
       onPushRejected: (rejections) => {
         const rejectedIds = new Set(
@@ -175,21 +220,42 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, ready);
     return () => {
       cancelled = true;
+      scope.active = false;
       unregister();
     };
-  }, [namespace, updateLogs]);
+  }, [namespace, updateLogs, scope]);
 
   // Outbox persistence owns durability; only acknowledge the native editor
   // after enqueue succeeds. Never publish a late save into a different account.
   const registerMealLog = useCallback(async (document: MealLogDoc) => {
     if (!isMealLogDoc(document) || document._deleted) throw new Error('INVALID_MEAL_LOG');
-    if (currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
-    await readyRef.current;
-    if (currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
+    if (!scope.active || currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
     await syncClient.enqueue('mealLogs', document);
-    if (currentNamespace.current !== namespace) return;
-    void updateLogs(previous => mergeLogs(previous, [document]));
-  }, [namespace, updateLogs]);
+    if (!scope.active || currentNamespace.current !== namespace) return;
+    // A macrotask lets the editor observe the durable receipt before any full
+    // history merge/stringify or derived React/native work. Never persist a
+    // partial history over a cache whose hydration is still in flight.
+    const ready = readyRef.current;
+    setTimeout(() => {
+      void (async () => {
+        if (!scope.active || currentNamespace.current !== namespace) return;
+        const pending = await syncClient.pendingDocuments('mealLogs', namespace);
+        if (!scope.active || currentNamespace.current !== namespace || !pending.length) return;
+        // An ACK/conflict may already have applied the same revision while this
+        // timer waited. Its canonical result wins over a late queue overlay.
+        const visible = mergeLogs(logsRef.current, pending, true);
+        logsRef.current = visible;
+        setLogs(visible);
+        await ready;
+        if (!scope.active || currentNamespace.current !== namespace) return;
+        const remaining = await syncClient.pendingDocuments('mealLogs', namespace);
+        if (!scope.active || currentNamespace.current !== namespace || !remaining.length) return;
+        await updateLogs(previous => mergeLogs(previous, remaining, true));
+      })().catch(() => {
+        if (scope.active && currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('mealLogs');
+      });
+    }, 0);
+  }, [namespace, updateLogs, scope]);
 
   const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
     const doc = docFromFood(dateId, food, uuid());
@@ -267,17 +333,8 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, [namespace, updateLogs]);
 
-  const dayLogs = useMemo(() => {
-    const grouped: Record<string, DayLog> = {};
-    for (const doc of logs) {
-      if (doc._deleted) continue;
-      const dateId = toDateId(new Date(doc.consumedAt));
-      const day = grouped[dateId] ?? emptyDayLog(dateId);
-      day.foods.push(logToLoggedFood(doc));
-      grouped[dateId] = day;
-    }
-    return grouped;
-  }, [logs]);
+  const projectDayLogs = useMemo(createMealDayProjector, [namespace]);
+  const dayLogs = useMemo(() => projectDayLogs(logs), [logs, projectDayLogs]);
 
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
     logsRef.current = documents;
