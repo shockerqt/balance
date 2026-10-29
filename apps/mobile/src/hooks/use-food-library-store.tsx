@@ -80,8 +80,8 @@ function mergeTemplates(previous: MealTemplateDoc[], incoming: SyncDocument[]): 
   return Array.from(byId.values());
 }
 
-function persistTemplates(namespace: string, docs: MealTemplateDoc[]): void {
-  void storage.setItem(collectionStorageKey(namespace, 'mealTemplates'), JSON.stringify(docs));
+function persistTemplates(namespace: string, docs: MealTemplateDoc[]): Promise<void> {
+  return storage.setItem(collectionStorageKey(namespace, 'mealTemplates'), JSON.stringify(docs));
 }
 
 const FoodLibraryContext = createContext<FoodLibraryContextType | undefined>(undefined);
@@ -94,14 +94,25 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [isLibraryReady, setIsLibraryReady] = useState(false);
   const [syncNotice, setSyncNotice] = useState('');
   const templatesRef = useRef<MealTemplateDoc[]>([]);
+  const cacheValid = useRef(false);
+  const currentNamespace = useRef(namespace);
+  currentNamespace.current = namespace;
   const frequenciesRef = useRef<Record<string, number>>({});
 
   const commitTemplates = useCallback((update: (current: MealTemplateDoc[]) => MealTemplateDoc[]) => {
+    if (currentNamespace.current !== namespace) return Promise.resolve();
     const next = update(templatesRef.current);
     templatesRef.current = next;
     setTemplates(next);
-    persistTemplates(namespace, next);
-    return next;
+    const trusted = cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'mealTemplates'));
+    const persisted = (async () => {
+      if (!trusted) await syncClient.invalidateCollectionCheckpoint('mealTemplates', namespace);
+      await persistTemplates(namespace, next);
+    })();
+    void persisted.catch(() => {
+      if (currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('mealTemplates');
+    });
+    return persisted;
   }, [namespace]);
 
   const commitFrequencies = useCallback((update: (current: Record<string, number>) => Record<string, number>) => {
@@ -115,6 +126,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     let cancelled = false;
     templatesRef.current = [];
+    cacheValid.current = false;
     frequenciesRef.current = {};
     setTemplates([]);
     setFrequencies({});
@@ -124,14 +136,15 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const ready = (async () => {
       if (namespace === 'guest') await recoverGuestImport().catch(() => null);
       const [rawTemplates, rawFrequencies] = await Promise.all([
-        storage.getItem(collectionStorageKey(namespace, 'mealTemplates')),
+        storage.getItem(collectionStorageKey(namespace, 'mealTemplates')).catch(() => null),
         storage.getItem(`${FREQUENCY_KEY_PREFIX}${namespace}`),
       ]);
       if (cancelled) return;
       try {
         const parsed = rawTemplates ? JSON.parse(rawTemplates) : [];
         if (Array.isArray(parsed)) {
-          const next = parsed.filter(isMealTemplateDoc);
+          cacheValid.current = !!rawTemplates && parsed.every(isMealTemplateDoc);
+          const next = mergeTemplates(parsed.filter(isMealTemplateDoc), templatesRef.current);
           templatesRef.current = next;
           setTemplates(next);
         }
@@ -150,25 +163,28 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (!user) {
         const official = await fetchOfficialTemplates();
         if (!cancelled && official.length) {
-          commitTemplates((previous) => mergeTemplates(previous, official));
+          await commitTemplates((previous) => mergeTemplates(previous, official)).catch(() => undefined);
         }
       }
       if (!cancelled) setIsLibraryReady(true);
     })();
 
     const unregister = syncClient.registerCollection('mealTemplates', {
-      onDocuments: (documents) => {
+      canResume: () => !cancelled && cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'mealTemplates')),
+      onDocuments: async (documents) => {
         if (cancelled) return;
-        commitTemplates((previous) => mergeTemplates(previous, documents));
+        await commitTemplates((previous) => mergeTemplates(previous, documents));
+        if (!cancelled) cacheValid.current = true;
       },
       onPushConflicts: (documents) => {
         if (cancelled || !documents.length) return;
-        commitTemplates((previous) => mergeTemplates(previous, documents));
+        const persisted = commitTemplates((previous) => mergeTemplates(previous, documents));
         setSyncNotice('Otro dispositivo tenía una versión más reciente. Revisa la ficha antes de volver a editar.');
+        return persisted;
       },
       onPushRejected: (rejections) => {
         if (cancelled || !rejections.length) return;
-        commitTemplates((previous) => {
+        const persisted = commitTemplates((previous) => {
           const byId = new Map(previous.map((doc) => [doc.id, doc]));
           for (const rejection of rejections) {
             if (!isMealTemplateDoc(rejection.document)) continue;
@@ -182,6 +198,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
         setSyncNotice('El servidor rechazó un cambio. Se restauró la última versión guardada.');
         void syncClient.resetCollection('mealTemplates');
+        return persisted;
       },
     }, ready);
     return () => {
@@ -214,7 +231,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const doc = createPersonalTemplate(uuid(), foodData.name, detailsFromLibraryFood(foodData), now);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
     commitFrequencies((current) => ({ ...current, [doc.id]: 1 }));
-    void syncClient.enqueue('mealTemplates', doc, null);
+    void syncClient.enqueue('mealTemplates', doc, null).catch(() => undefined);
     return templateToLibraryFood(doc, 1);
   }, [commitFrequencies, commitTemplates]);
 
@@ -224,7 +241,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const details = current ? mergeEditedTemplateDetails(current.details, editedDetails) : editedDetails;
     const doc = updatePersonalTemplate(current, foodData.name, details);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
-    void syncClient.enqueue('mealTemplates', doc, current ?? null);
+    void syncClient.enqueue('mealTemplates', doc, current ?? null).catch(() => undefined);
     return templateToLibraryFood(doc, frequenciesRef.current[doc.id] ?? 0);
   }, [commitTemplates]);
 
@@ -232,7 +249,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const current = templatesRef.current.find((doc) => doc.id === foodId);
     const doc = deletePersonalTemplate(current);
     commitTemplates((previous) => mergeTemplates(previous, [doc]));
-    void syncClient.enqueue('mealTemplates', doc, current ?? null);
+    void syncClient.enqueue('mealTemplates', doc, current ?? null).catch(() => undefined);
   }, [commitTemplates]);
 
   const incrementFoodFrequency = useCallback((foodId: string) => {

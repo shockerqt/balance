@@ -2,6 +2,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { WS_SYNC_URL, WS_AUTH_MODE } from '@/services/config';
 import { accessTokenChanged } from '@/services/auth/session-state';
 import { storage } from '@/services/storage';
+import type { SyncStatusSnapshot } from './sync-status';
 import {
   SYNC_COLLECTIONS,
   SyncCheckpoint,
@@ -24,9 +25,11 @@ export interface PullResult {
 }
 
 export interface CollectionHandlers {
-  onDocuments: (documents: SyncDocument[], result: PullResult) => void;
-  onPushConflicts?: (documents: SyncDocument[]) => void;
-  onPushRejected?: (rejections: RejectedDocument[]) => void;
+  onDocuments: (documents: SyncDocument[], result: PullResult) => void | Promise<void>;
+  onPushConflicts?: (documents: SyncDocument[]) => void | Promise<void>;
+  onPushRejected?: (rejections: RejectedDocument[]) => void | Promise<void>;
+  /** True only after valid canonical cache was hydrated from durable storage. */
+  canResume?: () => boolean;
 }
 
 export interface RejectedDocument {
@@ -46,6 +49,7 @@ interface PendingRequest<T> {
   collection: SyncCollection;
   namespace: string;
   generation: number;
+  connectionEpoch: number;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -105,6 +109,91 @@ export class SyncClient {
   private resyncs = new Map<SyncCollection, Promise<void>>();
   private enqueueChains = new Map<string, Promise<void>>();
   private disabledCollections = new Set<SyncCollection>();
+  private collectionReadiness = new Map<SyncCollection, Promise<void>>();
+  private resyncAgain = new Set<SyncCollection>();
+  private completedCollections = new Set<SyncCollection>();
+  private connectionEpoch = 0;
+  private receivedDocuments = 0;
+  private lastSyncedAt: number | null = null;
+  private activeEnqueues = new Map<string, Map<string, number>>();
+  private outboxLoad: { namespace: string; generation: number; promise: Promise<void> } | null = null;
+  private statusErrors = new Map<string, NonNullable<SyncStatusSnapshot['error']>>();
+  // Failure metadata only: the original editor/store retains ownership of the
+  // rejected document. Retry must never invent a replacement upload queue.
+  private failedEnqueueRevisions = new Map<string, number>();
+  private statusListeners = new Set<() => void>();
+  private statusSnapshot: SyncStatusSnapshot = Object.freeze({
+    phase: 'inactive', receivedDocuments: 0, pendingChanges: 0, lastSyncedAt: null, error: null,
+  });
+
+  getStatusSnapshot = (): SyncStatusSnapshot => this.statusSnapshot;
+
+  subscribeStatus = (listener: () => void): (() => void) => {
+    this.statusListeners.add(listener);
+    return () => { this.statusListeners.delete(listener); };
+  };
+
+  reportLocalPersistenceError = (collection: SyncCollection): void => {
+    this.completedCollections.delete(collection);
+    this.statusErrors.set(`pull:${collection}`, 'local');
+    this.publishStatus();
+  };
+
+  retrySync = async (): Promise<void> => {
+    if (this.namespace === 'guest' || !this.accessToken) return;
+    for (const key of this.statusErrors.keys()) {
+      if (!key.startsWith('enqueue:')) this.statusErrors.delete(key);
+    }
+    this.completedCollections.clear();
+    this.publishStatus();
+    if (!this.isReady()) {
+      this.connect();
+      this.publishStatus();
+      return;
+    }
+    await Promise.all([this.resync(), this.flushOutbox()]);
+  };
+
+  private operationIsCurrent(namespace: string, generation: number, epoch: number): boolean {
+    return this.isCurrent(namespace, generation) && this.connectionEpoch === epoch;
+  }
+
+  private invalidateConnectionStatus(): void {
+    this.connectionEpoch += 1;
+    this.resyncs.clear();
+    this.resyncAgain.clear();
+    this.completedCollections.clear();
+    this.receivedDocuments = 0;
+    if (this.flushPromise) this.flushAfterCurrent = true;
+  }
+
+  private publishStatus(): void {
+    const active = this.namespace !== 'guest' && !!this.accessToken;
+    const namespaceEnqueues = this.activeEnqueues.get(this.namespace);
+    const pendingKeys = new Set([...this.outbox.keys(), ...(namespaceEnqueues?.keys() ?? [])]);
+    const error = active ? this.statusErrors.values().next().value ?? null : null;
+    let phase: SyncStatusSnapshot['phase'];
+    if (!active) phase = 'inactive';
+    else if (!this.isReady()) phase = this.ws ? 'connecting' : 'offline';
+    else if (error) phase = 'error';
+    else if (this.resyncs.size || this.flushPromise || namespaceEnqueues?.size || this.outboxLoad) phase = 'syncing';
+    else if (pendingKeys.size || this.outboxLoadedFor !== this.namespace || this.resyncAgain.size ||
+      SYNC_COLLECTIONS.some(collection => !this.disabledCollections.has(collection) && !this.completedCollections.has(collection))) phase = 'pending';
+    else phase = 'synced';
+    if (active && phase === 'synced' && this.statusSnapshot.phase !== 'synced') this.lastSyncedAt = Date.now();
+    const next: SyncStatusSnapshot = Object.freeze({
+      phase,
+      receivedDocuments: active ? this.receivedDocuments : 0,
+      pendingChanges: active ? pendingKeys.size : 0,
+      lastSyncedAt: active ? this.lastSyncedAt : null,
+      error,
+    });
+    if (Object.keys(next).every(key => next[key as keyof SyncStatusSnapshot] === this.statusSnapshot[key as keyof SyncStatusSnapshot])) return;
+    this.statusSnapshot = next;
+    for (const listener of this.statusListeners) {
+      try { listener(); } catch { /* An observer cannot interrupt the sync owner. */ }
+    }
+  }
 
   constructor() {
     AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -125,19 +214,33 @@ export class SyncClient {
     previousSocket?.close();
     this.namespace = next;
     this.namespaceGeneration += 1;
+    this.invalidateConnectionStatus();
+    this.outboxLoad = null;
+    this.statusErrors.clear();
+    this.failedEnqueueRevisions.clear();
+    this.lastSyncedAt = null;
     this.cancelPending(new Error('SYNC_NAMESPACE_CHANGED'));
     this.resyncs.clear();
     if (this.flushPromise) this.flushAfterCurrent = true;
     this.outbox = new Map();
     this.outboxLoadedFor = '';
-    void this.loadOutbox();
+    void this.loadOutbox().catch(() => undefined);
+    this.publishStatus();
   }
 
   registerCollection(collection: SyncCollection, nextHandlers: CollectionHandlers, ready?: Promise<void>): () => void {
     this.handlers.set(collection, nextHandlers);
-    if (!this.disabledCollections.has(collection)) void this.resyncCollection(collection, ready);
+    this.collectionReadiness.set(collection, ready ?? Promise.resolve());
+    this.completedCollections.delete(collection);
+    if (!this.disabledCollections.has(collection)) void this.resyncCollection(collection);
+    this.publishStatus();
     return () => {
-      if (this.handlers.get(collection) === nextHandlers) this.handlers.delete(collection);
+      if (this.handlers.get(collection) === nextHandlers) {
+        this.handlers.delete(collection);
+        this.collectionReadiness.delete(collection);
+        this.completedCollections.delete(collection);
+        this.publishStatus();
+      }
     };
   }
 
@@ -145,9 +248,14 @@ export class SyncClient {
     if (collection === 'userPreferences') return;
     if (!enabled) {
       this.disabledCollections.add(collection);
+      this.completedCollections.delete(collection);
+      this.resyncAgain.delete(collection);
+      this.publishStatus();
       return;
     }
     if (!this.disabledCollections.delete(collection)) return;
+    this.completedCollections.delete(collection);
+    this.publishStatus();
     void this.resyncCollection(collection);
     void this.flushOutbox();
   }
@@ -158,9 +266,10 @@ export class SyncClient {
     if (reconnectForToken) this.expiredToken = null;
     if (namespace) this.setNamespace(namespace);
     this.closedByUser = false;
-    if (!this.accessToken || this.expiredToken === this.accessToken) return;
+    if (!this.accessToken || this.expiredToken === this.accessToken) { this.publishStatus(); return; }
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       if (reconnectForToken) {
+        this.invalidateConnectionStatus();
         this.clearAuthTimer();
         this.ready = false;
         this.clearReconnectTimer();
@@ -170,24 +279,29 @@ export class SyncClient {
         this.reconnectWithoutDelay = true;
         this.reconnectAttempt = 0;
         this.ws.close();
+        this.publishStatus();
       }
       return;
     }
 
     this.clearReconnectTimer();
+    this.invalidateConnectionStatus();
     try {
       const token = this.accessToken;
       const generation = this.namespaceGeneration;
       const socket = new WebSocket(WS_SYNC_URL, WS_AUTH_MODE === 'application' ? ['balance'] : ['balance', `balance.bearer.${token}`]);
       this.ws = socket;
       this.ready = false;
+      this.publishStatus();
       const current = () => this.ws === socket && this.namespaceGeneration === generation && this.accessToken === token;
       const ready = () => {
         this.clearAuthTimer();
         this.ready = true;
         this.reconnectAttempt = 0;
+        this.statusErrors.delete('connection');
         void this.resync();
         void this.flushOutbox();
+        this.publishStatus();
       };
       socket.onopen = () => {
         if (!current()) return;
@@ -222,18 +336,23 @@ export class SyncClient {
         if (this.ws !== socket || this.namespaceGeneration !== generation) return;
         this.clearAuthTimer();
         this.ready = false;
+        this.invalidateConnectionStatus();
         this.cancelPending(new Error('SYNC_DISCONNECTED'));
         this.ws = null;
         const immediate = this.reconnectWithoutDelay;
         this.reconnectWithoutDelay = false;
         if (WS_AUTH_MODE === 'application' && event.code === 4001 && this.accessToken === token) this.expiredToken = token;
         if (!this.closedByUser) this.scheduleReconnect(immediate ? 0 : undefined);
+        this.statusErrors.set('connection', 'connection');
+        this.publishStatus();
       };
     } catch {
       this.ws = null;
       this.ready = false;
       this.clearAuthTimer();
       this.scheduleReconnect();
+      this.statusErrors.set('connection', 'connection');
+      this.publishStatus();
     }
   }
 
@@ -254,6 +373,7 @@ export class SyncClient {
     this.ws?.close();
     this.ws = null;
     this.setNamespace('guest');
+    this.publishStatus();
   }
 
   async pull(collection: SyncCollection, checkpoint?: SyncCheckpoint, limit = 50, expected?: { namespace: string; generation: number }): Promise<PullResult> {
@@ -271,29 +391,34 @@ export class SyncClient {
         event: 'pull',
         requestId,
         collection,
-        checkpoint: checkpoint ?? null,
+        checkpoint: checkpoint ? { updatedAt: checkpoint.updatedAt, ...(checkpoint.id === undefined ? {} : { id: checkpoint.id }) } : null,
         limit: Math.max(1, Math.min(limit, 100)),
       },
       (message) => {
-        const documents = Array.isArray(message.documents)
-          ? message.documents.filter((doc) => isSyncDocument(collection, doc))
-          : [];
-        const checkpointValue = message.checkpoint;
-        const nextCheckpoint =
-          checkpointValue && typeof checkpointValue === 'object'
-            ? {
-                updatedAt: Number((checkpointValue as Record<string, unknown>).updatedAt),
-                id:
-                  typeof (checkpointValue as Record<string, unknown>).id === 'string'
-                    ? ((checkpointValue as Record<string, unknown>).id as string)
-                    : undefined,
-              }
-            : null;
-        return {
-          documents,
-          checkpoint: nextCheckpoint && Number.isFinite(nextCheckpoint.updatedAt) ? nextCheckpoint : null,
-          hasMoreDocuments: message.hasMoreDocuments === true || message.has_more_documents === true,
-        };
+        if (!Array.isArray(message.documents) || !message.documents.every(doc => isSyncDocument(collection, doc)))
+          throw new Error('SYNC_INVALID_PAGE');
+        const documents = message.documents as SyncDocument[];
+        const more = message.hasMoreDocuments ?? message.has_more_documents;
+        if (typeof more !== 'boolean' ||
+          (message.hasMoreDocuments !== undefined && message.has_more_documents !== undefined && message.hasMoreDocuments !== message.has_more_documents))
+          throw new Error('SYNC_INVALID_PAGE');
+        const rawCheckpoint = message.checkpoint;
+        let nextCheckpoint: SyncCheckpoint | null = null;
+        if (rawCheckpoint !== null && rawCheckpoint !== undefined) {
+          if (typeof rawCheckpoint !== 'object' || Array.isArray(rawCheckpoint)) throw new Error('SYNC_INVALID_CHECKPOINT');
+          const value = rawCheckpoint as Record<string, unknown>;
+          if (typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) || value.updatedAt < 0 ||
+            typeof value.id !== 'string' || !value.id) throw new Error('SYNC_INVALID_CHECKPOINT');
+          nextCheckpoint = { updatedAt: value.updatedAt, id: value.id };
+        }
+        const last = documents.at(-1);
+        if (last) {
+          if (!nextCheckpoint || nextCheckpoint.updatedAt !== last.updatedAt || nextCheckpoint.id !== String(last.id) ||
+            (checkpoint && (nextCheckpoint.updatedAt < checkpoint.updatedAt ||
+              (nextCheckpoint.updatedAt === checkpoint.updatedAt && nextCheckpoint.id! <= (checkpoint.id ?? '')))))
+            throw new Error('SYNC_NONADVANCING_CHECKPOINT');
+        } else if (more || nextCheckpoint) throw new Error('SYNC_INVALID_PAGE');
+        return { documents, checkpoint: nextCheckpoint, hasMoreDocuments: more };
       },
       namespace,
       generation,
@@ -340,8 +465,14 @@ export class SyncClient {
   ): Promise<void> {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
+    const key = `${collection}:${document.id}`;
+    const namespaceEnqueues = this.activeEnqueues.get(namespace) ?? new Map<string, number>();
+    namespaceEnqueues.set(key, (namespaceEnqueues.get(key) ?? 0) + 1);
+    this.activeEnqueues.set(namespace, namespaceEnqueues);
+    this.publishStatus();
     const previous = this.enqueueChains.get(namespace) ?? Promise.resolve();
     const operation = previous.then(async () => {
+      await this.loadOutbox();
       const raw = await storage.getItem(outboxStorageKey(namespace));
       const entries = new Map<string, OutboxEntry>();
       if (raw) {
@@ -376,11 +507,48 @@ export class SyncClient {
       if (this.isCurrent(namespace, generation)) {
         this.outbox = entries;
         this.outboxLoadedFor = namespace;
+        if (this.flushPromise) this.flushAfterCurrent = true;
         void this.flushOutbox();
+        this.publishStatus();
+      } else if (this.namespace === namespace) {
+        // A durable enqueue can outlive logout and return to the same account.
+        // Wait out any older hydration, then reload the just-written queue using
+        // the current generation's owner before releasing its pending-work gate.
+        const currentGeneration = this.namespaceGeneration;
+        const loading = this.outboxLoad?.namespace === namespace ? this.outboxLoad.promise : null;
+        if (loading) await loading.catch(() => undefined);
+        if (this.isCurrent(namespace, currentGeneration)) {
+          this.outboxLoadedFor = '';
+          await this.loadOutbox();
+          if (this.isCurrent(namespace, currentGeneration)) {
+            if (this.flushPromise) this.flushAfterCurrent = true;
+            void this.flushOutbox();
+            this.publishStatus();
+          }
+        }
       }
     });
     this.enqueueChains.set(namespace, operation.catch(() => undefined));
-    await operation;
+    try {
+      await operation;
+      const failedRevision = this.failedEnqueueRevisions.get(key);
+      if (this.namespace === namespace && failedRevision !== undefined && document.updatedAt >= failedRevision) {
+        this.failedEnqueueRevisions.delete(key);
+        this.statusErrors.delete(`enqueue:${key}`);
+      }
+    } catch (error) {
+      if (this.namespace === namespace) {
+        this.failedEnqueueRevisions.set(key, Math.max(document.updatedAt, this.failedEnqueueRevisions.get(key) ?? document.updatedAt));
+        this.statusErrors.set(`enqueue:${key}`, 'local');
+      }
+      throw error;
+    } finally {
+      const pending = this.activeEnqueues.get(namespace);
+      const count = pending?.get(key) ?? 1;
+      if (count <= 1) pending?.delete(key); else pending?.set(key, count - 1);
+      if (pending?.size === 0) this.activeEnqueues.delete(namespace);
+      this.publishStatus();
+    }
   }
 
   async resync(): Promise<void> {
@@ -393,51 +561,119 @@ export class SyncClient {
   }
 
   async resyncCollection(collection: SyncCollection, ready?: Promise<void>): Promise<void> {
-    if (this.disabledCollections.has(collection)) return;
+    if (this.disabledCollections.has(collection) || !this.isReady()) return;
+    if (ready) this.collectionReadiness.set(collection, ready);
     const current = this.resyncs.get(collection);
-    if (current) return current;
+    if (current) {
+      this.resyncAgain.add(collection);
+      this.completedCollections.delete(collection);
+      this.publishStatus();
+      return current;
+    }
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
-    const operation = this.performResync(collection, namespace, generation, ready).finally(() => {
-      if (this.resyncs.get(collection) === operation) this.resyncs.delete(collection);
+    const epoch = this.connectionEpoch;
+    this.completedCollections.delete(collection);
+    const operation = (async () => {
+      do {
+        this.resyncAgain.delete(collection);
+        const completed = await this.performResync(collection, namespace, generation, epoch);
+        if (!this.operationIsCurrent(namespace, generation, epoch)) return;
+        if (completed && !this.resyncAgain.has(collection)) this.completedCollections.add(collection);
+        if (!completed && !this.resyncAgain.has(collection)) return;
+      } while (this.operationIsCurrent(namespace, generation, epoch) && this.isReady() &&
+        !this.disabledCollections.has(collection) && this.resyncAgain.has(collection));
+    })().finally(() => {
+      if (this.resyncs.get(collection) === operation) {
+        this.resyncs.delete(collection);
+        if (this.operationIsCurrent(namespace, generation, epoch) && this.isReady() &&
+          !this.disabledCollections.has(collection) && this.resyncAgain.has(collection)) {
+          this.completedCollections.delete(collection);
+          void this.resyncCollection(collection);
+        }
+        this.publishStatus();
+      }
     });
     this.resyncs.set(collection, operation);
+    this.publishStatus();
     return operation;
   }
 
+  invalidateCollectionCheckpoint = async (collection: SyncCollection, namespace: string): Promise<void> => {
+    // This owner primitive is also used before connection by cache providers.
+    // Invalidate only the captured cursor; never cache, outbox or another account.
+    if (this.namespace === namespace) {
+      this.completedCollections.delete(collection);
+      this.publishStatus();
+    }
+    try { await storage.removeItem(checkpointStorageKey(namespace, collection)); }
+    catch {
+      if (this.namespace === namespace) this.reportLocalPersistenceError(collection);
+      throw new Error('SYNC_LOCAL_CHECKPOINT');
+    }
+  };
+
   async resetCollection(collection: SyncCollection): Promise<void> {
-    await storage.removeItem(checkpointStorageKey(this.namespace, collection));
-    await this.resyncCollection(collection);
+    const namespace = this.namespace;
+    const generation = this.namespaceGeneration;
+    try { await this.invalidateCollectionCheckpoint(collection, namespace); } catch { return; }
+    if (this.isCurrent(namespace, generation)) await this.resyncCollection(collection);
   }
 
-  private async performResync(collection: SyncCollection, namespace: string, generation: number, ready?: Promise<void>): Promise<void> {
-    if (ready) await ready;
-    if (!this.isCurrent(namespace, generation) || !this.isReady()) return;
-    const rawCheckpoint = await storage.getItem(checkpointStorageKey(namespace, collection));
-    let checkpoint: SyncCheckpoint | undefined;
-    if (rawCheckpoint) {
-      try {
-        const parsed = JSON.parse(rawCheckpoint) as SyncCheckpoint;
-        if (typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)) checkpoint = parsed;
-      } catch {
-        // A corrupt checkpoint behaves like an initial pull.
+  private async performResync(collection: SyncCollection, namespace: string, generation: number, epoch: number): Promise<boolean> {
+    const handlers = this.handlers.get(collection);
+    let localOperation = true;
+    try {
+      await this.collectionReadiness.get(collection);
+      if (!handlers || this.handlers.get(collection) !== handlers || !this.operationIsCurrent(namespace, generation, epoch) ||
+        !this.isReady() || this.disabledCollections.has(collection)) return false;
+      const rawCheckpoint = await storage.getItem(checkpointStorageKey(namespace, collection));
+      if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+      let checkpoint: SyncCheckpoint | undefined;
+      if (rawCheckpoint && handlers.canResume?.() === true) {
+        try {
+          const parsed = JSON.parse(rawCheckpoint) as SyncCheckpoint & { cacheVersion?: unknown };
+          if (parsed.cacheVersion === 1 && typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt) &&
+            parsed.updatedAt >= 0 && typeof parsed.id === 'string' && parsed.id) {
+            // The marker proves durable ordering locally and never crosses the wire.
+            checkpoint = { updatedAt: parsed.updatedAt, id: parsed.id };
+          }
+        } catch { /* Missing, legacy or corrupt cache/cursor pairs replay safely. */ }
       }
-    }
-    let hasMore = true;
-    while (hasMore && this.isCurrent(namespace, generation)) {
-      try {
+      if (rawCheckpoint && !checkpoint) {
+        // Remove an unsafe frontier durably BEFORE a replay can persist a partial
+        // cache. A crash between that cache write and its next cursor must never
+        // resurrect a previously higher, versioned frontier on the next launch.
+        await this.invalidateCollectionCheckpoint(collection, namespace);
+        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+      }
+      while (this.operationIsCurrent(namespace, generation, epoch) && this.isReady() && !this.disabledCollections.has(collection)) {
+        localOperation = false;
         const result = await this.pull(collection, checkpoint, 50, { namespace, generation });
-        if (!this.isCurrent(namespace, generation)) return;
-        this.handlers.get(collection)?.onDocuments(result.documents, result);
+        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+        localOperation = true;
+        await handlers.onDocuments(result.documents, result);
+        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+        this.receivedDocuments += result.documents.length;
+        this.publishStatus();
         if (result.checkpoint) {
           checkpoint = result.checkpoint;
-          await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify(checkpoint));
+          await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify({ ...checkpoint, cacheVersion: 1 }));
+          if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
         }
-        hasMore = result.hasMoreDocuments && result.documents.length > 0;
-      } catch {
-        return;
+        this.publishStatus();
+        if (!result.hasMoreDocuments) {
+          this.statusErrors.delete(`pull:${collection}`);
+          return true;
+        }
+      }
+    } catch {
+      if (this.operationIsCurrent(namespace, generation, epoch) && this.isReady()) {
+        this.statusErrors.set(`pull:${collection}`, localOperation ? 'local' : 'download');
+        this.publishStatus();
       }
     }
+    return false;
   }
 
   private async handleMessage(raw: unknown): Promise<void> {
@@ -502,6 +738,7 @@ export class SyncClient {
         collection,
         namespace,
         generation,
+        connectionEpoch: this.connectionEpoch,
         timer,
         resolve: (value) => resolve(value as T),
         reject,
@@ -525,7 +762,7 @@ export class SyncClient {
   private resolvePending(requestId: string, message: ServerMessage, error?: Error): void {
     const pending = this.pending.get(requestId) as (PendingRequest<unknown> & { parse?: (message: ServerMessage) => unknown }) | undefined;
     if (!pending) return;
-    if (!this.isCurrent(pending.namespace, pending.generation)) {
+    if (!this.operationIsCurrent(pending.namespace, pending.generation, pending.connectionEpoch)) {
       clearTimeout(pending.timer);
       this.pending.delete(requestId);
       this.removeFallbackId(pending.collection, requestId);
@@ -550,61 +787,97 @@ export class SyncClient {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
     if (this.outboxLoadedFor === namespace) return;
-    const raw = await storage.getItem(outboxStorageKey(namespace));
-    if (!this.isCurrent(namespace, generation)) return;
-    this.outboxLoadedFor = namespace;
-    const loaded = new Map<string, OutboxEntry>();
-    if (!raw) return;
-    try {
-      const entries = JSON.parse(raw) as OutboxEntry[];
-      if (Array.isArray(entries)) {
-        for (const entry of entries) {
-          if (isCollection(entry.collection) && isSyncDocument(entry.collection, entry.document)) {
+    if (this.outboxLoad?.namespace === namespace && this.outboxLoad.generation === generation) return this.outboxLoad.promise;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const raw = await storage.getItem(outboxStorageKey(namespace));
+        if (!this.isCurrent(namespace, generation)) return;
+        const loaded = new Map<string, OutboxEntry>();
+        if (raw) {
+          const entries: unknown = JSON.parse(raw);
+          if (!Array.isArray(entries)) throw new Error('SYNC_INVALID_OUTBOX');
+          for (const entry of entries) {
+            if (!entry || !isCollection(entry.collection) || !isSyncDocument(entry.collection, entry.document))
+              throw new Error('SYNC_INVALID_OUTBOX');
             loaded.set(`${entry.collection}:${entry.document.id}`, entry);
           }
         }
+        this.outbox = loaded;
+        this.outboxLoadedFor = namespace;
+        this.statusErrors.delete('outbox');
+      } catch (error) {
+        if (this.isCurrent(namespace, generation)) this.statusErrors.set('outbox', 'local');
+        throw error;
+      } finally {
+        if (this.outboxLoad?.promise === promise) {
+          this.outboxLoad = null;
+          this.publishStatus();
+        }
       }
-      this.outbox = loaded;
-    } catch {
-      this.outbox.clear();
-    }
+    })();
+    this.outboxLoad = { namespace, generation, promise };
+    this.publishStatus();
+    return promise;
   }
 
   private async persistOutbox(): Promise<void> {
-    await storage.setItem(outboxStorageKey(this.namespace), JSON.stringify(Array.from(this.outbox.values())));
+    const namespace = this.namespace;
+    const generation = this.namespaceGeneration;
+    try {
+      await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(this.outbox.values())));
+    } catch (error) {
+      // An acknowledged entry may still exist on disk. Require a fresh owner
+      // hydration before a retry can claim the queue has been drained; resending
+      // that same document uses the existing idempotent push/conflict contract.
+      if (this.isCurrent(namespace, generation)) this.outboxLoadedFor = '';
+      throw error;
+    }
   }
 
   private async flushOutbox(): Promise<void> {
     if (this.flushPromise) return this.flushPromise;
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
+    const epoch = this.connectionEpoch;
     this.flushPromise = (async () => {
-      await this.loadOutbox();
-      if (!this.isCurrent(namespace, generation) || !this.isReady() || this.outbox.size === 0) return;
+      try { await this.loadOutbox(); } catch { return; }
+      if (!this.operationIsCurrent(namespace, generation, epoch) || !this.isReady() || this.outbox.size === 0) return;
       for (const collection of SYNC_COLLECTIONS) {
-        if (!this.isCurrent(namespace, generation)) return;
+        if (!this.operationIsCurrent(namespace, generation, epoch)) return;
         if (this.disabledCollections.has(collection)) continue;
         const entries = Array.from(this.outbox.values()).filter((entry) => entry.collection === collection);
         if (!entries.length) continue;
+        let localOperation = false;
         try {
           const result = await this.push(collection, entries.map((entry) => ({ newDocumentState: entry.document })));
-          if (!this.isCurrent(namespace, generation)) return;
-          this.handlers.get(collection)?.onPushConflicts?.(result.conflicts);
-          if (result.invalidConflict) return;
+          if (!this.operationIsCurrent(namespace, generation, epoch)) return;
+          localOperation = true;
+          const handlers = this.handlers.get(collection);
+          await handlers?.onPushConflicts?.(result.conflicts);
+          if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
+          if (result.invalidConflict) {
+            this.statusErrors.set(`push:${collection}`, 'upload');
+            return;
+          }
+          if (result.rejections.length) this.statusErrors.set(`push:${collection}`, 'upload');
           const rejectedDocuments = result.rejections.map((rejection) => ({
             document: entries[rejection.index].document,
             previousDocument: entries[rejection.index].previousDocument,
             code: rejection.code,
             message: rejection.message,
           }));
-          if (rejectedDocuments.length)
-            this.handlers.get(collection)?.onPushRejected?.(rejectedDocuments);
+          if (rejectedDocuments.length) {
+            await handlers?.onPushRejected?.(rejectedDocuments);
+            if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
+          }
           for (const entry of entries) {
             const current = this.outbox.get(`${collection}:${entry.document.id}`);
             if (current?.document.updatedAt === entry.document.updatedAt) this.outbox.delete(`${collection}:${entry.document.id}`);
           }
           await this.persistOutbox();
         } catch {
+          if (this.operationIsCurrent(namespace, generation, epoch) && this.isReady()) this.statusErrors.set(`push:${collection}`, localOperation ? 'local' : 'upload');
           return;
         }
       }
@@ -614,7 +887,9 @@ export class SyncClient {
         this.flushAfterCurrent = false;
         if (this.isReady() && this.outbox.size > 0) void this.flushOutbox();
       }
+      this.publishStatus();
     });
+    this.publishStatus();
     return this.flushPromise;
   }
 

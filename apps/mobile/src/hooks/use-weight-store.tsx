@@ -32,32 +32,47 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const [logs, setLogs] = useState<WeightLogDoc[]>([]);
   const logsRef = useRef<WeightLogDoc[]>([]);
+  const cacheValid = useRef(false);
+  const currentNamespace = useRef(namespace);
+  currentNamespace.current = namespace;
   const [syncError, setSyncError] = useState<{ dateId: string; message: string } | null>(null);
 
   const persist = useCallback(
     (next: WeightLogDoc[]) => {
-      void storage.setItem(collectionStorageKey(namespace, 'weightLogs'), JSON.stringify(next));
+      const key = collectionStorageKey(namespace, 'weightLogs');
+      const trusted = cacheValid.current && storage.isDurableItem(key);
+      const persisted = (async () => {
+        if (!trusted) await syncClient.invalidateCollectionCheckpoint('weightLogs', namespace);
+        await storage.setItem(key, JSON.stringify(next));
+      })();
+      void persisted.catch(() => {
+        if (currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('weightLogs');
+      });
+      return persisted;
     },
     [namespace]
   );
 
   useEffect(() => {
     if (!preferencesReady || !weightTrackingEnabled) {
+      cacheValid.current = false;
       logsRef.current = [];
       setLogs([]);
       setSyncError(null);
       return;
     }
     let cancelled = false;
+    cacheValid.current = false;
     logsRef.current = [];
     setLogs([]);
     const ready = (async () => {
-      const raw = await storage.getItem(collectionStorageKey(namespace, 'weightLogs'));
+      const raw = await storage.getItem(collectionStorageKey(namespace, 'weightLogs')).catch(() => null);
       if (cancelled || !raw) return;
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          const next = parsed.filter(isWeightLogDoc);
+          cacheValid.current = parsed.every(isWeightLogDoc);
+          const next = mergeWeightLogs(parsed.filter(isWeightLogDoc), logsRef.current);
           logsRef.current = next;
           setLogs(next);
         }
@@ -70,18 +85,22 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const next = mergeWeightLogs(logsRef.current, documents);
       logsRef.current = next;
       setLogs(next);
-      persist(next);
+      return persist(next);
     };
     const unregister = syncClient.registerCollection(
       'weightLogs',
       {
-        onDocuments: receive,
+        canResume: () => !cancelled && cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'weightLogs')),
+        onDocuments: async (documents) => {
+          await receive(documents);
+          if (!cancelled) cacheValid.current = true;
+        },
         onPushConflicts: receive,
         onPushRejected: (rejections) => {
           const rollback = rollbackRejectedWeightLogs(logsRef.current, rejections);
           logsRef.current = rollback.logs;
           setLogs(rollback.logs);
-          persist(rollback.logs);
+          const persisted = persist(rollback.logs);
           const dateId = rollback.rejectedDateIds.at(-1);
           setSyncError(
             dateId
@@ -92,6 +111,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               : null
           );
           if (rollback.resetNeeded) void syncClient.resetCollection('weightLogs');
+          return persisted;
         },
       },
       ready
@@ -124,7 +144,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLogs(next);
       persist(next);
       setSyncError((current) => (current?.dateId === dateId ? null : current));
-      void syncClient.enqueue('weightLogs', document, previous);
+      void syncClient.enqueue('weightLogs', document, previous).catch(() => undefined);
       return true;
     },
     [persist, weightTrackingEnabled]
@@ -141,7 +161,7 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLogs(next);
       persist(next);
       setSyncError((current) => (current?.dateId === dateId ? null : current));
-      void syncClient.enqueue('weightLogs', deleted, existing);
+      void syncClient.enqueue('weightLogs', deleted, existing).catch(() => undefined);
     },
     [persist, weightTrackingEnabled]
   );

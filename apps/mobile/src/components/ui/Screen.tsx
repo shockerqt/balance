@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, View, ViewProps } from 'react-native';
 import { Edge, SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
+import { SyncStatusBanner } from '@/components/sync/sync-status-banner';
 
 /* Contenedor de pantalla: aporta el fondo del tema y el area segura,
    que antes cada pantalla resolvia por su cuenta. */
@@ -32,6 +33,7 @@ export const Screen: React.FC<ScreenProps> = ({
 
   return (
     <SafeAreaView style={base} edges={edges} {...rest}>
+      {edges.includes('top') && <SyncStatusBanner />}
       {children}
     </SafeAreaView>
   );

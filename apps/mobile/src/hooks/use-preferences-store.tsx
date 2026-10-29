@@ -48,6 +48,21 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
   );
   const [document, setDocument] = useState(defaultDoc);
   const documentRef = useRef(defaultDoc);
+  const cacheValid = useRef(false);
+  const currentNamespace = useRef(namespace);
+  currentNamespace.current = namespace;
+  const persist = useCallback((next: UserPreferencesDoc[]) => {
+    const key = collectionStorageKey(namespace, 'userPreferences');
+    const trusted = cacheValid.current && storage.isDurableItem(key);
+    const persisted = (async () => {
+      if (!trusted) await syncClient.invalidateCollectionCheckpoint('userPreferences', namespace);
+      await storage.setItem(key, JSON.stringify(next));
+    })();
+    void persisted.catch(() => {
+      if (currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('userPreferences');
+    });
+    return persisted;
+  }, [namespace]);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const enabled = document.preferences.weightTrackingEnabled !== false;
@@ -55,6 +70,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
   useEffect(() => {
     let cancelled = false;
     documentRef.current = defaultDoc;
+    cacheValid.current = false;
     setDocument(defaultDoc);
     setSyncError(null);
     setPreferencesReady(false);
@@ -66,6 +82,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
           const parsed = JSON.parse(raw);
           const cached = Array.isArray(parsed) ? parsed.find(isUserPreferencesDoc) : parsed;
           if (isUserPreferencesDoc(cached)) {
+            cacheValid.current = Array.isArray(parsed) && parsed.every(isUserPreferencesDoc);
             const next = mergePreference(defaultDoc, [cached]);
             documentRef.current = next;
             setDocument(next);
@@ -84,15 +101,16 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const next = mergePreference(documentRef.current, documents);
       documentRef.current = next;
       setDocument(next);
-      void storage.setItem(
-        collectionStorageKey(namespace, 'userPreferences'),
-        JSON.stringify([next])
-      );
+      return persist([next]);
     };
     const unregister = syncClient.registerCollection(
       'userPreferences',
       {
-        onDocuments: receive,
+        canResume: () => !cancelled && cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'userPreferences')),
+        onDocuments: async (documents) => {
+          await receive(documents);
+          if (!cancelled) cacheValid.current = true;
+        },
         onPushConflicts: receive,
         onPushRejected: (rejections) => {
           const rejection = rejections.find((value) => isUserPreferencesDoc(value.document));
@@ -102,11 +120,9 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
           documentRef.current = next;
           setDocument(next);
           setSyncError('No se pudo guardar la preferencia. Se restauró el valor anterior.');
-          void storage.setItem(
-            collectionStorageKey(namespace, 'userPreferences'),
-            JSON.stringify([next])
-          );
+          const persisted = persist([next]);
           if (previous === undefined) void syncClient.resetCollection('userPreferences');
+          return persisted;
         },
       },
       ready
@@ -115,7 +131,7 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
       cancelled = true;
       unregister();
     };
-  }, [defaultDoc, namespace]);
+  }, [defaultDoc, namespace, persist]);
 
   useEffect(() => {
     syncClient.setCollectionEnabled('weightLogs', enabled);
@@ -133,13 +149,10 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
       documentRef.current = next;
       setDocument(next);
       setSyncError(null);
-      void storage.setItem(
-        collectionStorageKey(namespace, 'userPreferences'),
-        JSON.stringify([next])
-      );
-      void syncClient.enqueue('userPreferences', next, previous);
+      void persist([next]);
+      void syncClient.enqueue('userPreferences', next, previous).catch(() => undefined);
     },
-    [namespace, user?.id]
+    [namespace, user?.id, persist]
   );
 
   const value = useMemo(

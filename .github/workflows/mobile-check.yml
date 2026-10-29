@@ -60,6 +60,10 @@ jobs:
         working-directory: apps/mobile
         run: npm run test:auth
 
+      - name: Test synchronization status and visual feedback
+        working-directory: apps/mobile
+        run: npm run test:sync
+
       - name: Test food library document state
         working-directory: apps/mobile
         run: npm run test:food-library
