@@ -57,6 +57,12 @@ function disk() {
 // the synthetic server survive. Storage, client and all four providers are real.
 function launch(physical, serverMeals = []) {
   const modules = new Map(), sockets = [], server = { userPreferences: [{ id: '1', preferences: { weightTrackingEnabled: true }, updatedAt: 1000, _deleted: false }], mealTemplates: [], mealLogs: serverMeals, weightLogs: [] };
+  const tasks = new Set();
+  async function flushTasks() {
+    await tick();
+    for (const task of [...tasks]) { tasks.delete(task); task(); }
+    await tick();
+  }
   let user = { id: 1 }, view, stores = {};
   class Socket {
     static OPEN = 1; static CONNECTING = 0; static CLOSED = 3;
@@ -91,7 +97,7 @@ function launch(physical, serverMeals = []) {
     };
     const code = ts.transpileModule(fs.readFileSync(full, 'utf8'), { fileName: full, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
     vm.runInNewContext(code, { module, exports: module.exports, require: requireFrom, WebSocket: Socket, console,
-      setTimeout: () => 1, clearTimeout() {}, setImmediate, URL, TextEncoder, TextDecoder }, { filename: full });
+      setTimeout(fn, delay) { if (delay === 0) tasks.add(fn); return fn; }, clearTimeout(fn) { tasks.delete(fn); }, setImmediate, URL, TextEncoder, TextDecoder }, { filename: full });
     return module.exports;
   }
   const storage = load(path.join(root, 'src/services/storage.ts')).storage;
@@ -121,6 +127,7 @@ function launch(physical, serverMeals = []) {
   async function pump(stop = () => client.getStatusSnapshot().phase === 'synced') {
     for (let turn = 0; turn < 1200; turn++) {
       await renderer.act(async () => {
+        await flushTasks();
         const socket = sockets.at(-1);
         for (const frame of socket?.frames ?? []) {
           if (!['pull', 'push'].includes(frame.event) || socket.answered.has(frame.requestId)) continue;
@@ -148,7 +155,7 @@ function launch(physical, serverMeals = []) {
   async function close() {
     await renderer.act(async () => { client.disconnect(); view?.unmount(); await tick(); });
   }
-  return { storage, client, owner, server, sockets, mount, connect, pump, close, get stores() { return stores; } };
+  return { storage, client, owner, server, sockets, mount, connect, pump, close, flushTasks, get stores() { return stores; } };
 }
 
 test('real storage + four providers + owner recover large legacy partial history and pending edits, then survive a cold restart', async () => {
@@ -185,7 +192,7 @@ test('local save before reconnect invalidates an orphan versioned cursor before 
   await first.storage.setItem(cursorKey, JSON.stringify({ ...checkpoint(history.at(-1)), cacheVersion: 1 }));
   await first.mount();
   const pending = meal(9001, 3000);
-  await renderer.act(async () => { await first.stores.meals.registerMealLog(pending); await tick(); });
+  await renderer.act(async () => { await first.stores.meals.registerMealLog(pending); await first.flushTasks(); });
   assert.equal(await first.storage.getItem(cursorKey), null);
   await first.close();
   const restarted = launch(physical, history);
