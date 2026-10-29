@@ -73,7 +73,9 @@ export function SyncStatusBanner() {
     offline: 'cloud-off',
     error: 'circle-alert',
   } as const;
-  const received = `${count(status.receivedDocuments)} registros recibidos`;
+  const received = status.phase === 'synced' && status.receivedDocuments === 0
+    ? 'Sin registros nuevos'
+    : `${count(status.receivedDocuments)} registros recibidos`;
   const pending = `${count(status.pendingChanges)} ${status.pendingChanges === 1 ? 'cambio pendiente' : 'cambios pendientes'}`;
   let detail = status.pendingChanges > 0 ? `${received} · ${pending}` : received;
   if (status.phase === 'connecting' && status.receivedDocuments === 0) {

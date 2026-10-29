@@ -165,6 +165,9 @@ test('synced shows check and last successful time with stable layout, rather tha
   assert.equal(byId(view, 'sync-status-track').props.style.opacity, 0);
   assert.ok(byId(view, 'sync-status-banner').findAllByType('view').some(node => node.props.style?.minHeight === rowHeight));
   assert.equal(h.calls.stops, 1);
+  await renderer.act(async () => h.setStatus({ receivedDocuments: 0 }));
+  assert.match(text(view), /Sin registros nuevos/);
+  assert.doesNotMatch(text(view), /0 registros recibidos/);
   await unmount(view);
 });
 

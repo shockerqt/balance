@@ -25,9 +25,11 @@ export interface PullResult {
 }
 
 export interface CollectionHandlers {
-  onDocuments: (documents: SyncDocument[], result: PullResult) => void;
-  onPushConflicts?: (documents: SyncDocument[]) => void;
-  onPushRejected?: (rejections: RejectedDocument[]) => void;
+  onDocuments: (documents: SyncDocument[], result: PullResult) => void | Promise<void>;
+  onPushConflicts?: (documents: SyncDocument[]) => void | Promise<void>;
+  onPushRejected?: (rejections: RejectedDocument[]) => void | Promise<void>;
+  /** True only after valid canonical cache was hydrated from durable storage. */
+  canResume?: () => boolean;
 }
 
 export interface RejectedDocument {
@@ -129,6 +131,12 @@ export class SyncClient {
   subscribeStatus = (listener: () => void): (() => void) => {
     this.statusListeners.add(listener);
     return () => { this.statusListeners.delete(listener); };
+  };
+
+  reportLocalPersistenceError = (collection: SyncCollection): void => {
+    this.completedCollections.delete(collection);
+    this.statusErrors.set(`pull:${collection}`, 'local');
+    this.publishStatus();
   };
 
   retrySync = async (): Promise<void> => {
@@ -383,7 +391,7 @@ export class SyncClient {
         event: 'pull',
         requestId,
         collection,
-        checkpoint: checkpoint ?? null,
+        checkpoint: checkpoint ? { updatedAt: checkpoint.updatedAt, ...(checkpoint.id === undefined ? {} : { id: checkpoint.id }) } : null,
         limit: Math.max(1, Math.min(limit, 100)),
       },
       (message) => {
@@ -591,19 +599,24 @@ export class SyncClient {
     return operation;
   }
 
+  invalidateCollectionCheckpoint = async (collection: SyncCollection, namespace: string): Promise<void> => {
+    // This owner primitive is also used before connection by cache providers.
+    // Invalidate only the captured cursor; never cache, outbox or another account.
+    if (this.namespace === namespace) {
+      this.completedCollections.delete(collection);
+      this.publishStatus();
+    }
+    try { await storage.removeItem(checkpointStorageKey(namespace, collection)); }
+    catch {
+      if (this.namespace === namespace) this.reportLocalPersistenceError(collection);
+      throw new Error('SYNC_LOCAL_CHECKPOINT');
+    }
+  };
+
   async resetCollection(collection: SyncCollection): Promise<void> {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
-    this.completedCollections.delete(collection);
-    this.publishStatus();
-    try { await storage.removeItem(checkpointStorageKey(namespace, collection)); }
-    catch {
-      if (this.isCurrent(namespace, generation)) {
-        this.statusErrors.set(`pull:${collection}`, 'local');
-        this.publishStatus();
-      }
-      return;
-    }
+    try { await this.invalidateCollectionCheckpoint(collection, namespace); } catch { return; }
     if (this.isCurrent(namespace, generation)) await this.resyncCollection(collection);
   }
 
@@ -615,25 +628,37 @@ export class SyncClient {
       if (!handlers || this.handlers.get(collection) !== handlers || !this.operationIsCurrent(namespace, generation, epoch) ||
         !this.isReady() || this.disabledCollections.has(collection)) return false;
       const rawCheckpoint = await storage.getItem(checkpointStorageKey(namespace, collection));
-      if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
+      if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
       let checkpoint: SyncCheckpoint | undefined;
-      if (rawCheckpoint) {
+      if (rawCheckpoint && handlers.canResume?.() === true) {
         try {
-          const parsed = JSON.parse(rawCheckpoint) as SyncCheckpoint;
-          if (typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)) checkpoint = parsed;
-        } catch { /* A corrupt checkpoint behaves like an initial pull. */ }
+          const parsed = JSON.parse(rawCheckpoint) as SyncCheckpoint & { cacheVersion?: unknown };
+          if (parsed.cacheVersion === 1 && typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt) &&
+            parsed.updatedAt >= 0 && typeof parsed.id === 'string' && parsed.id) {
+            // The marker proves durable ordering locally and never crosses the wire.
+            checkpoint = { updatedAt: parsed.updatedAt, id: parsed.id };
+          }
+        } catch { /* Missing, legacy or corrupt cache/cursor pairs replay safely. */ }
+      }
+      if (rawCheckpoint && !checkpoint) {
+        // Remove an unsafe frontier durably BEFORE a replay can persist a partial
+        // cache. A crash between that cache write and its next cursor must never
+        // resurrect a previously higher, versioned frontier on the next launch.
+        await this.invalidateCollectionCheckpoint(collection, namespace);
+        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
       }
       while (this.operationIsCurrent(namespace, generation, epoch) && this.isReady() && !this.disabledCollections.has(collection)) {
         localOperation = false;
         const result = await this.pull(collection, checkpoint, 50, { namespace, generation });
         if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
         localOperation = true;
-        handlers.onDocuments(result.documents, result);
+        await handlers.onDocuments(result.documents, result);
+        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
         this.receivedDocuments += result.documents.length;
         this.publishStatus();
         if (result.checkpoint) {
           checkpoint = result.checkpoint;
-          await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify(checkpoint));
+          await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify({ ...checkpoint, cacheVersion: 1 }));
           if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
         }
         this.publishStatus();
@@ -828,7 +853,9 @@ export class SyncClient {
           const result = await this.push(collection, entries.map((entry) => ({ newDocumentState: entry.document })));
           if (!this.operationIsCurrent(namespace, generation, epoch)) return;
           localOperation = true;
-          this.handlers.get(collection)?.onPushConflicts?.(result.conflicts);
+          const handlers = this.handlers.get(collection);
+          await handlers?.onPushConflicts?.(result.conflicts);
+          if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
           if (result.invalidConflict) {
             this.statusErrors.set(`push:${collection}`, 'upload');
             return;
@@ -840,8 +867,10 @@ export class SyncClient {
             code: rejection.code,
             message: rejection.message,
           }));
-          if (rejectedDocuments.length)
-            this.handlers.get(collection)?.onPushRejected?.(rejectedDocuments);
+          if (rejectedDocuments.length) {
+            await handlers?.onPushRejected?.(rejectedDocuments);
+            if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
+          }
           for (const entry of entries) {
             const current = this.outbox.get(`${collection}:${entry.document.id}`);
             if (current?.document.updatedAt === entry.document.updatedAt) this.outbox.delete(`${collection}:${entry.document.id}`);

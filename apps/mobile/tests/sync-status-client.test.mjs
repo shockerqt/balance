@@ -68,6 +68,7 @@ function fixture({ data = new Map(), controls = {} } = {}) {
   function register(collection, ready) {
     applied.set(collection, []);
     return client.registerCollection(collection, {
+      canResume: () => true,
       onDocuments(documents) { applied.get(collection).push(...documents); },
       onPushRejected(rows) { rejected.push(...rows); },
     }, ready);
@@ -133,7 +134,7 @@ test('malformed pages and nonadvancing cursors fail closed without checkpoint ad
     { documents: [meal(1)] },
   ];
   for (const extra of cases) {
-    const initial = JSON.stringify({ updatedAt: 1000, id: uuid(2) });
+    const initial = JSON.stringify({ updatedAt: 1000, id: uuid(2), cacheVersion: 1 });
     const key = checkpointKey('user:fixture', 'mealLogs');
     const f = fixture({ data: new Map([[key, initial]]) }); const socket = await f.boot(); await f.finishOther(socket, ['mealLogs']);
     socket.answer('mealLogs', [meal(3)], false, extra); await settle();

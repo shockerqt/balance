@@ -61,8 +61,8 @@ function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[]): MealLogDoc
   return Array.from(byId.values());
 }
 
-function persistLogs(namespace: string, docs: MealLogDoc[]): void {
-  void storage.setItem(collectionStorageKey(namespace, 'mealLogs'), JSON.stringify(docs));
+function persistLogs(namespace: string, docs: MealLogDoc[]): Promise<void> {
+  return storage.setItem(collectionStorageKey(namespace, 'mealLogs'), JSON.stringify(docs));
 }
 
 function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: string, updatedAt = Date.now()): MealLogDoc | null {
@@ -112,63 +112,72 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const currentNamespace = useRef(namespace);
   currentNamespace.current = namespace;
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
+  const logsRef = useRef<MealLogDoc[]>([]);
+  const cacheValid = useRef(false);
+  const updateLogs = useCallback((update: (previous: MealLogDoc[]) => MealLogDoc[]) => {
+    if (currentNamespace.current !== namespace) return Promise.resolve();
+    const next = update(logsRef.current);
+    logsRef.current = next;
+    setLogs(next);
+    const trusted = cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'mealLogs'));
+    const persisted = (async () => {
+      if (!trusted) await syncClient.invalidateCollectionCheckpoint('mealLogs', namespace);
+      await persistLogs(namespace, next);
+    })();
+    void persisted.catch(() => {
+      if (currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('mealLogs');
+    });
+    return persisted;
+  }, [namespace]);
 
   useEffect(() => {
     let cancelled = false;
+    logsRef.current = [];
+    cacheValid.current = false;
     setLogs([]);
     const ready = (async () => {
       if (namespace === 'guest') await recoverGuestImport().catch(() => null);
-      const raw = await storage.getItem(collectionStorageKey(namespace, 'mealLogs'));
+      const raw = await storage.getItem(collectionStorageKey(namespace, 'mealLogs')).catch(() => null);
       if (cancelled || !raw) return;
       try {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setLogs(parsed.filter(isMealLogDoc));
+        if (Array.isArray(parsed)) {
+          const next = mergeLogs(parsed.filter(isMealLogDoc), logsRef.current);
+          cacheValid.current = parsed.every(isMealLogDoc);
+          logsRef.current = next;
+          setLogs(next);
+        }
       } catch {
         // Ignore corrupt cache; PostgreSQL is authoritative after reconnect.
       }
     })();
     readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
-      onDocuments: (documents) => {
+      canResume: () => !cancelled && cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'mealLogs')),
+      onDocuments: async (documents) => {
         if (cancelled) return;
-        setLogs((previous) => {
-          const next = mergeLogs(previous, documents);
-          persistLogs(namespace, next);
-          return next;
-        });
+        await updateLogs(previous => mergeLogs(previous, documents));
+        if (!cancelled) cacheValid.current = true;
       },
       onPushConflicts: (documents) => {
-        if (!documents.length) return;
-        setLogs((previous) => {
-          const next = mergeLogs(previous, documents);
-          persistLogs(namespace, next);
-          return next;
-        });
+        if (cancelled || !documents.length) return;
+        return updateLogs(previous => mergeLogs(previous, documents));
       },
       onPushRejected: (rejections) => {
         const rejectedIds = new Set(
           rejections.filter((value) => isMealLogDoc(value.document)).map((value) => value.document.id)
         );
-        if (!rejectedIds.size) return;
-        setLogs((previous) => {
-          const next = previous.filter((doc) => !rejectedIds.has(doc.id));
-          persistLogs(namespace, next);
-          return next;
-        });
+        if (cancelled || !rejectedIds.size) return;
+        const persisted = updateLogs(previous => previous.filter(doc => !rejectedIds.has(doc.id)));
         void syncClient.resetCollection('mealLogs');
+        return persisted;
       },
     }, ready);
     return () => {
       cancelled = true;
       unregister();
     };
-  }, [namespace]);
-
-  const replaceLogs = useCallback((next: MealLogDoc[]) => {
-    setLogs(next);
-    persistLogs(namespace, next);
-    return next;
-  }, [namespace]);
+  }, [namespace, updateLogs]);
 
   // Outbox persistence owns durability; only acknowledge the native editor
   // after enqueue succeeds. Never publish a late save into a different account.
@@ -179,38 +188,26 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
     await syncClient.enqueue('mealLogs', document);
     if (currentNamespace.current !== namespace) return;
-    setLogs((previous) => {
-      const next = mergeLogs(previous, [document]);
-      persistLogs(namespace, next);
-      return next;
-    });
-  }, [namespace]);
+    void updateLogs(previous => mergeLogs(previous, [document]));
+  }, [namespace, updateLogs]);
 
   const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
     const doc = docFromFood(dateId, food, uuid());
     if (!doc) return;
-    setLogs((previous) => {
-      const next = mergeLogs(previous, [doc]);
-      persistLogs(namespace, next);
-      return next;
-    });
-    void syncClient.enqueue('mealLogs', doc);
-  }, [namespace]);
+    void updateLogs(previous => mergeLogs(previous, [doc]));
+    void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
+  }, [namespace, updateLogs]);
 
   const addMultipleFoods = useCallback((dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => {
     if (!foods.length) return;
     const docs = foods.map((food) => docFromFood(dateId, food, uuid())).filter((doc): doc is MealLogDoc => doc !== null);
     if (!docs.length) return;
-    setLogs((previous) => {
-      const next = mergeLogs(previous, docs);
-      persistLogs(namespace, next);
-      return next;
-    });
-    for (const doc of docs) void syncClient.enqueue('mealLogs', doc);
-  }, [namespace]);
+    void updateLogs(previous => mergeLogs(previous, docs));
+    for (const doc of docs) void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
+  }, [namespace, updateLogs]);
 
   const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => {
-    setLogs((previous) => {
+    void updateLogs((previous) => {
       const current = previous.find((doc) => doc.id === foodId);
       if (!current) return previous;
       const display = logToLoggedFood(current);
@@ -224,43 +221,40 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       );
       if (!nextDoc) return previous;
       const next = mergeLogs(previous, [nextDoc]);
-      persistLogs(namespace, next);
-      void syncClient.enqueue('mealLogs', nextDoc);
+      void syncClient.enqueue('mealLogs', nextDoc).catch(() => undefined);
       return next;
     });
-  }, [namespace]);
+  }, [namespace, updateLogs]);
 
   const deleteFood = useCallback((dateId: string, foodId: string) => {
     void dateId;
-    setLogs((previous) => {
+    void updateLogs((previous) => {
       const current = previous.find((doc) => doc.id === foodId);
       if (!current) return previous;
       const deleted = { ...current, updatedAt: Date.now(), _deleted: true };
       const next = mergeLogs(previous, [deleted]);
-      persistLogs(namespace, next);
-      void syncClient.enqueue('mealLogs', deleted);
+      void syncClient.enqueue('mealLogs', deleted).catch(() => undefined);
       return next;
     });
-  }, [namespace]);
+  }, [namespace, updateLogs]);
 
   const deleteMultipleFoods = useCallback((dateId: string, foodIds: string[]) => {
     void dateId;
     const ids = new Set(foodIds);
-    setLogs((previous) => {
+    void updateLogs((previous) => {
       const deleted = previous.filter((doc) => ids.has(doc.id)).map((doc) => ({ ...doc, updatedAt: Date.now(), _deleted: true }));
       if (!deleted.length) return previous;
       const next = mergeLogs(previous, deleted);
-      persistLogs(namespace, next);
-      for (const doc of deleted) void syncClient.enqueue('mealLogs', doc);
+      for (const doc of deleted) void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
       return next;
     });
-  }, [namespace]);
+  }, [namespace, updateLogs]);
 
   const moveMultipleFoodsTime = useCallback((dateId: string, foodIds: string[], newTime: string) => {
     const ids = new Set(foodIds);
     const consumedAt = epochForChileDateTime(dateId, newTime);
     if (consumedAt === null) return;
-    setLogs((previous) => {
+    void updateLogs((previous) => {
       const changed = previous.filter((doc) => ids.has(doc.id) && !doc._deleted).map((doc) => ({
         ...doc,
         consumedAt,
@@ -268,11 +262,10 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }));
       if (!changed.length) return previous;
       const next = mergeLogs(previous, changed);
-      persistLogs(namespace, next);
-      for (const doc of changed) void syncClient.enqueue('mealLogs', doc);
+      for (const doc of changed) void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
       return next;
     });
-  }, [namespace]);
+  }, [namespace, updateLogs]);
 
   const dayLogs = useMemo(() => {
     const grouped: Record<string, DayLog> = {};
@@ -287,6 +280,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [logs]);
 
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
+    logsRef.current = documents;
     setLogs(documents);
   }, []);
   const value = useMemo<MealStoreContextType>(() => ({
