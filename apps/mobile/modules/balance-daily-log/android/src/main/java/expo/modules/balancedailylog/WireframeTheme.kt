@@ -107,8 +107,8 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
 
 @Composable internal fun OrganicButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, content: @Composable RowScope.() -> Unit) {
   Button(onClick = onClick, enabled = enabled,
-    modifier = modifier.heightIn(min = 48.dp).alpha(if (enabled) 1f else .38f).background(LocalOrganicGradients.current.action, MaterialTheme.shapes.large),
-    shape = MaterialTheme.shapes.large,
+    modifier = modifier.heightIn(min = 48.dp).alpha(if (enabled) 1f else .38f).background(LocalOrganicGradients.current.action, RoundedCornerShape(16.dp)),
+    shape = RoundedCornerShape(16.dp),
     colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary, disabledContainerColor = Color.Transparent, disabledContentColor = MaterialTheme.colorScheme.onPrimary),
     content = content)
 }
