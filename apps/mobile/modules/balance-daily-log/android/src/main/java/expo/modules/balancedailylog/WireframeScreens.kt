@@ -27,17 +27,21 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 @Composable internal fun WireNavigation(destination: Int, enabled: Boolean, onSelect: (Int) -> Unit, onAdd: () -> Unit) {
-  Row(Modifier.fillMaxWidth().heightIn(min = 68.dp), verticalAlignment = Alignment.CenterVertically) {
+  Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    val icons = listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)
     listOf("Alimentos", "Mediciones", "+", "Resumen", "Perfil").forEachIndexed { index, label ->
       val target = if (index > 2) index - 1 else index
       if (index == 2) Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        FilledIconButton(onClick = onAdd, enabled = enabled, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary), modifier = Modifier.size(48.dp).background(LocalOrganicGradients.current.action, RoundedCornerShape(20.dp)).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null) }
-      } else NavigationBarItem(selected = destination == target, onClick = { onSelect(target) }, enabled = enabled,
-        icon = { Icon(listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)[index], null) },
-        label = { Text(label, fontSize = 9.sp, maxLines = 1) }, alwaysShowLabel = true,
-        colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.primary,
-          selectedTextColor = MaterialTheme.colorScheme.onSurface, indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-          unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
+        FilledIconButton(onClick = onAdd, enabled = enabled, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary), shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 10.dp, bottomStart = 22.dp), modifier = Modifier.size(56.dp).background(LocalOrganicGradients.current.action, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 10.dp, bottomStart = 22.dp)).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null, Modifier.size(24.dp)) }
+      } else Surface(onClick = { onSelect(target) }, enabled = enabled, color = Color.Transparent,
+        modifier = Modifier.weight(1f).semantics { selected = destination == target; role = Role.Tab }) {
+        Column(Modifier.heightIn(min = 58.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+          Box(Modifier.background(if (destination == target) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, RoundedCornerShape(16.dp)).padding(horizontal = 15.dp, vertical = 5.dp), contentAlignment = Alignment.Center) {
+            Icon(icons[index], null, Modifier.size(20.dp), tint = if (destination == target) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          Text(label, fontSize = 10.sp, maxLines = 1, color = if (destination == target) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = if (destination == target) FontWeight.SemiBold else FontWeight.Normal)
+        }
+      }
     }
   }
 }
@@ -62,7 +66,7 @@ import java.time.format.DateTimeFormatter
   val days = data.optJSONObject("days") ?: JSONObject()
   LaunchedEffect(selected) { monthText = YearMonth.from(date).toString() }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { Text("Mediciones", style = MaterialTheme.typography.headlineSmall); Text("Peso", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    item { WirePageHeader("Mediciones", "Peso") }
     if (!data.optBoolean("showWeight")) item {
       Text("El seguimiento de peso está desactivado. Puedes activarlo en Perfil.")
     } else {
@@ -151,12 +155,17 @@ import java.time.format.DateTimeFormatter
 @Composable private fun WireProfile(data: JSONObject, enabled: Boolean, onAction: (String, Map<String, Any>) -> Unit) {
   val profile = data.optJSONObject("profile") ?: JSONObject()
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Section)) {
-    item { Text("Perfil", style = MaterialTheme.typography.headlineSmall) }
+    item { WirePageHeader("Perfil", "Configuración de Balance") }
     item {
-      Text(profile.optString("name"), style = MaterialTheme.typography.titleLarge)
-      Text(if (profile.optBoolean("guest")) "Datos en este dispositivo" else "Cuenta conectada", color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Box(Modifier.size(56.dp).background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) { Icon(WireIcons.Profile, null, Modifier.size(28.dp)) }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Text(profile.optString("name"), style = MaterialTheme.typography.titleLarge)
+          Text(if (profile.optBoolean("guest")) "Datos en este dispositivo" else "Cuenta conectada", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        }
+      }
     }
-    item { HorizontalDivider(); Text("Preferencias", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium) }
+    item { Text("Preferencias", style = MaterialTheme.typography.titleMedium) }
     item {
       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text("Seguimiento de peso"); Text("Conserva el historial al desactivar", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -185,5 +194,25 @@ import java.time.format.DateTimeFormatter
     ListItem(headlineContent = { Text(label, style = MaterialTheme.typography.labelLarge, color = content) }, leadingContent = { Icon(icon, null, tint = secondary) },
       trailingContent = { Icon(WireIcons.Right, null, Modifier.size(18.dp), tint = secondary) },
       colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+  }
+}
+
+@Composable internal fun WirePageHeader(title: String, subtitle: String? = null) {
+  Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+    if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+  }
+}
+
+@Composable internal fun OrganicSegments(labels: List<String>, selected: Int, enabled: Boolean, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+  Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    labels.forEachIndexed { i, label ->
+      Surface(onClick = { onSelect(i) }, enabled = enabled, color = if (i == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(if (i == selected) 16.dp else 5.dp), modifier = Modifier.weight(1f).semantics { this.selected = i == selected; role = Role.Tab }) {
+        Box(Modifier.heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+          Text(label, fontSize = 13.sp, color = if (i == selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+      }
+    }
   }
 }

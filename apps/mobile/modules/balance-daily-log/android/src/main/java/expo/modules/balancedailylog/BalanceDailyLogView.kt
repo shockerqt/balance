@@ -173,43 +173,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     if (destination == 0) {
     destinations.SaveableStateProvider(0) {
-    Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header)) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-      Column(Modifier.weight(1f)) {
-        Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(wireDate(visible), style = MaterialTheme.typography.titleLarge)
-      }
-      TextButton(onClick = { go(today) }, enabled = !locked && selected.isEmpty()) { Text("Hoy") }
-      IconButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
-        modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Icon(WireIcons.Calendar, null) }
-    }
-    val headerDay = days.optJSONObject(visible.toString()) ?: empty
-    val headerMacros = wireObjects(headerDay.optJSONArray("macros")).take(3)
-    Surface(onClick = { nutrition = true }, enabled = !locked && selected.isEmpty(), color = Color.Transparent,
-      modifier = Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page).semantics(mergeDescendants = true) {
-        contentDescription = "${headerDay.optString("calories", "0")} de ${headerDay.optString("target")} kilocalorías. " + headerMacros.joinToString { "${it.optString("name")}: ${it.optString("value")} gramos" } + ". Ver detalle nutricional"
-      }) {
-      Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Text(headerDay.optString("calories", "0"), style = MaterialTheme.typography.titleMedium)
-          Text(" / ${headerDay.optString("target")} kcal", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-          Icon(WireIcons.Right, null, Modifier.size(16.dp))
-        }
-        Text(headerMacros.mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")} g" }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-      }
-    }
-    val weekStart = visible.minusDays((visible.dayOfWeek.value - 1).toLong())
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-      repeat(7) { offset ->
-        val date = weekStart.plusDays(offset.toLong())
-        val chosen = date == visible
-        val day = days.optJSONObject(date.toString()) ?: empty
-        WireDateCell(date, chosen, day, !locked && selected.isEmpty()) { go(date) }
-
-      }
-    }
-    Spacer(Modifier.height(4.dp))
-    }
+    WireDiaryHeader(visible, today, days, empty, !locked && selected.isEmpty(), { go(it) }, { calendar = true }, { nutrition = true })
     HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(),
       beyondViewportPageCount = 1, userScrollEnabled = active && !pendingCommand && selected.isEmpty(), key = { it }) { page ->
       val date = DailyLogDates.date(page)

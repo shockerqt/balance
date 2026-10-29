@@ -37,15 +37,11 @@ import kotlin.math.abs
     }.toList()
   }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-    item { Text("Resumen", style = MaterialTheme.typography.headlineSmall) }
+    item { WirePageHeader("Resumen", "Tendencias de tus registros") }
     item {
-      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        SegmentedButton(selected = !body, onClick = { body = false }, shape = SegmentedButtonDefaults.itemShape(0, 2), label = { Text("Alimentación") }, enabled = enabled)
-        SegmentedButton(selected = body, onClick = { body = true }, shape = SegmentedButtonDefaults.itemShape(1, 2), label = { Text("Cuerpo") }, enabled = enabled)
-      }
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(7, 30, 90).forEach { n -> FilterChip(period == n, { period = n }, label = { Text("$n días") }, enabled = enabled) }
-      }
+      OrganicSegments(listOf("Alimentación", "Cuerpo"), if (body) 1 else 0, enabled, { body = it == 1 })
+      Spacer(Modifier.height(12.dp))
+      OrganicSegments(listOf("7 días", "30 días", "90 días"), listOf(7, 30, 90).indexOf(period), enabled, { period = listOf(7, 30, 90)[it] })
       TextButton(onClick = { picker = true }, enabled = enabled) {
         Icon(WireIcons.Calendar, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Hasta ${wireDate(end)}")
       }

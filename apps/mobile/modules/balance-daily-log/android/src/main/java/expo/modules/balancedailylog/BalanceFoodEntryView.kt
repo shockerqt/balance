@@ -151,7 +151,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   Scaffold(modifier = Modifier.fillMaxSize().imePadding(), containerColor = MaterialTheme.colorScheme.background,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = { Column {
-      TopAppBar(modifier = Modifier.background(LocalOrganicGradients.current.header), title = { Text("Agregar alimento") },
+      TopAppBar(modifier = Modifier.background(LocalOrganicGradients.current.header), title = { Text("Agregar alimento", fontSize = 21.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily) },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
         navigationIcon = { IconButton(onClick = { leave() }, enabled = enabled,
           modifier = Modifier.semantics { contentDescription = "Volver al registro diario" }) { Icon(WireIcons.Back, null) } })
@@ -164,16 +164,13 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           Icon(WireIcons.Clock, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(time)
         }
       }
-      SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = 4.dp)) {
-        SegmentedButton(selected = !(editing && chosen == null), onClick = {
+      OrganicSegments(listOf("Bibliotecas", "Etiquetas"), if (editing && chosen == null) 1 else 0, enabled, { target ->
+        if (target == 0) {
           if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = "" }
-        }, shape = SegmentedButtonDefaults.itemShape(0, 2), label = { Text("Bibliotecas") }, enabled = enabled)
-        SegmentedButton(selected = editing && chosen == null, onClick = {
-          if (!(editing && chosen == null)) {
-            if (dirty) { discardToLabel = true; discardToSearch = false; discard = true } else labels()
-          }
-        }, shape = SegmentedButtonDefaults.itemShape(1, 2), label = { Text("Etiquetas") }, enabled = enabled)
-      }
+        } else if (!(editing && chosen == null)) {
+          if (dirty) { discardToLabel = true; discardToSearch = false; discard = true } else labels()
+        }
+      }, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     } },
     bottomBar = {
       if (editing) Surface(color = MaterialTheme.colorScheme.surface) {
@@ -189,7 +186,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       }
     }) { padding ->
     if (!editing) {
-      LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
+      LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         item("search") {
           TextField(value = query, onValueChange = { query = it }, enabled = enabled, singleLine = true,
             label = { Text("Buscar en tus alimentos") }, leadingIcon = { Icon(WireIcons.Search, null) }, modifier = Modifier.fillMaxWidth())
@@ -208,11 +205,16 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
         else if (results.isEmpty()) item("empty") { Text("No hay alimentos que coincidan. Puedes registrar uno sin guardarlo en la biblioteca.", Modifier.padding(vertical = 24.dp)) }
         items(results, key = { it.optString("id") }, contentType = { "food" }) { food ->
           val d = food.getJSONObject("details"); val n = d.getJSONObject("nutritionPer100")
-          Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth().clickable(enabled) { pick(food) }) {
-            Column(Modifier.padding(WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text(food.optString("name"), style = MaterialTheme.typography.titleMedium)
-              Text("${FoodEntryModel.display(n.optDouble("calories"))} kcal / 100 ${d.optString("canonicalUnit")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-              Text(if (food.optBoolean("isOfficial")) "Alimento oficial" else "Biblioteca personal", style = MaterialTheme.typography.labelSmall)
+          Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth().clickable(enabled) { pick(food) }) {
+            Row(Modifier.heightIn(min = 80.dp).padding(horizontal = 18.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+              Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(food.optString("name"), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("100 ${d.optString("canonicalUnit")} · ${if (food.optBoolean("isOfficial")) "Oficial" else "Personal"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+              Column(horizontalAlignment = Alignment.End) {
+                Text(FoodEntryModel.display(n.optDouble("calories")), fontSize = 15.sp)
+                Text("kcal", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
             }
           }
         }
