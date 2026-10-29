@@ -89,7 +89,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
             Column(Modifier.heightIn(min = 76.dp).padding(top = 12.dp, bottom = 12.dp, end = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
               Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(hour, fontSize = 18.sp, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontWeight = FontWeight.SemiBold)
-                Text("${group.size} alimentos", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Text("${group.size} ${if (group.size == 1) "alimento" else "alimentos"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                 Text("${wireNumber(totals.optDouble("calories"))} kcal", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Icon(if (expanded) WireIcons.Down else WireIcons.Right, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
               }

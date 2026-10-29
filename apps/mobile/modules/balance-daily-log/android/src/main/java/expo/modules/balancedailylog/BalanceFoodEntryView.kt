@@ -222,11 +222,15 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
       }
     } else {
       Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = WireSpace.Page, vertical = WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
-        TextButton(onClick = { if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
-        if (chosen == null) OrganicTextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
+        if (chosen != null) TextButton(onClick = { if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
+        if (chosen == null) {
+          Text("Datos de la etiqueta", style = MaterialTheme.typography.titleLarge)
+          Text("Copia los valores tal como aparecen en el envase.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+          OrganicTextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
           label = { Text("Nombre del alimento") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        } else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
           Text("${if (chosen.optBoolean("isOfficial")) "Oficial" else "Biblioteca personal"} · información por 100 $unit", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val consumption: @Composable () -> Unit = {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
           OrganicTextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f))
@@ -240,7 +244,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
           }
         }
         if (portion != null) Text("Equivale a ${FoodEntryModel.display(canonical)} $unit", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large) {
+        if (chosen != null) Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large) {
           Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("En esta cantidad", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             fun total(key: String): Double? {
@@ -255,8 +259,13 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
             }
           }
         }
+        else {
+          Text("Consumo: ${FoodEntryModel.display(if (canonical == null || nutrition.isNull("calories")) null else nutrition.optDouble("calories") * canonical / 100)} kcal · ${FoodEntryModel.display(canonical)} $unit", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        }
+        }
+        if (chosen != null) consumption()
         if (chosen == null) {
-          Text("Información de la etiqueta", style = MaterialTheme.typography.titleLarge)
+          Text(if (labelBasis == "portion") "Información por porción" else "Información por 100 $unit", style = MaterialTheme.typography.titleMedium)
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(labelBasis == "per100", { labelBasis = "per100"; dirty = true }, label = { Text("Por 100 $unit") }, enabled = enabled)
             FilterChip(labelBasis == "portion", { labelBasis = "portion"; dirty = true }, label = { Text("Por porción") }, enabled = enabled)
@@ -294,6 +303,12 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
               Text(field.optString("label")); Text("${FoodEntryModel.display(value.toDoubleOrNull()?.let { n -> canonical?.let { n * it / 100 } })} ${field.optString("unit")}")
             }
           }
+        }
+        if (chosen == null) {
+          Spacer(Modifier.height(8.dp))
+          Text("Tu consumo", style = MaterialTheme.typography.titleLarge)
+          Text("Indica cuánto consumiste de este alimento.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          consumption()
         }
         Spacer(Modifier.height(12.dp))
       }

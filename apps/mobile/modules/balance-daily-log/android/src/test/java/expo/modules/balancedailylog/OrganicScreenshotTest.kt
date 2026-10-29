@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -294,6 +295,8 @@ class OrganicScreenshotTest {
     screenshot("$name-search")
     try { compose.onNodeWithText("Etiquetas").performClick() }
     finally { screenshot("$name-labels") }
+    compose.onNodeWithText("Datos de la etiqueta").assertIsDisplayed()
+    compose.onNodeWithText("En esta cantidad").assertDoesNotExist()
     val energy = compose.onNodeWithTag("organic-nutrient-calories")
     val protein = compose.onNodeWithTag("organic-nutrient-protein")
     val carbs = compose.onNodeWithTag("organic-nutrient-carbs")
@@ -321,6 +324,8 @@ class OrganicScreenshotTest {
     assertTrue("Second row follows the first", e.bottom < c.top && p.bottom < f.top)
     assertEquals("Left column alignment", e.left, c.left, 1f)
     assertEquals("Right column alignment", p.left, f.left, 1f)
+    compose.onNodeWithText("Tu consumo").performScrollTo().assertIsDisplayed()
+    screenshot("$name-consumption")
   }
 
   private fun screenshot(name: String) {
