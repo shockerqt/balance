@@ -18,6 +18,7 @@ const mealStore = {
   updateFood: (...args) => updates.push(args),
 };
 const router = { push: args => pushes.push(args) };
+let theme = { colors: { background: '#141e1b', primary: '#c9e5ae' }, scheme: 'dark', gradients: { header: ['#213c34', '#413745'], action: ['#bddfa2', '#d6bbdf'] } };
 const filename = path.join(root, 'src/components/meal/native/native-daily-log-screen.tsx');
 const stub = {
   react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
@@ -30,7 +31,7 @@ const stub = {
   '@/hooks/use-weight-store': { useWeightStore: () => ({ weightsByDate: {}, syncError: null, saveWeight: (...args) => saves.push(args) }) },
   '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true, syncError: null }) },
   '@/hooks/use-logs-date': { useLogsSelectedDate: () => [date], logsDateStore: { get: () => date, getRevision: () => 4, subscribe: () => () => {}, set: value => selections.push(value) } },
-  '@/theme': { useTheme: () => ({ colors: {} }) },
+  '@/theme': { useTheme: () => theme },
   '@/lib/dates': { ...dates, todayId: () => date },
   './daily-log-contract': daily, './interface-contract': contract,
 };
@@ -68,5 +69,26 @@ test('real shell maps native records to canonical stores and rejects callbacks a
   await renderer.act(async () => { view.update(React.createElement(Screen)); });
   await renderer.act(async () => { p.onAction(event(p, 'weight-save', 2, { input: { quantity: '90' } })); });
   assert.equal(saves.length, 2, 'an old account callback cannot mutate the replacement account');
+  await renderer.act(async () => view.unmount());
+});
+
+
+test('retained native payload preserves work while blurred and refreshes the complete Organic scheme on focus', async () => {
+  let view;
+  await renderer.act(async () => { view = renderer.create(React.createElement(Screen)); });
+  const initial = props(view).data;
+  assert.equal(JSON.parse(initial).colors.scheme, 'dark');
+  assert.deepEqual(JSON.parse(initial).colors.actionGradient, theme.gradients.action);
+  await renderer.act(async () => blur());
+  theme = { colors: { background: '#eff7f7', primary: '#146477' }, scheme: 'light', gradients: { header: ['#cce8e4', '#d8e8f2'], action: ['#165f68', '#3b6274'] } };
+  await renderer.act(async () => view.update(React.createElement(Screen)));
+  assert.equal(props(view).data, initial, 'theme changes behind the editor retain its previous native payload');
+  await renderer.act(async () => { blur = focus(); });
+  const refreshed = JSON.parse(props(view).data);
+  assert.equal(refreshed.colors.scheme, 'light');
+  assert.equal(refreshed.colors.background, '#eff7f7');
+  assert.deepEqual(refreshed.colors.headerGradient, theme.gradients.header);
+  assert.deepEqual(refreshed.colors.actionGradient, theme.gradients.action);
+  assert.ok(refreshed.days[date], 'focus retains the complete historical projection');
   await renderer.act(async () => view.unmount());
 });

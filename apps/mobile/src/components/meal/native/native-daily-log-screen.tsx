@@ -11,7 +11,7 @@ import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { useTheme } from '@/theme';
 import { currentTimeString, todayId } from '@/lib/dates';
 import { acceptDailyEvent } from './daily-log-contract';
-import { acceptInterfaceEvent, interfaceColors, projectInterfaceDays, weightGrams } from './interface-contract';
+import { acceptInterfaceEvent, createInterfaceDaysProjector, interfaceColors, projectInterfaceDays, weightGrams } from './interface-contract';
 
 export default function NativeDailyLogScreen() {
   const { user, isGuest } = useAuth();
@@ -56,16 +56,24 @@ function DailyLogSession() {
     const timer = setInterval(updateToday, 60_000);
     return () => { live.current.alive = false; unsubscribe(); subscription.remove(); clearInterval(timer); };
   }, []);
-  const data = useMemo(() => JSON.stringify({
+  const projectLiveDays = useMemo(createInterfaceDaysProjector, []);
+  const retainedData = useRef('');
+  const data = useMemo(() => {
+    // Retain the complete payload while hidden; refresh theme and data on focus.
+    if (!focused && retainedData.current) return retainedData.current;
+    const serialized = JSON.stringify({
     session, today, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: theme.gradients?.header, actionGradient: theme.gradients?.action },
     profile: { name: user?.name ?? (isGuest ? 'Invitado' : 'Cuenta'), guest: isGuest },
     preferencesError: preferences.syncError,
     showWeight: preferences.preferencesReady && preferences.weightTrackingEnabled,
     weightError: weight.syncError,
     preferencesReady: preferences.preferencesReady,
-    days: mounted ? projectInterfaceDays(meals.dayLogs, weight.weightsByDate, meals.mealDocuments) : {},
+    days: mounted && focused ? projectLiveDays(meals.dayLogs, weight.weightsByDate, meals.mealDocuments) : {},
     empty: projectInterfaceDays({ [today]: emptyDayLog(today) }, {}, [])[today],
-  }), [theme, session, today, user?.name, isGuest, preferences.syncError, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, meals.mealDocuments, mounted]);
+    });
+    retainedData.current = serialized;
+    return serialized;
+  }, [theme, session, today, user?.name, isGuest, preferences.syncError, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, meals.mealDocuments, mounted, focused, projectLiveDays]);
   const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision, session });
   return <Screen edges={['top', 'bottom']} style={{ backgroundColor: theme.colors.background ?? interfaceColors.background }}><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
