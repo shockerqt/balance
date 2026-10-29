@@ -34,7 +34,7 @@ async function harness(options = {}) {
     refreshToken: options.refresh === false ? undefined : 'public-synthetic-refresh',
     idToken: options.idToken,
     issuedAt: Math.floor(Date.now() / 1000), expiresIn: options.initialExpiresIn,
-    lineage: 'synthetic-family', binding,
+    lineage: 'synthetic-family', binding: options.sessionBinding ?? binding, user: options.cachedUser,
   }));
   else if (options.loggedOut) values.set(sessionState.SESSION_KEY, sessionState.LOGGED_OUT_MARKER);
   if (options.remembered) values.set(sessionState.REMEMBERED_ACCOUNT_KEY, JSON.stringify(options.remembered));
@@ -72,6 +72,7 @@ async function harness(options = {}) {
   const secure = {
     getItemAsync: async key => {
       const value = values.get(key) ?? null;
+      if (key === sessionState.SESSION_KEY && options.sessionRead) await options.sessionRead.promise;
       if (key === sessionState.REMEMBERED_ACCOUNT_KEY && options.rememberedRead) await options.rememberedRead.promise;
       return value;
     },
@@ -1236,3 +1237,79 @@ test('late remembered read cannot overwrite metadata seeded by fresh authenticat
     assert.equal(h.auth.rememberedAccount.user.id,7);
   } finally {read.resolve();await h.close();}
 });
+
+
+for (const expired of [false, true]) for (const pending of [false, true]) {
+  test(`cached startup is ready before ${expired ? 'refresh' : 'profile'} ${pending ? 'settles' : 'offline failure'}`, async () => {
+    const gate = deferred();
+    const network = async () => { if (pending) return gate.promise; throw new Error('synthetic offline'); };
+    const h = await harness({ accountChoices: true, cachedUser: { id: 7, email: 'synthetic@example.invalid' },
+      initialExpiresIn: expired ? 0 : 3600, fetch: network, refreshAsync: network });
+    try {
+      assert.equal(h.auth.user?.id, 7);
+      assert.equal(h.auth.isLoading, false);
+      assert.equal(h.auth.isGuest, false);
+      assert.equal(h.calls.sync[0], sessionState.authDataNamespace(stage.apiBaseUrl, 7));
+      assert.equal(h.calls.sync.includes('connect'), false);
+      assert.equal(h.auth.rememberedAccount, null);
+      assert.equal(h.values.has(sessionState.REMEMBERED_ACCOUNT_KEY), false);
+    } finally { await h.close(); gate.resolve(null); }
+  });
+}
+
+test('cached startup connects only after fresh verification and foreground retries offline profile', async () => {
+  let online = false;
+  const profile = deferred();
+  const h = await harness({ cachedUser: { id: 7, email: 'synthetic@example.invalid' }, initialExpiresIn: 3600,
+    fetch: async () => { if (!online) throw new Error('synthetic offline'); return profile.promise; } });
+  try {
+    assert.equal(h.calls.sync.includes('connect'), false);
+    online = true;
+    await act(async () => { h.appState('active'); await flush(); });
+    assert.equal(h.calls.sync.includes('connect'), false);
+    await act(async () => { profile.resolve({ ok: true, status: 200, json: async () => ({ data: { id: 7, email: 'synthetic@example.invalid' } }) }); await flush(); });
+    assert.equal(h.calls.sync.at(-1), 'connect');
+  } finally { await h.close(); }
+});
+
+test('pending profile from cached startup cannot revive identity after logout', async () => {
+  const profile = deferred();
+  const h = await harness({ accountChoices: true, cachedUser: { id: 7, email: 'synthetic@example.invalid' }, initialExpiresIn: 3600,
+    fetch: () => profile.promise });
+  try {
+    await act(async () => { await h.auth.logout(); await flush(); });
+    await act(async () => { profile.resolve({ ok: true, status: 200, json: async () => ({ data: { id: 7, email: 'synthetic@example.invalid' } }) }); await flush(); });
+    assert.equal(h.auth.user, null);
+    assert.equal(h.calls.sync.includes('connect'), false);
+    assert.equal(h.auth.rememberedAccount, null);
+    assert.equal(h.values.get(sessionState.SESSION_KEY), sessionState.LOGGED_OUT_MARKER);
+  } finally { await h.close(); }
+});
+
+test('logout during session read cannot restore cached namespace or identity', async () => {
+  const sessionRead = deferred();
+  const h = await harness({ accountChoices: true, cachedUser: { id: 7, email: 'synthetic@example.invalid' }, sessionRead });
+  try {
+    await act(async () => { await h.auth.logout(); await flush(); });
+    await act(async () => { sessionRead.resolve(); await flush(); });
+    assert.equal(h.auth.user, null);
+    assert.equal(h.calls.sync.includes(sessionState.authDataNamespace(stage.apiBaseUrl, 7)), false);
+    assert.equal(h.calls.requests.length, 0);
+  } finally { sessionRead.resolve(); await h.close(); }
+});
+
+for (const mismatch of [false, true]) {
+  test(`unverified startup ${mismatch ? 'rejects mismatched cache binding' : 'without cached profile stays unauthenticated'}`, async () => {
+    const gate = deferred();
+    const h = await harness({ initialExpiresIn: 3600, fetch: () => gate.promise,
+      cachedUser: mismatch ? { id: 7, email: 'synthetic@example.invalid' } : undefined,
+      sessionBinding: mismatch ? { ...stage, clientId: 'different-client' } : stage });
+    try {
+      assert.equal(h.auth.user, null);
+      assert.equal(h.auth.isAuthenticated, false);
+      assert.equal(h.calls.sync.includes('connect'), false);
+      assert.equal(h.calls.sync.includes(sessionState.authDataNamespace(stage.apiBaseUrl, 7)), false);
+      if (mismatch) assert.equal(h.calls.requests.length, 0);
+    } finally { await h.close(); gate.resolve(null); }
+  });
+}

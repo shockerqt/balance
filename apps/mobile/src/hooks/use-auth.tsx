@@ -602,11 +602,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (savedSession) {
           if (!(await adoptSession(savedSession, hydrationEpoch))) return;
           if (cancelled || hydrationEpoch !== epochRef.current) return;
-          if (savedSession.user) setUser(savedSession.user);
-          const verifiedUser = await verifySession(savedSession);
-          if (ACCOUNT_CHOICES_AVAILABLE && verifiedUser && !cancelled && hydrationEpoch === epochRef.current &&
-              rememberGeneration === rememberedEpochRef.current) {
-            await rememberedWriterRef.current!.commit(rememberedAccountForProfile(verifiedUser, AUTH_BINDING), ++rememberedEpochRef.current);
+          if (diagnosticOwnerRef.current) return;
+          const verifyHydratedSession = async () => {
+            const verifiedUser = await verifySession(savedSession);
+            if (ACCOUNT_CHOICES_AVAILABLE && verifiedUser && !cancelled && hydrationEpoch === epochRef.current &&
+                !diagnosticOwnerRef.current && rememberGeneration === rememberedEpochRef.current) {
+              await rememberedWriterRef.current!.commit(rememberedAccountForProfile(verifiedUser, AUTH_BINDING), ++rememberedEpochRef.current);
+            }
+          };
+          if (savedSession.user) {
+            // Local identity and its durable outbox must become visible together.
+            // This bound cache permits offline use, never a remote connection or
+            // a newly remembered account before successful API verification.
+            syncClient.setNamespace(authDataNamespace(API_BASE_URL, savedSession.user.id));
+            setUser(savedSession.user);
+            setIsGuest(false);
+            void verifyHydratedSession().catch(error => {
+              if (!cancelled && hydrationEpoch === epochRef.current && !diagnosticOwnerRef.current)
+                console.warn('No se pudo verificar la sesion guardada', error);
+            });
+          } else {
+            await verifyHydratedSession();
           }
         } else if (savedGuest === '1') {
           setIsGuest(true);
