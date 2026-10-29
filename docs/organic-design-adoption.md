@@ -82,3 +82,13 @@ Those images establish component geometry and are not screenshots of an installe
 APK, real account data, or proof of physical Android accessibility. Compare the
 390x844 reference diary fixture against UDS-0173b801d9 before delivering another
 candidate. Never call compilation alone visual acceptance.
+
+
+Native render review exposed Outfit's variable default weight100; a single
+unqualified font resource rendered headings too thin. Bundle explicit static
+weights (Inter400/500/600/700, Outfit400/500/600) and map native FontFamily weights.
+Expo uses the same Inter400/Outfit500 base bytes. Source variable fonts remain
+recoverable from b7c9d78; scripts/instantiate-organic-fonts.py reproduces resources
+using isolated fonttools4.60.1. OFL licenses unchanged; no runtime font service.
+Test fixtures explicitly paint the app background rather than the default Surface,
+so captures distinguish background, grouped rows and navigation correctly.

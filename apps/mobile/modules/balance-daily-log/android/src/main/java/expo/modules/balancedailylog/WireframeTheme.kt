@@ -70,8 +70,8 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
     }
   }
   val gradients = OrganicGradients(gradient("headerGradient", surface), gradient("actionGradient", primary))
-  val inter = remember { FontFamily(Font(R.font.inter)) }
-  val outfit = remember { FontFamily(Font(R.font.outfit)) }
+  val inter = remember { FontFamily(Font(R.font.inter, FontWeight.Normal), Font(R.font.inter_medium, FontWeight.Medium), Font(R.font.inter_semibold, FontWeight.SemiBold), Font(R.font.inter_bold, FontWeight.Bold)) }
+  val outfit = remember { FontFamily(Font(R.font.outfit_regular, FontWeight.Normal), Font(R.font.outfit, FontWeight.Medium), Font(R.font.outfit_semibold, FontWeight.SemiBold)) }
   val typography = Typography(
     headlineMedium = TextStyle(fontFamily = outfit, fontSize = 28.sp, fontWeight = FontWeight.Medium),
     headlineSmall = TextStyle(fontFamily = outfit, fontSize = 24.sp, fontWeight = FontWeight.Medium),

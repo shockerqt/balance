@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -79,7 +80,7 @@ class OrganicScreenshotTest {
     var nutritionOpened = false
     compose.setContent {
       WireframeTheme(forest(dark)) {
-        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp), color = MaterialTheme.colorScheme.background) {
           Column(Modifier.fillMaxSize()) {
             WireDiaryHeader(visible = date, today = date, days = data.getJSONObject("days"),
               empty = JSONObject().put("calories", "0").put("target", "2000"), enabled = true,
@@ -149,7 +150,7 @@ class OrganicScreenshotTest {
     var adds = 0
     compose.setContent {
       WireframeTheme(forest(dark)) {
-        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp), color = MaterialTheme.colorScheme.background) {
           Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
               WireDestination(destination = target, data = data, enabled = true,
@@ -220,7 +221,7 @@ class OrganicScreenshotTest {
     food("oil", "Aceite de oliva", "1 cucharadita · 5 g", "13:12", 45, 0, 0, 5)
     repeat(2) { i -> food("dinner-$i", "Cena sintética ${i + 1}", "1 porción", "18:00", 115, 4,
       if (i == 0) 11 else 10, 7) }
-    val day = JSONObject().put("foods", foods).put("calories", "2557").put("target", "2200")
+    val day = JSONObject().put("foods", foods).put("calories", "2.557").put("target", "2.200")
       .put("progress", 2557.0 / 2200).put("macros", JSONArray()
         .put(JSONObject().put("name", "Proteínas").put("value", "155"))
         .put(JSONObject().put("name", "Carbohidratos").put("value", "314"))
@@ -231,7 +232,7 @@ class OrganicScreenshotTest {
     var addTime: String? = null
     compose.setContent {
       WireframeTheme(forest(true)) {
-        Surface(Modifier.requiredSize(390.dp, 844.dp)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp), color = MaterialTheme.colorScheme.background) {
           Column(Modifier.fillMaxSize()) {
             WireDiaryHeader(date, date, days, JSONObject().put("target", "2200"), true, {}, {}, {})
             Box(Modifier.weight(1f)) {

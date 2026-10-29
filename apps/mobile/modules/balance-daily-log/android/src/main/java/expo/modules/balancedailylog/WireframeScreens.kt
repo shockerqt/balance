@@ -28,7 +28,7 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 @Composable internal fun WireNavigation(destination: Int, enabled: Boolean, onSelect: (Int) -> Unit, onAdd: () -> Unit) {
-  Row(Modifier.testTag("organic-navigation").fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+  Row(Modifier.testTag("organic-navigation").fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(start = 8.dp, end = 8.dp, top = 14.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
     val icons = listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)
     listOf("Alimentos", "Mediciones", "+", "Resumen", "Perfil").forEachIndexed { index, label ->
       val target = if (index > 2) index - 1 else index
