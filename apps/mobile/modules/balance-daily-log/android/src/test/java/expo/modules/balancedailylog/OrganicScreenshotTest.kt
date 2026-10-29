@@ -327,6 +327,7 @@ class OrganicScreenshotTest {
     assertEquals("Left column alignment", e.left, c.left, 1f)
     assertEquals("Right column alignment", p.left, f.left, 1f)
     compose.onNodeWithText("Tu consumo").performScrollTo().assertIsDisplayed()
+    compose.onNodeWithTag("organic-consumption-quantity").performScrollTo().assertIsDisplayed()
     screenshot("$name-consumption")
   }
 
