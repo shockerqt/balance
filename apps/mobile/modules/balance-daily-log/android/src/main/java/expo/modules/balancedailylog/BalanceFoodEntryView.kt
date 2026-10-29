@@ -151,8 +151,8 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   Scaffold(modifier = Modifier.fillMaxSize().imePadding(), containerColor = MaterialTheme.colorScheme.background,
     contentWindowInsets = WindowInsets(0, 0, 0, 0),
     topBar = { Column {
-      TopAppBar(title = { Text("Agregar alimento") },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+      TopAppBar(modifier = Modifier.background(LocalOrganicGradients.current.header), title = { Text("Agregar alimento") },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
         navigationIcon = { IconButton(onClick = { leave() }, enabled = enabled,
           modifier = Modifier.semantics { contentDescription = "Volver al registro diario" }) { Icon(WireIcons.Back, null) } })
       Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page), horizontalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
@@ -191,7 +191,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     if (!editing) {
       LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(WireSpace.Page), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
         item("search") {
-          OutlinedTextField(value = query, onValueChange = { query = it }, enabled = enabled, singleLine = true,
+          TextField(value = query, onValueChange = { query = it }, enabled = enabled, singleLine = true,
             label = { Text("Buscar en tus alimentos") }, leadingIcon = { Icon(WireIcons.Search, null) }, modifier = Modifier.fillMaxWidth())
         }
         item("filter") {
@@ -220,12 +220,12 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
     } else {
       Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = WireSpace.Page, vertical = WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(WireSpace.Page)) {
         TextButton(onClick = { if (dirty) { discardToSearch = true; discardToLabel = false; discard = true } else { editing = false; chosenJson = ""; localError = "" } }, enabled = enabled) { Text("Elegir otro alimento") }
-        if (chosen == null) OutlinedTextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
+        if (chosen == null) TextField(value = name, onValueChange = { name = it; dirty = true }, enabled = enabled,
           label = { Text("Nombre del alimento") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         else { Text(name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
           Text("${if (chosen.optBoolean("isOfficial")) "Oficial" else "Biblioteca personal"} · información por 100 $unit", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-          OutlinedTextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
+          TextField(value = quantity, onValueChange = { quantity = it; dirty = true }, enabled = enabled, label = { Text("Cantidad") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(1f))
           Box(Modifier.weight(1f)) {
             OutlinedButton(onClick = { portionMenu = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text(portion?.optString("name") ?: unit) }
@@ -258,7 +258,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
             FilterChip(labelBasis == "per100", { labelBasis = "per100"; dirty = true }, label = { Text("Por 100 $unit") }, enabled = enabled)
             FilterChip(labelBasis == "portion", { labelBasis = "portion"; dirty = true }, label = { Text("Por porción") }, enabled = enabled)
           }
-          if (labelBasis == "portion") OutlinedTextField(labelSize, { labelSize = it; dirty = true }, label = { Text("Tamaño de la porción en $unit") },
+          if (labelBasis == "portion") TextField(labelSize, { labelSize = it; dirty = true }, label = { Text("Tamaño de la porción en $unit") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth())
           Text("Transcribe los valores de esa base. Deja en blanco los nutrientes que no conozcas.", color = MaterialTheme.colorScheme.onSurfaceVariant)
           fields.take(4).forEach { field -> NutrientInput(field, nutrients.optString(field.optString("key")), enabled) { value -> nutrientsJson = JSONObject(nutrientsJson).put(field.optString("key"), value).toString(); dirty = true } }
@@ -307,7 +307,7 @@ private fun textNutrition(n: JSONObject, key: String): String = if (n.isNull(key
   }
 }
 @Composable private fun NutrientInput(field: JSONObject, value: String, enabled: Boolean, change: (String) -> Unit) {
-  OutlinedTextField(value = value, onValueChange = change, enabled = enabled, singleLine = true,
+  TextField(value = value, onValueChange = change, enabled = enabled, singleLine = true,
     label = { Text(field.optString("label") + if (field.optBoolean("required")) " *" else " (opcional)") },
     suffix = { Text(field.optString("unit")) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
 }

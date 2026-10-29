@@ -118,6 +118,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   var selected by remember { mutableStateOf(setOf<String>()) }
   var selectionDate by remember { mutableStateOf(settled) }
   var calendar by remember { mutableStateOf(false) }
+  var nutrition by remember { mutableStateOf(false) }
   var deleteConfirmation by remember { mutableStateOf(false) }
   var moveTime by remember { mutableStateOf(false) }
   val settledDay = days.optJSONObject(settled.toString()) ?: empty
@@ -152,7 +153,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   LaunchedEffect(settled, available, active) {
     selected = if (selectionDate != settled || !active) emptySet() else selected.intersect(available)
     selectionDate = settled
-    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false }
+    if (!active) { nutrition = false; calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false }
   }
   // Calendar and food pages represent one selected day. The pager stays native;
   // a hidden calendar selection is applied when the food destination is shown.
@@ -172,14 +173,27 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
     if (destination == 0) {
     destinations.SaveableStateProvider(0) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = WireSpace.Small), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxWidth().background(LocalOrganicGradients.current.header)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f)) {
         Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(visible.format(monthFormat).replaceFirstChar { it.titlecase(spanish) }, style = MaterialTheme.typography.titleLarge)
+        Text(wireDate(visible), style = MaterialTheme.typography.titleLarge)
       }
       TextButton(onClick = { go(today) }, enabled = !locked && selected.isEmpty()) { Text("Hoy") }
       IconButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
         modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Icon(WireIcons.Calendar, null) }
+    }
+    Surface(onClick = { nutrition = true }, enabled = !locked && selected.isEmpty(), color = Color.Transparent,
+      modifier = Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page)) {
+      Column(Modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        val headerDay = days.optJSONObject(visible.toString()) ?: empty
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(headerDay.optString("calories", "0"), style = MaterialTheme.typography.titleMedium)
+          Text(" / ${headerDay.optString("target")} kcal", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Icon(WireIcons.Right, "Detalle nutricional del día", Modifier.size(16.dp))
+        }
+        Text(wireObjects(headerDay.optJSONArray("macros")).take(3).mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")} g" }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+      }
     }
     val weekStart = visible.minusDays((visible.dayOfWeek.value - 1).toLong())
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -192,6 +206,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       }
     }
     Spacer(Modifier.height(4.dp))
+    }
     HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(),
       beyondViewportPageCount = 1, userScrollEnabled = active && !pendingCommand && selected.isEmpty(), key = { it }) { page ->
       val date = DailyLogDates.date(page)
@@ -267,6 +282,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
     if (!locked) emitExtra(kind, LocalDate.parse(measurementDate), emptyList(), null, appliedCommand!!.revision, input)
     weightDialog = false
   }
+  if (nutrition && active) WireNutritionSheet(visible, days.optJSONObject(visible.toString()) ?: empty) { nutrition = false }
   if (calendar) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(settled), yearRange = 1900..9999)
     DatePickerDialog(onDismissRequest = { calendar = false },

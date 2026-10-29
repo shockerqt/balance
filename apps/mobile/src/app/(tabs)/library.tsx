@@ -7,9 +7,9 @@ import { Icon, Input, Screen, Text } from '@/components/ui';
 import { makeStyles } from '@/theme';
 
 const FILTERS: { value: FoodLibraryFilter; label: string }[] = [
-  { value: 'all', label: 'Todos' },
-  { value: 'personal', label: 'Míos' },
-  { value: 'official', label: 'Oficiales' }
+  { value: 'all', label: 'Todas' },
+  { value: 'personal', label: 'Personal' },
+  { value: 'official', label: 'Oficial' }
 ];
 
 export default function LibraryScreen() {
@@ -36,11 +36,7 @@ export default function LibraryScreen() {
       <View style={styles.heading}>
         <View style={styles.titleBlock}>
           <Text variant="label" tone="muted">
-            BIBLIOTECA · {libraryFoods.length} REGISTROS
-          </Text>
-          <Text variant="display">Alimentos</Text>
-          <Text variant="body" tone="secondary">
-            Una sola ficha para cada porción que vuelves a registrar.
+            {libraryFoods.length} alimentos
           </Text>
         </View>
         <TouchableOpacity
@@ -91,7 +87,7 @@ export default function LibraryScreen() {
                 activeOpacity={0.75}
                 style={[styles.filter, selected && styles.filterSelected]}
                 onPress={() => setFilter(option.value)}>
-                <Text variant="caption" tone={selected ? 'onPrimary' : 'secondary'}>
+                <Text variant="caption" tone={selected ? 'primary' : 'secondary'}>
                   {option.label} {count}
                 </Text>
               </TouchableOpacity>
@@ -143,7 +139,7 @@ const useStyles = makeStyles((t) => ({
     alignItems: 'center',
     gap: t.space.sm,
     padding: t.space.md,
-    borderWidth: t.border.hairline,
+    borderWidth: 0,
     borderColor: t.colors.primary,
     borderRadius: t.radius.sm,
     backgroundColor: t.colors.surfaceRaised
@@ -157,15 +153,17 @@ const useStyles = makeStyles((t) => ({
     flex: 1,
     alignItems: 'center',
     paddingHorizontal: t.space.sm,
+    minHeight: 48,
+    justifyContent: 'center',
     paddingVertical: t.space.sm,
-    borderWidth: t.border.hairline,
+    borderWidth: 0,
     borderColor: t.colors.border,
     borderRadius: t.radius.pill,
     backgroundColor: t.colors.surface
   },
   filterSelected: {
     borderColor: t.colors.primary,
-    backgroundColor: t.colors.primary
+    backgroundColor: t.colors.secondary
   },
   list: { flex: 1 }
 }));

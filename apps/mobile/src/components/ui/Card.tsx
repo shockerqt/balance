@@ -17,7 +17,7 @@ export const Card: React.FC<CardProps> = ({
   raised = false,
   padding = 'xl',
   radius = 'xl',
-  bordered = true,
+  bordered = false,
   style,
   ...rest
 }) => {

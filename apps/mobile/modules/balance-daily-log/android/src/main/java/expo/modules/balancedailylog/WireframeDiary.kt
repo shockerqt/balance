@@ -34,7 +34,7 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   val colors = MaterialTheme.colorScheme
   val progress = day.optDouble("progress", 0.0)
   val ring = WireframeModel.ring(progress)
-  Surface(onClick = click, enabled = enabled, color = if (chosen) colors.surfaceContainer else colors.background,
+  Surface(onClick = click, enabled = enabled, color = if (chosen) colors.secondaryContainer else Color.Transparent,
     contentColor = if (chosen) colors.primary else colors.onSurfaceVariant,
     shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f).heightIn(min = 64.dp).semantics {
       selected = chosen
@@ -62,28 +62,9 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   val entries = remember(day) { wireObjects(day.optJSONArray("foods")) }
   val groups = remember(entries) { entries.groupBy { WireframeModel.hour(it.optString("time")) } }
   var opened by rememberSaveable(date.toString()) { mutableStateOf("") }
-  var detail by remember { mutableStateOf(false) }
   var editing by remember { mutableStateOf<JSONObject?>(null) }
-  LaunchedEffect(enabled) { if (!enabled) { detail = false; editing = null } }
+  LaunchedEffect(enabled) { if (!enabled) { editing = null } }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = WireSpace.Page, vertical = WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(WireSpace.Small)) {
-    item("date") { Text(date.format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", wireLocale)), style = MaterialTheme.typography.titleSmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    item("summary") {
-      Card(onClick = { detail = true }, enabled = enabled, modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(WireSpace.Medium), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(day.optString("calories", "0"), fontWeight = FontWeight.SemiBold)
-            Text(" / ${day.optString("target")} kcal", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-            Icon(WireIcons.Right, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-          }
-          val macros = wireObjects(day.optJSONArray("macros")).take(3)
-          Text(macros.mapIndexed { i, m -> "${listOf("P", "C", "G")[i]} ${m.optString("value")}/${m.optString("target")}" }.joinToString(" · ") + " g",
-            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.semantics { contentDescription = macros.joinToString { "${it.optString("name")}: ${it.optString("value")} de ${it.optString("target")} gramos" } })
-        }
-      }
-    }
     if (entries.isEmpty()) item("empty") {
       Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Sin alimentos registrados", style = MaterialTheme.typography.titleLarge)
@@ -147,19 +128,6 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
       }
     }
   }
-  if (detail && enabled) ModalBottomSheet(onDismissRequest = { detail = false }) {
-    LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-      item { Text("Nutrición · ${wireDate(date)}", style = MaterialTheme.typography.titleLarge) }
-      item { Text("${wireNumber(day.optDouble("progress", 0.0) * 100)}% de la meta de energía registrada", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-      items(wireObjects(day.optJSONArray("details"))) { field ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-          Text(field.optString("label"), Modifier.weight(1f))
-          Text(if (field.isNull("value")) "Sin datos" else "${wireNumber(field.optDouble("value"))} ${field.optString("unit")}${if (field.optBoolean("partial")) " · parcial" else ""}")
-        }
-      }
-      item { Text("Los valores parciales incluyen solo los alimentos con ese dato.", style = MaterialTheme.typography.bodySmall) }
-    }
-  }
   editing?.let { food -> if (enabled) WireEditFood(food, date, onDismiss = { editing = null }) { quantity, mode, time ->
     onEdit(food, quantity, mode, time); editing = null
   } }
@@ -174,16 +142,33 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   AlertDialog(onDismissRequest = onDismiss, title = { Text(food.optString("name")) }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("${wireDate(date)} · la información nutricional histórica se conserva", style = MaterialTheme.typography.bodySmall)
-      OutlinedTextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+      TextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(mode == "canonical", { mode = "canonical"; quantity = FoodEntryModel.input(food.optDouble("canonicalQuantity")) }, label = { Text(food.optString("unit")) })
         if (portion != null) FilterChip(mode == "portion", { mode = "portion"; quantity = FoodEntryModel.input(food.optDouble("quantity")) }, label = { Text(portion.optString("name")) })
       }
-      OutlinedTextField(time, { time = it }, label = { Text("Hora · HH:mm") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
+      TextField(time, { time = it }, label = { Text("Hora · HH:mm") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
     }
   }, confirmButton = { TextButton(onClick = {
     if (FoodEntryModel.decimal(quantity)?.let { it > 0 } == true && WireframeModel.validTime(date, time)) onSave(quantity, mode, time)
     else error = "Revisa la cantidad y la hora de Chile."
   }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable internal fun WireNutritionSheet(date: LocalDate, day: JSONObject, onDismiss: () -> Unit) {
+  ModalBottomSheet(onDismissRequest = onDismiss) {
+    LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+      item { Text("Nutrición · ${wireDate(date)}", style = MaterialTheme.typography.titleLarge) }
+      item { Text("${wireNumber(day.optDouble("progress", 0.0) * 100)}% de la meta de energía registrada", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+      items(wireObjects(day.optJSONArray("details"))) { field ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text(field.optString("label"), Modifier.weight(1f))
+          Text(if (field.isNull("value")) "Sin datos" else "${wireNumber(field.optDouble("value"))} ${field.optString("unit")}${if (field.optBoolean("partial")) " · parcial" else ""}")
+        }
+      }
+      item { Text("Los valores parciales incluyen solo los alimentos con ese dato.", style = MaterialTheme.typography.bodySmall) }
+    }
+  }
 }

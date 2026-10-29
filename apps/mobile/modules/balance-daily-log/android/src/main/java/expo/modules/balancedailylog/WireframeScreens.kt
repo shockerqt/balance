@@ -1,6 +1,8 @@
 package expo.modules.balancedailylog
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -29,7 +31,7 @@ import java.time.format.DateTimeFormatter
     listOf("Alimentos", "Mediciones", "+", "Resumen", "Perfil").forEachIndexed { index, label ->
       val target = if (index > 2) index - 1 else index
       if (index == 2) Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        FilledIconButton(onClick = onAdd, enabled = enabled, modifier = Modifier.size(48.dp).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null) }
+        FilledIconButton(onClick = onAdd, enabled = enabled, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary), modifier = Modifier.size(48.dp).background(LocalOrganicGradients.current.action, RoundedCornerShape(20.dp)).semantics { contentDescription = "Registrar alimento o peso" }) { Icon(WireIcons.Add, null) }
       } else NavigationBarItem(selected = destination == target, onClick = { onSelect(target) }, enabled = enabled,
         icon = { Icon(listOf(WireIcons.Diary, WireIcons.Measurements, WireIcons.Add, WireIcons.Summary, WireIcons.Profile)[index], null) },
         label = { Text(label, fontSize = 9.sp, maxLines = 1) }, alwaysShowLabel = true,
@@ -132,7 +134,7 @@ import java.time.format.DateTimeFormatter
   AlertDialog(onDismissRequest = onDismiss, title = { Text(if (existing) "Editar peso" else "Registrar peso") }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(wireDate(date))
-      OutlinedTextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+      TextField(quantity, { quantity = it }, label = { Text("Peso en kg") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
       Text("De 1 a 500 kg · precisión de 0,1 kg", style = MaterialTheme.typography.bodySmall)
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
       if (existing) TextButton(onClick = { deleting = true }, enabled = allowed) { Text("Eliminar peso", color = MaterialTheme.colorScheme.error) }

@@ -82,7 +82,7 @@ export const Sheet: React.FC<SheetProps> = ({
 const useStyles = makeStyles((t) => ({
   sheet: { flex: 1, backgroundColor: t.colors.surface },
   /** La regla que abre el panel. */
-  openingRule: { height: t.border.ruleHeavy, backgroundColor: t.colors.text },
+  openingRule: { height: 0, backgroundColor: t.colors.surface },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -91,7 +91,7 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: t.space.xl,
     paddingTop: t.space.lg,
     paddingBottom: t.space.md,
-    borderBottomWidth: t.border.hairline,
+    borderBottomWidth: 0,
     borderBottomColor: t.colors.border,
   },
   titleBlock: { flexShrink: 1, gap: 2 },
@@ -100,7 +100,7 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: t.space.xl,
     paddingTop: t.space.md,
     paddingBottom: t.space.xl,
-    borderTopWidth: t.border.rule,
+    borderTopWidth: 0,
     borderTopColor: t.colors.text,
     backgroundColor: t.colors.surface,
   },

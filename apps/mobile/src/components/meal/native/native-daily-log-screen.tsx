@@ -57,7 +57,7 @@ function DailyLogSession() {
     return () => { live.current.alive = false; unsubscribe(); subscription.remove(); clearInterval(timer); };
   }, []);
   const data = useMemo(() => JSON.stringify({
-    session, today, colors: interfaceColors,
+    session, today, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: theme.gradients?.header, actionGradient: theme.gradients?.action },
     profile: { name: user?.name ?? (isGuest ? 'Invitado' : 'Cuenta'), guest: isGuest },
     preferencesError: preferences.syncError,
     showWeight: preferences.preferencesReady && preferences.weightTrackingEnabled,
@@ -65,9 +65,9 @@ function DailyLogSession() {
     preferencesReady: preferences.preferencesReady,
     days: mounted ? projectInterfaceDays(meals.dayLogs, weight.weightsByDate, meals.mealDocuments) : {},
     empty: projectInterfaceDays({ [today]: emptyDayLog(today) }, {}, [])[today],
-  }), [session, today, user?.name, isGuest, preferences.syncError, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, meals.mealDocuments, mounted]);
+  }), [theme, session, today, user?.name, isGuest, preferences.syncError, preferences.preferencesReady, preferences.weightTrackingEnabled, weight.syncError, weight.weightsByDate, meals.dayLogs, meals.mealDocuments, mounted]);
   const dateCommand = JSON.stringify({ date: selected, fromNative: live.current.nativeDate === selected, revision: live.current.commandRevision, session });
-  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: interfaceColors.background }}><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
+  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: theme.colors.background ?? interfaceColors.background }}><BalanceDailyLogView style={{ flex: 1 }} data={data} dateCommand={dateCommand} active={focused && mounted}
     onAction={({ nativeEvent: e }) => {
       if (!live.current.alive || !live.current.focused || !mounted) return;
       const common = [live.current.session, live.current.sequence] as const;

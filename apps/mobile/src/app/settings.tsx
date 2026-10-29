@@ -1,14 +1,17 @@
 import React, { useRef } from 'react';
-import { Alert, ScrollView, Switch, View } from 'react-native';
+import { Alert, ScrollView, Switch, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Button, Card, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
+import { paletteNames } from '@/theme/organic-palettes';
+import type { Appearance, ColorSource } from '@/theme/organic-palettes';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
-import { makeStyles, useTheme } from '@/theme';
+import { makeStyles, useTheme, useThemeControls } from '@/theme';
 
 export default function SettingsScreen() {
   const styles = useStyles();
   const theme = useTheme();
+  const { preference, setPreference, ready } = useThemeControls();
   const router = useRouter();
   const { user, isGuest, isLoading, logout, accountChoicesAvailable } = useAuth();
   const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled } =
@@ -60,6 +63,16 @@ export default function SettingsScreen() {
           {syncError ? <Text tone="danger">{syncError}</Text> : null}
         </View>
 
+        <Card>
+          <Text variant="title">Apariencia</Text>
+          <View style={{ gap: 8, marginTop: 16 }} accessibilityRole="radiogroup" accessibilityLabel="Apariencia">
+            {([['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Oscuro']] as [Appearance, string][]).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ checked: preference.appearance === value, disabled: !ready }} disabled={!ready} onPress={() => setPreference({ ...preference, appearance: value })} style={{ minHeight: 48, borderRadius: 14, padding: 14, backgroundColor: preference.appearance === value ? theme.colors.secondary : theme.colors.surface }}><Text>{label}{preference.appearance === value ? ' · Seleccionado' : ''}</Text></TouchableOpacity>)}
+          </View>
+          <Text variant="heading" style={{ marginTop: 20 }}>Colores</Text>
+          <View style={{ gap: 8, marginTop: 8 }} accessibilityRole="radiogroup" accessibilityLabel="Colores">
+            {(Object.entries(paletteNames) as [ColorSource, string][]).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ checked: preference.colorSource === value, disabled: !ready }} disabled={!ready} onPress={() => setPreference({ ...preference, colorSource: value })} style={{ minHeight: 48, borderRadius: 14, padding: 14, backgroundColor: preference.colorSource === value ? theme.colors.secondary : theme.colors.surface }}><Text>{label}{preference.colorSource === value ? ' · Seleccionado' : ''}</Text></TouchableOpacity>)}
+          </View>
+        </Card>
         <View style={styles.section}>
           <Text variant="label" tone="muted">
             DATOS

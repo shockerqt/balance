@@ -25,37 +25,14 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
       delayPressIn={0}
       style={styles.row}
       onPress={() => onPress(food)}>
-      <View style={styles.origin}>
-        <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={16} tone={isOfficial ? 'muted' : 'accent'} />
-        <Text variant="label" tone={isOfficial ? 'muted' : 'accent'}>
-          {isOfficial ? 'BASE' : 'MÍO'}
-        </Text>
-      </View>
-
       <View style={styles.description}>
-        <Text variant="bodyStrong" numberOfLines={1} selectable>
+        <Text variant="bodyStrong" numberOfLines={2} selectable>
           {food.name}
         </Text>
         <Text variant="caption" tone="secondary" numberOfLines={1}>
           {food.portion}
-          {food.category ? ` · ${food.category}` : ''}
+          {` · ${isOfficial ? 'Oficial' : 'Personal'}`}
         </Text>
-        <View style={styles.macros}>
-          <Text variant="caption" tone="primary">
-            P {formatMacroGrams(food.protein)}g
-          </Text>
-          <Text variant="caption" tone="secondary">
-            C {formatMacroGrams(food.carbs)}g
-          </Text>
-          <Text variant="caption" tone="muted">
-            G {formatMacroGrams(food.fat)}g
-          </Text>
-          {food.fiber !== undefined ? (
-            <Text variant="caption" tone="muted">
-              F {formatMacroGrams(food.fiber)}g
-            </Text>
-          ) : null}
-        </View>
       </View>
 
       <View style={styles.energy}>
@@ -66,19 +43,18 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress })
           kcal
         </Text>
       </View>
-      <Icon name="chevron-right" size={16} tone="muted" />
     </TouchableOpacity>
   );
 };
 
 const useStyles = makeStyles((t) => ({
   row: {
-    minHeight: 76,
+    minHeight: 80,
     flexDirection: 'row',
     alignItems: 'center',
     gap: t.space.md,
     paddingHorizontal: t.space.lg,
-    paddingVertical: t.space.md,
+    paddingVertical: t.space.lg,
     borderBottomWidth: t.border.hairline,
     borderBottomColor: t.colors.border,
     backgroundColor: t.colors.surface

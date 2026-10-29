@@ -40,6 +40,7 @@ export const useFoodLibrarySections = (
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, 'es-CL'));
 
+    if (filter === 'all') return visible.length ? [{ key: 'all', title: 'ALIMENTOS', caption: 'Personal y oficial', data: visible }] : [];
     const personal = visible.filter((food) => !food.isOfficial);
     const official = visible.filter((food) => food.isOfficial);
 
@@ -142,7 +143,7 @@ const IconEmpty = () => {
 };
 
 const useStyles = makeStyles((t) => ({
-  content: { paddingBottom: t.space.xxxl * 3 + t.space.lg },
+  content: { paddingHorizontal: 16, paddingBottom: t.space.xxxl * 3 + t.space.lg },
   emptyContent: { flexGrow: 1 },
   sectionHeader: {
     flexDirection: 'row',
@@ -152,10 +153,10 @@ const useStyles = makeStyles((t) => ({
     paddingHorizontal: t.space.lg,
     paddingTop: t.space.md,
     paddingBottom: t.space.sm,
-    borderTopWidth: t.border.rule,
-    borderBottomWidth: t.border.hairline,
+    borderTopWidth: 0,
+    borderBottomWidth: 0,
     borderColor: t.colors.text,
-    backgroundColor: t.colors.surfaceRaised
+    backgroundColor: t.colors.background
   },
   empty: {
     flex: 1,
@@ -170,7 +171,7 @@ const useStyles = makeStyles((t) => ({
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: t.border.rule,
+    borderWidth: 0,
     borderColor: t.colors.text,
     borderRadius: t.radius.pill
   }

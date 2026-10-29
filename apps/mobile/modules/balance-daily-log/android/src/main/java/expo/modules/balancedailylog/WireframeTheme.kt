@@ -1,40 +1,84 @@
 package expo.modules.balancedailylog
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.Shapes
+import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 
+internal data class OrganicGradients(val header: Brush, val action: Brush)
+internal val LocalOrganicGradients = staticCompositionLocalOf { OrganicGradients(Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)), Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))) }
+
+/** Read-only Android palette, resolved once by the existing JS theme authority. */
+internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, String>? {
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+  val c = if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+  fun hex(color: Color) = String.format("#%06X", color.toArgb() and 0xFFFFFF)
+  return mapOf("background" to hex(c.background), "surface" to hex(c.surfaceContainerLow),
+    "surfaceRaised" to hex(c.surfaceContainer), "text" to hex(c.onSurface),
+    "textSecondary" to hex(c.onSurfaceVariant), "outline" to hex(c.outline),
+    "primary" to hex(c.primary), "onPrimary" to hex(c.onPrimary),
+    "secondary" to hex(c.secondaryContainer), "onSecondary" to hex(c.onSecondaryContainer))
+}
+
 @Composable internal fun WireframeTheme(colors: JSONObject, content: @Composable () -> Unit) {
-  fun read(key: String, fallback: Long): Color = runCatching { Color(android.graphics.Color.parseColor(colors.getString(key))) }.getOrDefault(Color(fallback))
-  val background = read("background", 0xFF101820)
-  val surface = read("surface", 0xFF19232C)
-  val raised = read("surfaceRaised", 0xFF23333F)
-  val text = read("text", 0xFFEDF3F5)
-  val muted = read("textSecondary", 0xFFA8BAC4)
-  val border = read("border", 0xFF36444F)
-  val accent = read("primary", 0xFF86B8D3)
-  val onAccent = read("onPrimary", 0xFF102531)
-  val error = read("danger", 0xFFF1A5A0)
-  MaterialTheme(colorScheme = darkColorScheme(
-    primary = accent, onPrimary = onAccent, primaryContainer = raised, onPrimaryContainer = accent,
-    secondary = muted, onSecondary = background, secondaryContainer = raised, onSecondaryContainer = text,
-    tertiary = muted, onTertiary = background, tertiaryContainer = raised, onTertiaryContainer = text,
-    background = background, onBackground = text, surface = surface, onSurface = text,
-    surfaceVariant = raised, onSurfaceVariant = muted, surfaceTint = Color.Transparent,
-    outline = Color(0xFF647986), outlineVariant = border, error = error, onError = background,
-    errorContainer = Color(0xFF3B2425), onErrorContainer = error,
-    inverseSurface = text, inverseOnSurface = background, inversePrimary = raised,
-    surfaceDim = background, surfaceBright = raised, surfaceContainerLowest = background,
-    surfaceContainerLow = surface, surfaceContainer = raised, surfaceContainerHigh = raised,
-    surfaceContainerHighest = border
-  ), shapes = Shapes(
-    extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(24.dp)
-  ), content = content)
+  val dark = colors.optString("scheme", "dark") != "light"
+  val fallback = if (dark) darkColorScheme() else lightColorScheme()
+  fun read(key: String, backup: Color): Color = runCatching { Color(android.graphics.Color.parseColor(colors.getString(key))) }.getOrDefault(backup)
+  val bg = read("background", fallback.background)
+  val surface = read("surface", fallback.surface)
+  val raised = read("surfaceRaised", fallback.surfaceContainer)
+  val ink = read("text", fallback.onSurface)
+  val muted = read("textSecondary", fallback.onSurfaceVariant)
+  val primary = read("primary", fallback.primary)
+  val onPrimary = read("onPrimary", fallback.onPrimary)
+  val secondary = read("secondary", fallback.secondaryContainer)
+  val onSecondary = read("onSecondary", fallback.onSecondaryContainer)
+  fun gradient(key: String, backup: Color): Brush {
+    val values = colors.optJSONArray(key)
+    val stops = (0 until (values?.length() ?: 0)).mapNotNull { i -> runCatching { Color(android.graphics.Color.parseColor(values!!.getString(i))) }.getOrNull() }
+    return Brush.linearGradient(if (stops.size >= 2) stops else listOf(backup, backup))
+  }
+  val gradients = OrganicGradients(gradient("headerGradient", surface), gradient("actionGradient", primary))
+  val inter = remember { FontFamily(Font(R.font.inter)) }
+  val outfit = remember { FontFamily(Font(R.font.outfit)) }
+  val typography = Typography(
+    headlineMedium = TextStyle(fontFamily = outfit, fontSize = 28.sp, fontWeight = FontWeight.Medium),
+    headlineSmall = TextStyle(fontFamily = outfit, fontSize = 24.sp, fontWeight = FontWeight.Medium),
+    titleLarge = TextStyle(fontFamily = outfit, fontSize = 20.sp, fontWeight = FontWeight.Medium),
+    titleMedium = TextStyle(fontFamily = outfit, fontSize = 15.sp, fontWeight = FontWeight.Medium),
+    titleSmall = TextStyle(fontFamily = inter, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+    bodyLarge = TextStyle(fontFamily = inter, fontSize = 14.sp),
+    bodyMedium = TextStyle(fontFamily = inter, fontSize = 13.sp),
+    bodySmall = TextStyle(fontFamily = inter, fontSize = 11.sp),
+    labelLarge = TextStyle(fontFamily = inter, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+    labelMedium = TextStyle(fontFamily = inter, fontSize = 11.sp),
+    labelSmall = TextStyle(fontFamily = inter, fontSize = 10.sp)
+  )
+  CompositionLocalProvider(LocalOrganicGradients provides gradients) {
+    MaterialTheme(colorScheme = fallback.copy(
+      primary = primary, onPrimary = onPrimary, primaryContainer = secondary, onPrimaryContainer = onSecondary,
+      secondary = primary, onSecondary = onPrimary, secondaryContainer = secondary, onSecondaryContainer = onSecondary,
+      background = bg, onBackground = ink, surface = surface, onSurface = ink,
+      surfaceVariant = raised, onSurfaceVariant = muted, surfaceTint = Color.Transparent,
+      outline = read("outline", fallback.outline), outlineVariant = read("border", fallback.outlineVariant),
+      error = read("danger", fallback.error), inverseSurface = ink, inverseOnSurface = bg,
+      surfaceDim = bg, surfaceBright = raised, surfaceContainerLowest = bg,
+      surfaceContainerLow = surface, surfaceContainer = raised, surfaceContainerHigh = raised,
+      surfaceContainerHighest = raised
+    ), typography = typography, shapes = Shapes(
+      extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
+      medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(28.dp)
+    ), content = content)
+  }
 }

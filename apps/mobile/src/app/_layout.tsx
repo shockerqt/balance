@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router/stack';
 import { ThemeProvider as NavigationThemeProvider, DarkTheme, DefaultTheme } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -10,6 +10,7 @@ import { AuthProvider } from '@/hooks/use-auth';
 import { PreferencesProvider } from '@/hooks/use-preferences-store';
 import { WeightProvider } from '@/hooks/use-weight-store';
 import { ThemeProvider, useTheme } from '@/theme';
+import { gradientBackground } from '@/theme/gradient';
 
 /** Los sheets comparten configuracion salvo la altura. */
 const sheet = (detents: number[]) =>
@@ -26,7 +27,7 @@ function Navigation() {
   return (
     <NavigationThemeProvider value={theme.scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerBackground: () => <View style={[{ flex: 1 }, gradientBackground(theme.gradients.header)]} /> }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="auth-callback" />
