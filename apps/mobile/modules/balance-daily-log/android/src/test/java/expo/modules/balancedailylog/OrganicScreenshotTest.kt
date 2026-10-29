@@ -270,6 +270,59 @@ class OrganicScreenshotTest {
     compose.runOnIdle { assertEquals("13:00", addTime) }
   }
 
+  @Test fun forestDarkFoodEntry() = foodEntry(dark = true)
+  @Test fun forestLightFoodEntry() = foodEntry(dark = false)
+
+  private fun foodEntry(dark: Boolean) {
+    val fields = JSONArray()
+    listOf("calories" to "Energía", "protein" to "Proteínas",
+      "carbs" to "Carbohidratos", "fat" to "Grasas").forEach { (key, label) ->
+      fields.put(JSONObject().put("key", key).put("label", label)
+        .put("unit", if (key == "calories") "kcal" else "g").put("required", true))
+    }
+    val data = JSONObject().put("date", "2026-10-09").put("time", "13:00")
+      .put("today", "2026-10-09").put("ready", true)
+      .put("templates", JSONArray()).put("nutrientFields", fields)
+    compose.setContent {
+      WireframeTheme(forest(dark)) {
+        Surface(Modifier.requiredSize(390.dp, 844.dp), color = MaterialTheme.colorScheme.background) {
+          FoodEntryScreen(data, JSONObject(), true) { _, _ -> }
+        }
+      }
+    }
+    val name = "forest-${if (dark) "dark" else "light"}-food-entry"
+    screenshot("$name-search")
+    try { compose.onNodeWithText("Etiquetas").performClick() }
+    finally { screenshot("$name-labels") }
+    val energy = compose.onNodeWithTag("organic-nutrient-calories")
+    val protein = compose.onNodeWithTag("organic-nutrient-protein")
+    val carbs = compose.onNodeWithTag("organic-nutrient-carbs")
+    val fat = compose.onNodeWithTag("organic-nutrient-fat")
+    try {
+      energy.performScrollTo()
+      protein.performScrollTo()
+      carbs.performScrollTo()
+      fat.performScrollTo()
+    } finally { screenshot("$name-labels-nutrients") }
+    // Fetch every bound after the final scroll: all comparisons share one viewport.
+    energy.assertIsDisplayed().assertIsEnabled()
+    protein.assertIsDisplayed().assertIsEnabled()
+    carbs.assertIsDisplayed().assertIsEnabled()
+    fat.assertIsDisplayed().assertIsEnabled()
+    val e = energy.fetchSemanticsNode().boundsInRoot
+    val p = protein.fetchSemanticsNode().boundsInRoot
+    val c = carbs.fetchSemanticsNode().boundsInRoot
+    val f = fat.fetchSemanticsNode().boundsInRoot
+    assertEquals("Energy/protein share the first row", e.top, p.top, 1f)
+    assertEquals("Energy/protein have equal height", e.bottom, p.bottom, 1f)
+    assertEquals("Carbs/fat share the second row", c.top, f.top, 1f)
+    assertEquals("Carbs/fat have equal height", c.bottom, f.bottom, 1f)
+    assertTrue("Two columns in each row", e.right < p.left && c.right < f.left)
+    assertTrue("Second row follows the first", e.bottom < c.top && p.bottom < f.top)
+    assertEquals("Left column alignment", e.left, c.left, 1f)
+    assertEquals("Right column alignment", p.left, f.left, 1f)
+  }
+
   private fun screenshot(name: String) {
     compose.waitForIdle()
     // PixelCopy-based captureToImage waits for a compositor absent in Robolectric.

@@ -130,7 +130,7 @@ import kotlin.math.abs
         fun x(date: LocalDate) = (ChronoUnit.DAYS.between(start, date).toFloat() + 0.5f) / (span + 1) * size.width
         val inset = 4.dp.toPx()
         fun y(value: Double) = size.height - inset - (((value - minimum) / (top - minimum)).toFloat().coerceIn(0f, 1f) * (size.height - inset * 2))
-        ticks.forEach { tick -> drawLine(colors.outlineVariant, Offset(0f, y(tick)), Offset(size.width, y(tick)), strokeWidth = 0.5.dp.toPx()) }
+        ticks.forEach { tick -> drawLine(colors.outline.copy(alpha = .5f), Offset(0f, y(tick)), Offset(size.width, y(tick)), strokeWidth = 0.5.dp.toPx()) }
         drawLine(colors.primary.copy(alpha = 0.5f), Offset(x(selectedRecord.first), 0f), Offset(x(selectedRecord.first), size.height), 1.dp.toPx())
         records.forEachIndexed { i, record ->
           val v = values(record)

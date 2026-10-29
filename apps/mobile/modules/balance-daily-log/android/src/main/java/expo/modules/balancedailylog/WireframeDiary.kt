@@ -144,12 +144,12 @@ internal val wireLocale = Locale.forLanguageTag("es-CL")
   AlertDialog(onDismissRequest = onDismiss, title = { Text(food.optString("name")) }, text = {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("${wireDate(date)} · la información nutricional histórica se conserva", style = MaterialTheme.typography.bodySmall)
-      TextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+      OrganicTextField(quantity, { quantity = it }, label = { Text("Cantidad") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(mode == "canonical", { mode = "canonical"; quantity = FoodEntryModel.input(food.optDouble("canonicalQuantity")) }, label = { Text(food.optString("unit")) })
         if (portion != null) FilterChip(mode == "portion", { mode = "portion"; quantity = FoodEntryModel.input(food.optDouble("quantity")) }, label = { Text(portion.optString("name")) })
       }
-      TextField(time, { time = it }, label = { Text("Hora · HH:mm") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
+      OrganicTextField(time, { time = it }, label = { Text("Hora · HH:mm") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
       if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
     }
   }, confirmButton = { TextButton(onClick = {

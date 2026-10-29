@@ -111,3 +111,17 @@ internal fun systemThemeColors(context: Context, dark: Boolean): Map<String, Str
     colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onPrimary, disabledContainerColor = Color.Transparent, disabledContentColor = MaterialTheme.colorScheme.onPrimary),
     content = content)
 }
+
+/** The approved controls are solid tonal fields; only focus draws an indicator. */
+@Composable internal fun OrganicTextField(value: String, onValueChange: (String) -> Unit,
+  modifier: Modifier = Modifier, enabled: Boolean = true, label: (@Composable () -> Unit)? = null,
+  leadingIcon: (@Composable () -> Unit)? = null, suffix: (@Composable () -> Unit)? = null,
+  singleLine: Boolean = false, keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default) {
+  TextField(value, onValueChange, modifier = modifier, enabled = enabled, label = label,
+    leadingIcon = leadingIcon, suffix = suffix, singleLine = singleLine, keyboardOptions = keyboardOptions,
+    shape = RoundedCornerShape(14.dp), colors = TextFieldDefaults.colors(
+      focusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+      focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+      unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+      unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent))
+}
