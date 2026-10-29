@@ -75,20 +75,40 @@ test('real shell maps native records to canonical stores and rejects callbacks a
 
 test('retained native payload preserves work while blurred and refreshes the complete Organic scheme on focus', async () => {
   let view;
-  await renderer.act(async () => { view = renderer.create(React.createElement(Screen)); });
-  const initial = props(view).data;
-  assert.equal(JSON.parse(initial).colors.scheme, 'dark');
-  assert.deepEqual(JSON.parse(initial).colors.actionGradient, theme.gradients.action);
-  await renderer.act(async () => blur());
-  theme = { colors: { background: '#eff7f7', primary: '#146477' }, scheme: 'light', gradients: { header: ['#cce8e4', '#d8e8f2'], action: ['#165f68', '#3b6274'] } };
-  await renderer.act(async () => view.update(React.createElement(Screen)));
-  assert.equal(props(view).data, initial, 'theme changes behind the editor retain its previous native payload');
-  await renderer.act(async () => { blur = focus(); });
-  const refreshed = JSON.parse(props(view).data);
-  assert.equal(refreshed.colors.scheme, 'light');
-  assert.equal(refreshed.colors.background, '#eff7f7');
-  assert.deepEqual(refreshed.colors.headerGradient, theme.gradients.header);
-  assert.deepEqual(refreshed.colors.actionGradient, theme.gradients.action);
-  assert.ok(refreshed.days[date], 'focus retains the complete historical projection');
-  await renderer.act(async () => view.unmount());
+  const previousLogs = mealStore.dayLogs, previousDocs = mealStore.mealDocuments;
+  const archivedDate = '2020-05-18', incomingDate = '2026-10-17';
+  const historyDay = (id, day) => ({ ...previousLogs[date], dateId: day,
+    foods: previousLogs[date].foods.map(food => ({ ...food, id })) });
+  const historyDoc = (id, day) => ({ ...doc, id, consumedAt: dates.epochForChileDateTime(day, '08:15') });
+  const archived = historyDoc('archived', archivedDate);
+  mealStore.dayLogs = { ...previousLogs, [archivedDate]: historyDay('archived', archivedDate) };
+  mealStore.mealDocuments = [...previousDocs, archived];
+  try {
+    await renderer.act(async () => { view = renderer.create(React.createElement(Screen)); });
+    const initial = props(view).data;
+    assert.equal(JSON.parse(initial).colors.scheme, 'dark');
+    assert.deepEqual(JSON.parse(initial).colors.actionGradient, theme.gradients.action);
+    assert.deepEqual(Object.keys(JSON.parse(initial).days).sort(), [archivedDate, date]);
+    await renderer.act(async () => blur());
+    theme = { colors: { background: '#eff7f7', primary: '#146477' }, scheme: 'light', gradients: { header: ['#cce8e4', '#d8e8f2'], action: ['#165f68', '#3b6274'] } };
+    mealStore.dayLogs = { ...mealStore.dayLogs,
+      [date]: { ...previousLogs[date], foods: previousLogs[date].foods.map(food => ({ ...food, calories: 60, protein: 1.8, carbs: 12, fat: .6 })) },
+      [incomingDate]: historyDay('incoming', incomingDate) };
+    mealStore.mealDocuments = [{ ...doc, canonicalQuantity: 60, entry: { ...doc.entry, enteredQuantity: 1.2 }, updatedAt: 11 }, archived, historyDoc('incoming', incomingDate)];
+    await renderer.act(async () => view.update(React.createElement(Screen)));
+    assert.equal(props(view).data, initial, 'theme and store changes behind the editor retain its previous native payload');
+    await renderer.act(async () => { blur = focus(); });
+    const refreshed = JSON.parse(props(view).data);
+    assert.equal(refreshed.colors.scheme, 'light');
+    assert.equal(refreshed.colors.background, '#eff7f7');
+    assert.deepEqual(refreshed.colors.headerGradient, theme.gradients.header);
+    assert.deepEqual(refreshed.colors.actionGradient, theme.gradients.action);
+    assert.deepEqual(Object.keys(refreshed.days).sort(), [archivedDate, incomingDate, date]);
+    assert.equal(refreshed.days[archivedDate].totals.calories, 50, 'distant history is not cropped or lost');
+    assert.equal(refreshed.days[incomingDate].foods[0].id, 'incoming', 'history received while blurred appears on focus');
+    assert.equal(refreshed.days[date].totals.calories, 60, 'edits received while blurred replace the old visible data');
+  } finally {
+    if (view) await renderer.act(async () => view.unmount());
+    mealStore.dayLogs = previousLogs; mealStore.mealDocuments = previousDocs;
+  }
 });
