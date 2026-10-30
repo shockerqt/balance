@@ -15,7 +15,8 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            FoodDetails, MealLogEntry, MealLogMutation, NutritionSnapshot, validate_weight_grams,
+            FoodDetails, MealLogEntry, MealLogMutation, MealTemplateMutation, NutritionSnapshot,
+            validate_weight_grams,
         },
     },
     modules::{
@@ -795,13 +796,15 @@ async fn handle_push(
                     .sync
                     .push_meal_template(
                         user.id,
-                        doc.id,
-                        doc.name,
-                        details,
-                        source_provider,
-                        external_id,
-                        doc.updated_at,
-                        deleted_at,
+                        MealTemplateMutation {
+                            id: doc.id,
+                            name: doc.name,
+                            details,
+                            source_provider,
+                            external_id,
+                            updated_at: doc.updated_at,
+                            deleted_at,
+                        },
                     )
                     .await
                 {
