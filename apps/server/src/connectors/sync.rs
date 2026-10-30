@@ -367,6 +367,17 @@ pub struct MealLogCopyIntent {
 }
 
 #[derive(Debug, Clone)]
+pub struct MealTemplateMutation {
+    pub id: Uuid,
+    pub name: String,
+    pub details: Value,
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub updated_at: i64,
+    pub deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
 pub struct MealLogMutation {
     pub id: Uuid,
     pub template_id: Option<Uuid>,
@@ -575,14 +586,17 @@ impl SyncDatasource {
     pub async fn push_meal_template(
         &self,
         user_id: i32,
-        id: Uuid,
-        name: String,
-        details: Value,
-        source_provider: Option<String>,
-        external_id: Option<String>,
-        updated_at: i64,
-        deleted_at: Option<i64>,
+        mutation: MealTemplateMutation,
     ) -> Result<Option<MealTemplateRow>, AppError> {
+        let MealTemplateMutation {
+            id,
+            name,
+            details,
+            source_provider,
+            external_id,
+            updated_at,
+            deleted_at,
+        } = mutation;
         let existing = sqlx::query_as::<_, MealTemplateRow>(
             "SELECT id, user_id, is_official, name, details, source_provider, external_id, updated_at, deleted_at FROM meal_templates WHERE id = $1",
         )
@@ -1799,13 +1813,15 @@ mod tests {
         let template_collision = datasource
             .push_meal_template(
                 2,
-                food_id,
-                "Intento ajeno".into(),
-                serde_json::to_value(&details).unwrap(),
-                None,
-                None,
-                i64::MAX - 1,
-                None,
+                MealTemplateMutation {
+                    id: food_id,
+                    name: "Intento ajeno".into(),
+                    details: serde_json::to_value(&details).unwrap(),
+                    source_provider: None,
+                    external_id: None,
+                    updated_at: i64::MAX - 1,
+                    deleted_at: None,
+                },
             )
             .await;
         assert!(matches!(template_collision, Err(AppError::Conflict(_))));
