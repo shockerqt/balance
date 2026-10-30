@@ -15,7 +15,8 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            FoodDetails, MealLogEntry, MealLogMutation, NutritionSnapshot, validate_weight_grams,
+            FoodDetails, MealLogCopyIntent, MealLogEntry, MealLogMutation, NutritionSnapshot,
+            validate_weight_grams,
         },
     },
     modules::{
@@ -88,6 +89,13 @@ struct MealTemplateDocument {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MealLogCopySourceDocument {
+    id: Uuid,
+    updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MealLogDocument {
     id: Uuid,
     template_id: Option<Uuid>,
@@ -95,6 +103,8 @@ struct MealLogDocument {
     nutrition_snapshot: NutritionSnapshot,
     #[serde(default)]
     provenance: Option<ImportProvenanceDocument>,
+    #[serde(default)]
+    copy_source: Option<MealLogCopySourceDocument>,
     canonical_quantity: f64,
     entry: MealLogEntry,
     consumed_at: i64,
@@ -857,6 +867,7 @@ async fn handle_push(
                 } else {
                     None
                 };
+                let is_copy = doc.copy_source.is_some();
                 if let Err(error) = provenance_parts(doc.provenance) {
                     let message = client_error_message(error);
                     send_sync_error(socket, &request_id, "invalid_document", &message).await;
@@ -874,6 +885,12 @@ async fn handle_push(
                             consumed_at: doc.consumed_at,
                             updated_at: doc.updated_at,
                             deleted_at,
+                            copy_source: doc.copy_source.map(|source| MealLogCopyIntent {
+                                source_id: source.id,
+                                source_updated_at: source.updated_at,
+                                name_snapshot: doc.name_snapshot,
+                                nutrition_snapshot: doc.nutrition_snapshot,
+                            }),
                         },
                     )
                     .await
@@ -891,6 +908,21 @@ async fn handle_push(
                         "_deleted": conflict.deleted_at.is_some(),
                     })),
                     Ok(None) => changed = true,
+                    Err(error)
+                        if is_copy
+                            && matches!(
+                                &error,
+                                AppError::BadRequest(_)
+                                    | AppError::NotFound(_)
+                                    | AppError::Conflict(_)
+                            ) =>
+                    {
+                        rejections.push(json!({
+                            "index": index,
+                            "code": "copy_source_unavailable",
+                            "message": "The copy source is no longer available"
+                        }));
+                    }
                     Err(error) => {
                         if changed {
                             sync_hub.notify(user.id, "mealLogs");
@@ -1090,6 +1122,18 @@ fn parse_meal_log_document(value: Value) -> Result<MealLogDocument, AppError> {
         ));
     }
     document.entry.validate(document.canonical_quantity)?;
+    if let Some(source) = &document.copy_source {
+        if source.updated_at <= 0 {
+            return Err(AppError::BadRequest(
+                "mealLogs.copySource.updatedAt must be positive".into(),
+            ));
+        }
+        if document.provenance.is_some() {
+            return Err(AppError::BadRequest(
+                "A copied meal log must not inherit import provenance".into(),
+            ));
+        }
+    }
     if document.consumed_at <= 0 || document.updated_at <= 0 {
         return Err(AppError::BadRequest(
             "mealLogs timestamps must be positive epoch millisecond values".into(),
@@ -1285,6 +1329,24 @@ mod tests {
     }
 
     #[test]
+    fn copy_intention_is_optional_strict_and_has_no_import_identity() {
+        let mut log = valid_log();
+        log["copySource"] = json!({"id": Uuid::new_v4(), "updatedAt": 123});
+        assert!(parse_meal_log_document(log.clone()).is_ok());
+        for invalid in [
+            json!({"id":"not-a-uuid", "updatedAt":123}),
+            json!({"id":Uuid::new_v4(), "updatedAt":0}),
+            json!({"id":Uuid::new_v4(), "updatedAt":123, "name":"untrusted"}),
+        ] {
+            log["copySource"] = invalid;
+            assert!(parse_meal_log_document(log.clone()).is_err());
+        }
+        log["copySource"] = json!({"id":Uuid::new_v4(), "updatedAt":123});
+        log["provenance"] = json!({"provider":"macrofactor", "externalId":"original-row"});
+        assert!(parse_meal_log_document(log).is_err());
+    }
+
+    #[test]
     fn weight_preference_is_optional_but_typed() {
         let valid = json!({
             "id": 7,
@@ -1428,6 +1490,193 @@ mod application_tests {
         ] {
             assert!(WsAllowedOrigins::parse(value).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn actual_socket_copies_pending_chains_with_indexed_rejection_and_pull_roundtrip() {
+        let Some((db, schema)) = crate::connectors::user::isolated_identity_test_database().await
+        else {
+            return;
+        };
+        let mut users = Vec::new();
+        for subject in ["first", "second"] {
+            users.push(
+                db.user
+                    .provision_identity(
+                        "https://issuer.example.invalid",
+                        subject,
+                        &crate::connectors::user::NewUser {
+                            email: format!("copy-{subject}@example.invalid"),
+                            name: None,
+                            family_name: None,
+                            given_name: None,
+                            picture: None,
+                        },
+                    )
+                    .await
+                    .unwrap(),
+            );
+        }
+        let details: FoodDetails = serde_json::from_value(json!({
+            "schemaVersion":2,"canonicalUnit":"g",
+            "nutritionPer100":{"calories":123.125,"protein":7,"carbs":11,"fat":3,"fiber":null,"sodiumMg":0},
+            "portions":[]
+        })).unwrap();
+        let template = Uuid::new_v4();
+        db.sync
+            .create_personal_food(users[0].id, template, "Historical food", &details)
+            .await
+            .unwrap();
+        let foreign = Uuid::new_v4();
+        sqlx::query("INSERT INTO meal_logs(id,user_id,name_snapshot,nutrition_snapshot,canonical_quantity,entry_snapshot,consumed_at,updated_at) VALUES ($1,$2,'Historical food',$3,75,$4,1786233600000,1000)")
+            .bind(foreign).bind(users[1].id).bind(serde_json::to_value(details.snapshot()).unwrap())
+            .bind(json!({"enteredQuantity":75})).execute(&db.user.pool).await.unwrap();
+        let db = Arc::new(db);
+        let app = application_sync_routes(
+            OidcConfig::test_cached_subject_config(),
+            WsAllowedOrigins::parse("https://balance-staging.shocker.cl").unwrap(),
+        )
+        .layer(Extension(db.clone()))
+        .layer(Extension(SyncHub::default()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "ws://{}/ws/sync/application",
+            listener.local_addr().unwrap()
+        );
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut socket = connect(&url).await;
+        authenticate(
+            &mut socket,
+            &token("first", chrono::Utc::now().timestamp() + 60),
+        )
+        .await;
+        let source_id = Uuid::new_v4();
+        let source = json!({
+            "id":source_id,"templateId":template,"nameSnapshot":"Historical food",
+            "nutritionSnapshot":details.snapshot(),"canonicalQuantity":75,
+            "entry":{"enteredQuantity":75},"consumedAt":1786233600000_i64,
+            "updatedAt":1000,"_deleted":false
+        });
+        let first_copy_id = Uuid::new_v4();
+        let mut first_copy = source.clone();
+        first_copy["id"] = json!(first_copy_id);
+        first_copy["copySource"] = json!({"id":source_id,"updatedAt":1000});
+        first_copy["updatedAt"] = json!(1001);
+        first_copy["consumedAt"] = json!(1786320000000_i64);
+        let mut rejected = first_copy.clone();
+        rejected["id"] = json!(Uuid::new_v4());
+        rejected["copySource"] = json!({"id":foreign,"updatedAt":1000});
+        let second_copy_id = Uuid::new_v4();
+        let mut second_copy = first_copy.clone();
+        second_copy["id"] = json!(second_copy_id);
+        second_copy["copySource"] = json!({"id":first_copy_id,"updatedAt":1001});
+        second_copy["updatedAt"] = json!(1002);
+        second_copy["canonicalQuantity"] = json!(100);
+        second_copy["entry"] = json!({"enteredQuantity":100});
+        let tombstone_id = Uuid::new_v4();
+        let mut tombstone = first_copy.clone();
+        tombstone["id"] = json!(tombstone_id);
+        tombstone["copySource"] = json!({"id":first_copy_id,"updatedAt":1});
+        tombstone["updatedAt"] = json!(1003);
+        tombstone["_deleted"] = json!(true);
+        tombstone["nameSnapshot"] = json!("Cancelled stale payload");
+        tombstone["nutritionSnapshot"]["nutritionPer100"]["calories"] = json!(999);
+        let rows: Vec<Value> = [source, first_copy, rejected, second_copy, tombstone]
+            .into_iter()
+            .map(|document| json!({"newDocumentState":document}))
+            .collect();
+
+        async fn response(socket: &mut ClientSocket, request_id: &str) -> Value {
+            for _ in 0..10 {
+                let value: Value =
+                    serde_json::from_str(&next(socket).await.into_text().unwrap()).unwrap();
+                if value["requestId"] == request_id {
+                    return value;
+                }
+            }
+            panic!("expected a bounded push/pull response");
+        }
+        for request_id in ["create", "retry-lost-ack"] {
+            socket.send(ClientMessage::Text(json!({"event":"push","requestId":request_id,"collection":"mealLogs","rows":rows}).to_string().into())).await.unwrap();
+            let result = response(&mut socket, request_id).await;
+            assert_eq!(result["event"], "push_response");
+            assert_eq!(result["rejections"].as_array().unwrap().len(), 1);
+            assert_eq!(result["rejections"][0]["index"], 2);
+            assert_eq!(result["rejections"][0]["code"], "copy_source_unavailable");
+        }
+        socket.send(ClientMessage::Text(json!({"event":"pull","requestId":"history","collection":"mealLogs","checkpoint":null,"limit":50}).to_string().into())).await.unwrap();
+        let result = response(&mut socket, "history").await;
+        let documents = result["documents"].as_array().unwrap();
+        assert_eq!(documents.len(), 4);
+        for id in [source_id, first_copy_id, second_copy_id, tombstone_id] {
+            let document = documents
+                .iter()
+                .find(|doc| doc["id"] == id.to_string())
+                .unwrap();
+            assert_eq!(document["nameSnapshot"], "Historical food");
+            assert_eq!(
+                document["nutritionSnapshot"],
+                serde_json::to_value(details.snapshot()).unwrap()
+            );
+            assert!(document.get("copySource").is_none());
+            assert!(document["provenance"].is_null());
+            if id == second_copy_id {
+                assert_eq!(document["canonicalQuantity"], 100.0);
+            }
+            if id == tombstone_id {
+                assert_eq!(document["_deleted"], true);
+            }
+        }
+        // A pending original may be rebuilt from an edited template without
+        // changing its submitted revision. Its dependent copy must not silently
+        // adopt that different food snapshot just because updatedAt still fits.
+        let mut changed_details = details.clone();
+        changed_details.nutrition_per100.calories = 999.0;
+        sqlx::query("UPDATE meal_templates SET details=$2 WHERE id=$1")
+            .bind(template)
+            .bind(serde_json::to_value(changed_details).unwrap())
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        let changed_source_id = Uuid::new_v4();
+        let mut changed_source = rows[0]["newDocumentState"].clone();
+        changed_source["id"] = json!(changed_source_id);
+        changed_source["updatedAt"] = json!(2000);
+        let mut stale_copy = changed_source.clone();
+        stale_copy["id"] = json!(Uuid::new_v4());
+        stale_copy["updatedAt"] = json!(2001);
+        stale_copy["copySource"] = json!({"id":changed_source_id,"updatedAt":2000});
+        socket
+            .send(ClientMessage::Text(
+                json!({
+                    "event":"push","requestId":"changed-template","collection":"mealLogs",
+                    "rows":[{"newDocumentState":changed_source},{"newDocumentState":stale_copy}]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let changed = response(&mut socket, "changed-template").await;
+        assert_eq!(changed["event"], "push_response");
+        assert_eq!(changed["rejections"].as_array().unwrap().len(), 1);
+        assert_eq!(changed["rejections"][0]["index"], 1);
+        assert_eq!(changed["rejections"][0]["code"], "copy_source_unavailable");
+        let (revision, snapshot): (i64, Value) = sqlx::query_as(
+            "SELECT updated_at,nutrition_snapshot FROM meal_logs WHERE id=$1 AND user_id=$2",
+        )
+        .bind(changed_source_id)
+        .bind(users[0].id)
+        .fetch_one(&db.user.pool)
+        .await
+        .unwrap();
+        assert_eq!(revision, 2000);
+        assert_eq!(snapshot["nutritionPer100"]["calories"], 999.0);
+        socket.close(None).await.unwrap();
+        task.abort();
+        crate::connectors::user::cleanup_identity_test_database(&db, &schema).await;
     }
 
     #[tokio::test]
