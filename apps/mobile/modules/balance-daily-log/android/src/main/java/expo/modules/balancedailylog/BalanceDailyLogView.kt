@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +32,7 @@ import expo.modules.kotlin.views.ComposableScope
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -37,6 +40,8 @@ import org.json.JSONObject
 class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoComposeView<ComposeProps>(context, appContext, withHostingView = true) {
   private val onAction by EventDispatcher()
   internal val active = mutableStateOf(false)
+  internal val copyEnabled = mutableStateOf(false)
+  private val copyStatus = mutableStateOf(JSONObject())
   private val data = mutableStateOf(JSONObject())
   private val command = mutableStateOf(DateCommand(LocalDate.now(), false, CommandToken("", 0)))
   private var sequence = 0L
@@ -51,7 +56,7 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     WireframeTheme(colors) {
       Surface(modifier = Modifier.fillMaxSize(), color = background,
         contentColor = MaterialTheme.colorScheme.onSurface) {
-        DailyLog(snapshot, command.value, active.value,
+        DailyLog(snapshot, command.value, active.value, copyEnabled.value, copyStatus.value,
           { action, date, ids, time, revision -> if (session == renderSession) emit(action, date, ids, time, revision) },
           { action, date, ids, time, revision, input -> if (session == renderSession) emitExtra(action, date, ids, time, revision, input) })
       }
@@ -68,6 +73,9 @@ class BalanceDailyLogView(context: Context, appContext: AppContext) : ExpoCompos
     val parsed = runCatching { JSONObject(value) }.getOrNull() ?: return
     val date = DailyLogDates.parse(parsed.optString("date")) ?: return
     command.value = DateCommand(date, parsed.optBoolean("fromNative"), CommandToken(parsed.optString("session"), parsed.optLong("revision")))
+  }
+  fun setCopyStatus(value: String) {
+    copyStatus.value = runCatching { JSONObject(value) }.getOrNull() ?: return
   }
   private fun emit(action: String, date: LocalDate, ids: List<String>, time: String?, revision: Long) {
     emitExtra(action, date, ids, time, revision, emptyMap())
@@ -93,10 +101,25 @@ private val spanish = Locale.forLanguageTag("es-CL")
 private val dayFormat = DateTimeFormatter.ofPattern("EEEE d 'de' MMMM", spanish)
 private val monthFormat = DateTimeFormatter.ofPattern("MMMM yyyy", spanish)
 private val weekdayFormat = DateTimeFormatter.ofPattern("EEEEE", spanish)
+private val copyDateFormat = DateTimeFormatter.ofPattern("EEEE d 'de' MMMM yyyy", spanish)
+
+internal data class SelectionCopyDraft(
+  val operationId: String,
+  val session: String,
+  val sourceDate: LocalDate,
+  val ids: List<String>,
+  val revisions: Map<String, Long>,
+  val destinationDate: LocalDate,
+  val time: String,
+  val saving: Boolean = false,
+  val error: String = "",
+) {
+  fun accepts(receiptSession: String, receiptOperation: String): Boolean = receiptOperation == operationId && receiptSession == session
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
+private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, copyEnabled: Boolean, copyStatus: JSONObject,
   emit: (String, LocalDate, List<String>, String?, Long) -> Unit,
   emitExtra: (String, LocalDate, List<String>, String?, Long, Map<String, Any>) -> Unit) {
   val pager = rememberPagerState(initialPage = DailyLogDates.page(command.date)) { DailyLogDates.count }
@@ -120,6 +143,9 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   var calendar by remember { mutableStateOf(false) }
   var deleteConfirmation by remember { mutableStateOf(false) }
   var moveTime by remember { mutableStateOf(false) }
+  var copyDraft by remember { mutableStateOf<SelectionCopyDraft?>(null) }
+  var copyChooseDate by remember { mutableStateOf(false) }
+  var copyNotice by remember { mutableStateOf("") }
   val settledDay = days.optJSONObject(settled.toString()) ?: empty
   val available = foods(settledDay).map { it.optString("id") }.toSet()
   val pendingCommand = command.token != appliedCommand
@@ -132,6 +158,9 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
       selected = emptySet()
       deleteConfirmation = false
       moveTime = false
+      copyDraft = null
+      copyChooseDate = false
+      copyNotice = ""
       if (pager.isScrollInProgress || DailyLogDates.page(command.date) != pager.settledPage) {
         // A save from a secondary tool may return while another destination is
         // shown. Attach the pager before awaiting its first layout/scroll.
@@ -152,7 +181,23 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   LaunchedEffect(settled, available, active) {
     selected = if (selectionDate != settled || !active) emptySet() else selected.intersect(available)
     selectionDate = settled
-    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false }
+    if (!active || copyDraft?.ids?.any { it !in available } == true) { copyDraft = null; copyChooseDate = false }
+    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false; copyNotice = "" }
+  }
+  LaunchedEffect(copyStatus) {
+    val draft = copyDraft
+    if (draft != null && active && draft.accepts(copyStatus.optString("session"), copyStatus.optString("operationId"))) {
+      when (copyStatus.optString("state")) {
+        "saving" -> copyDraft = draft.copy(saving = true, error = "")
+        "error" -> copyDraft = draft.copy(saving = false, error = copyStatus.optString("error"))
+        "success" -> {
+          copyNotice = "${draft.ids.size} ${if (draft.ids.size == 1) "registro copiado" else "registros copiados"} al ${draft.destinationDate.format(copyDateFormat)} a las ${draft.time}."
+          copyDraft = null
+          copyChooseDate = false
+          selected = emptySet()
+        }
+      }
+    }
   }
   // Calendar and food pages represent one selected day. The pager stays native;
   // a hidden calendar selection is applied when the food destination is shown.
@@ -170,6 +215,10 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
   }
 
   Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    if (copyNotice.isNotEmpty()) {
+      Text(copyNotice, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+        .semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall)
+    }
     if (destination == 0) {
     destinations.SaveableStateProvider(0) {
     Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = WireSpace.Small), verticalAlignment = Alignment.CenterVertically) {
@@ -239,7 +288,15 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
             Text("${selected.size} seleccionados", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             TextButton(onClick = { selected = emptySet() }) { Text("Cancelar") }
           }
-          Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+          FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            if (copyEnabled) TextButton(onClick = {
+              val source = foods(settledDay).filter { it.optString("id") in selected }
+                .sortedWith(compareBy({ it.optString("time") }, { it.optString("id") }))
+              val firstTime = source.firstOrNull()?.optString("time") ?: "12:00"
+              copyNotice = ""
+              copyDraft = SelectionCopyDraft(UUID.randomUUID().toString(), data.optString("session"), settled,
+                source.map { it.optString("id") }, source.associate { it.optString("id") to it.optLong("revision") }, today, firstTime)
+            }, enabled = !locked) { Text("Copiar") }
             TextButton(onClick = { moveTime = true }, enabled = !locked) { Text("Cambiar hora") }
             TextButton(onClick = { deleteConfirmation = true }, enabled = !locked) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
           }
@@ -292,5 +349,49 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean,
         action("move", selected.toList(), String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
         selected = emptySet(); moveTime = false
       }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = { moveTime = false }) { Text("Cancelar") } })
+  }
+  val draft = copyDraft
+  if (draft != null && active && copyEnabled) {
+    if (copyChooseDate) {
+      val dateState = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(draft.destinationDate), yearRange = 1970..9999)
+      DatePickerDialog(onDismissRequest = { copyChooseDate = false },
+        confirmButton = { TextButton(onClick = {
+          dateState.selectedDateMillis?.let { copyDraft = draft.copy(destinationDate = DailyLogDates.fromUtcMillis(it), operationId = UUID.randomUUID().toString(), error = "") }
+          copyChooseDate = false
+        }, enabled = dateState.selectedDateMillis != null) { Text("Elegir fecha") } },
+        dismissButton = { TextButton(onClick = { copyChooseDate = false }) { Text("Volver") } }) {
+        DatePicker(state = dateState, title = { Text("Destino de la copia", Modifier.padding(24.dp)) })
+      }
+    } else {
+      val timeState = rememberTimePickerState(initialHour = draft.time.substringBefore(":").toIntOrNull() ?: 12,
+        initialMinute = draft.time.substringAfter(":").toIntOrNull() ?: 0, is24Hour = true)
+      val chosenTime = String.format(Locale.ROOT, "%02d:%02d", timeState.hour, timeState.minute)
+      LaunchedEffect(chosenTime) {
+        if (!draft.saving && chosenTime != draft.time) copyDraft = draft.copy(time = chosenTime, operationId = UUID.randomUUID().toString(), error = "")
+      }
+      AlertDialog(onDismissRequest = { if (!draft.saving) copyDraft = null },
+        title = { Text("Copiar ${draft.ids.size} ${if (draft.ids.size == 1) "registro" else "registros"}") },
+        text = {
+          Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Destino", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { copyDraft = draft.copy(time = chosenTime); copyChooseDate = true }, enabled = !draft.saving) {
+              Text(draft.destinationDate.format(copyDateFormat))
+            }
+            if (draft.saving) Text(draft.time, style = MaterialTheme.typography.titleLarge)
+            else TimeInput(state = timeState, modifier = Modifier.semantics { contentDescription = "Hora de las copias" })
+            Text("Todos tendrán la misma fecha y hora. Los originales se conservarán.", style = MaterialTheme.typography.bodySmall)
+            Text("${draft.ids.size} registros al ${draft.destinationDate.format(copyDateFormat)} a las $chosenTime.", style = MaterialTheme.typography.bodyMedium)
+            if (draft.error.isNotEmpty()) Text(draft.error, color = MaterialTheme.colorScheme.error,
+              modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+          }
+        },
+        confirmButton = { TextButton(onClick = {
+          val submitting = draft.copy(time = chosenTime, saving = true, error = "")
+          copyDraft = submitting
+          emitExtra("copy", draft.sourceDate, draft.ids, chosenTime, appliedCommand!!.revision,
+            mapOf("operationId" to draft.operationId, "destinationDate" to draft.destinationDate.toString(), "revisions" to draft.revisions))
+        }, enabled = !locked && !draft.saving) { Text(if (draft.saving) "Guardando…" else if (draft.error.isNotEmpty()) "Reintentar" else "Copiar") } },
+        dismissButton = { TextButton(onClick = { copyDraft = null }, enabled = !draft.saving) { Text("Cancelar") } })
+    }
   }
 }

@@ -9,6 +9,7 @@ const ts = local('typescript'), React = local('react'), renderer = local('react-
 const contract = local('./src/components/meal/native/interface-contract.ts');
 const daily = local('./src/components/meal/native/daily-log-contract.ts');
 const dates = local('./src/lib/dates.ts');
+const copy = local('./src/components/meal/native/copy-selection-contract.ts');
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const date = '2026-10-18';
 let user = { id: 'a', name: 'Cuenta A' }, focus, blur, updates = [], saves = [], pushes = [], selections = [];
@@ -21,6 +22,7 @@ const router = { push: args => pushes.push(args) };
 const filename = path.join(root, 'src/components/meal/native/native-daily-log-screen.tsx');
 const stub = {
   react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+  'expo-crypto': { randomUUID: require('node:crypto').randomUUID },
   'react-native': { AppState: { addEventListener: () => ({ remove() {} }) } },
   'expo-router': { useRouter: () => router, useFocusEffect(cb) { React.useEffect(() => { focus = cb; blur = cb(); return () => blur?.(); }, [cb]); } },
   '../../../../modules/balance-daily-log': { BalanceDailyLogView: props => React.createElement('native-shell', props) },
@@ -33,6 +35,7 @@ const stub = {
   '@/theme': { useTheme: () => ({ colors: {} }) },
   '@/lib/dates': { ...dates, todayId: () => date },
   './daily-log-contract': daily, './interface-contract': contract,
+  './copy-selection-contract': copy,
 };
 const moduleUnderTest = new Module(filename, module);
 moduleUnderTest.filename = filename;
