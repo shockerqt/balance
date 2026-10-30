@@ -121,6 +121,11 @@ export interface MealLogDoc {
   nameSnapshot: string;
   nutritionSnapshot: NutritionSnapshot;
   provenance?: ImportProvenance | null;
+  /** Creation-only intent; the server resolves the owned historical source. */
+  copySource?: {
+    id: string;
+    updatedAt: number;
+  };
   canonicalQuantity: number;
   entry: MealLogEntry;
   consumedAt: number;

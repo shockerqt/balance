@@ -359,6 +359,14 @@ pub struct MealLogRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct MealLogCopyIntent {
+    pub source_id: Uuid,
+    pub source_updated_at: i64,
+    pub name_snapshot: String,
+    pub nutrition_snapshot: NutritionSnapshot,
+}
+
+#[derive(Debug, Clone)]
 pub struct MealTemplateMutation {
     pub id: Uuid,
     pub name: String,
@@ -378,6 +386,7 @@ pub struct MealLogMutation {
     pub consumed_at: i64,
     pub updated_at: i64,
     pub deleted_at: Option<i64>,
+    pub copy_source: Option<MealLogCopyIntent>,
 }
 
 #[derive(Debug, Clone, FromRow, PartialEq, Eq)]
@@ -685,63 +694,75 @@ impl SyncDatasource {
     ) -> Result<Option<MealLogRow>, AppError> {
         mutation.entry.validate(mutation.canonical_quantity)?;
         let mut tx = self.pool.begin().await?;
-        let existing = sqlx::query_as::<_, MealLogRow>(
-            r#"
-            SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
-                   source_provider, external_id, canonical_quantity, entry_snapshot,
-                   consumed_at, updated_at, deleted_at
-            FROM meal_logs
-            WHERE id = $1 AND user_id = $2
-            FOR UPDATE
-            "#,
-        )
-        .bind(mutation.id)
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-
-        if let Some(ref current) = existing
-            && current.updated_at >= mutation.updated_at
-        {
-            tx.commit().await?;
-            return Ok(Some(current.clone()));
-        }
-
+        let existing = lock_owned_meal_log(&mut tx, user_id, mutation.id).await?;
         let entry_snapshot = serde_json::to_value(&mutation.entry)
             .map_err(|error| AppError::Internal(error.to_string()))?;
-        if existing.is_some() {
-            sqlx::query(
-                r#"
-                UPDATE meal_logs
-                SET canonical_quantity = $3,
-                    entry_snapshot = $4,
-                    consumed_at = $5,
-                    updated_at = $6,
-                    deleted_at = $7
-                WHERE id = $1 AND user_id = $2
-                "#,
+        if let Some(current) = existing {
+            let result = apply_owned_meal_log_revision(
+                &mut tx,
+                user_id,
+                &mutation,
+                current,
+                &entry_snapshot,
             )
-            .bind(mutation.id)
-            .bind(user_id)
-            .bind(mutation.canonical_quantity)
-            .bind(entry_snapshot)
-            .bind(mutation.consumed_at)
-            .bind(mutation.updated_at)
-            .bind(mutation.deleted_at)
-            .execute(&mut *tx)
             .await?;
             tx.commit().await?;
-            return Ok(None);
+            return Ok(result);
         }
 
-        let template_id = mutation.template_id.ok_or_else(|| {
-            AppError::BadRequest("templateId is required for a new meal log".into())
-        })?;
-        let template = get_food_template_in_tx(&mut tx, user_id, template_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Food not found".into()))?;
-        let nutrition_snapshot = serde_json::to_value(template.details.snapshot())
-            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let (template_id, name_snapshot, nutrition_snapshot) =
+            if let Some(copy) = &mutation.copy_source {
+                let unavailable =
+                    || AppError::BadRequest("The copy source is no longer available".into());
+                let source = sqlx::query_as::<_, MealLogRow>(
+                    r#"
+                    SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                           source_provider, external_id, canonical_quantity, entry_snapshot,
+                           consumed_at, updated_at, deleted_at
+                    FROM meal_logs
+                    WHERE id = $1 AND user_id = $2
+                    FOR SHARE
+                    "#,
+                )
+                .bind(copy.source_id)
+                .bind(user_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(unavailable)?;
+
+                if mutation.deleted_at.is_none() {
+                    let canonical_snapshot: NutritionSnapshot =
+                        serde_json::from_value(source.nutrition_snapshot.clone())
+                            .map_err(|_| unavailable())?;
+                    canonical_snapshot.validate().map_err(|_| unavailable())?;
+                    if source.deleted_at.is_some()
+                        || source.updated_at != copy.source_updated_at
+                        || source.template_id != mutation.template_id
+                        || source.name_snapshot.trim() != copy.name_snapshot.trim()
+                        || canonical_snapshot != copy.nutrition_snapshot
+                    {
+                        return Err(unavailable());
+                    }
+                }
+
+                // Preserve the stored JSON, including optional null/absence and
+                // historical metadata; validation above does not reserialize it.
+                (
+                    source.template_id,
+                    source.name_snapshot,
+                    source.nutrition_snapshot,
+                )
+            } else {
+                let template_id = mutation.template_id.ok_or_else(|| {
+                    AppError::BadRequest("templateId is required for a new meal log".into())
+                })?;
+                let template = get_food_template_in_tx(&mut tx, user_id, template_id)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Food not found".into()))?;
+                let snapshot = serde_json::to_value(template.details.snapshot())
+                    .map_err(|error| AppError::Internal(error.to_string()))?;
+                (Some(template_id), template.name, snapshot)
+            };
         let result = sqlx::query(
             r#"
             INSERT INTO meal_logs
@@ -754,10 +775,10 @@ impl SyncDatasource {
         .bind(mutation.id)
         .bind(user_id)
         .bind(template_id)
-        .bind(&template.name)
+        .bind(name_snapshot)
         .bind(nutrition_snapshot)
         .bind(mutation.canonical_quantity)
-        .bind(entry_snapshot)
+        .bind(&entry_snapshot)
         .bind(mutation.consumed_at)
         .bind(mutation.updated_at)
         .bind(mutation.deleted_at)
@@ -765,9 +786,24 @@ impl SyncDatasource {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(AppError::Conflict(
-                "Meal log id could not be written for this user".into(),
-            ));
+            // A missing-row FOR UPDATE cannot lock a future insert. Resolve a
+            // concurrent winner through the same owned LWW path: a newer delete
+            // or edit must not be discarded as a terminal copy rejection.
+            let current = lock_owned_meal_log(&mut tx, user_id, mutation.id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict("Meal log id could not be written for this user".into())
+                })?;
+            let result = apply_owned_meal_log_revision(
+                &mut tx,
+                user_id,
+                &mutation,
+                current,
+                &entry_snapshot,
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(result);
         }
         tx.commit().await?;
         Ok(None)
@@ -1401,6 +1437,60 @@ fn consumption_from_row(row: MealLogRow) -> Result<Consumption, AppError> {
     })
 }
 
+async fn lock_owned_meal_log(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    id: Uuid,
+) -> Result<Option<MealLogRow>, AppError> {
+    Ok(sqlx::query_as::<_, MealLogRow>(
+        r#"
+        SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+               source_provider, external_id, canonical_quantity, entry_snapshot,
+               consumed_at, updated_at, deleted_at
+        FROM meal_logs
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE
+        "#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+async fn apply_owned_meal_log_revision(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    mutation: &MealLogMutation,
+    current: MealLogRow,
+    entry_snapshot: &Value,
+) -> Result<Option<MealLogRow>, AppError> {
+    if current.updated_at >= mutation.updated_at {
+        return Ok(Some(current));
+    }
+    sqlx::query(
+        r#"
+        UPDATE meal_logs
+        SET canonical_quantity = $3,
+            entry_snapshot = $4,
+            consumed_at = $5,
+            updated_at = $6,
+            deleted_at = $7
+        WHERE id = $1 AND user_id = $2
+        "#,
+    )
+    .bind(mutation.id)
+    .bind(user_id)
+    .bind(mutation.canonical_quantity)
+    .bind(entry_snapshot)
+    .bind(mutation.consumed_at)
+    .bind(mutation.updated_at)
+    .bind(mutation.deleted_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(None)
+}
+
 async fn get_food_template_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     user_id: i32,
@@ -1780,6 +1870,7 @@ mod tests {
                         consumed_at: consumed_at + 60_000,
                         updated_at: 1_786_233_600_000,
                         deleted_at: None,
+                        copy_source: None,
                     },
                 )
                 .await
@@ -1857,5 +1948,363 @@ mod tests {
             .await
             .unwrap();
         assert!(!datasource.weight_tracking_enabled(1).await.unwrap());
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use crate::connectors::{
+        db::Database,
+        user::{cleanup_identity_test_database, isolated_identity_test_database},
+    };
+    use serde_json::json;
+
+    async fn fixture() -> Option<(Database, String, MealLogRow)> {
+        let (db, schema) = isolated_identity_test_database().await?;
+        sqlx::query(
+            "INSERT INTO users (id, email) VALUES (1, 'copy-first@example.invalid'), (2, 'copy-second@example.invalid')",
+        )
+        .execute(&db.user.pool)
+        .await
+        .unwrap();
+        let source_id = Uuid::new_v4();
+        let snapshot = json!({
+            "schemaVersion":2, "canonicalUnit":"g",
+            "nutritionPer100":{
+                "calories":123.125, "protein":7.25, "carbs":11.5, "fat":3.75,
+                "fiber":null, "sodiumMg":0,
+                "extendedNutrition":{"ironMg":1.123456789}
+            }
+        });
+        let entry = json!({
+            "enteredQuantity":2,
+            "portionSnapshot":{
+                "portionId":"historical", "name":"Porción histórica",
+                "portionQuantity":1, "canonicalQuantity":37.5
+            }
+        });
+        sqlx::query(
+            "INSERT INTO meal_logs (id,user_id,template_id,name_snapshot,nutrition_snapshot,canonical_quantity,entry_snapshot,consumed_at,updated_at,source_provider,external_id) VALUES ($1,1,NULL,'Historical food',$2,75,$3,1786233600000,100,'macrofactor','source-row')",
+        )
+        .bind(source_id)
+        .bind(snapshot)
+        .bind(entry)
+        .execute(&db.user.pool)
+        .await
+        .unwrap();
+        let source = row(&db, source_id).await;
+        Some((db, schema, source))
+    }
+
+    async fn row(db: &Database, id: Uuid) -> MealLogRow {
+        sqlx::query_as(
+            "SELECT id,user_id,template_id,name_snapshot,nutrition_snapshot,source_provider,external_id,canonical_quantity,entry_snapshot,consumed_at,updated_at,deleted_at FROM meal_logs WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_one(&db.user.pool)
+        .await
+        .unwrap()
+    }
+
+    fn copy(source: &MealLogRow, id: Uuid, revision: i64) -> MealLogMutation {
+        MealLogMutation {
+            id,
+            template_id: source.template_id,
+            canonical_quantity: source.canonical_quantity,
+            entry: serde_json::from_value(source.entry_snapshot.clone()).unwrap(),
+            consumed_at: source.consumed_at + 86_400_000,
+            updated_at: revision,
+            deleted_at: None,
+            copy_source: Some(MealLogCopyIntent {
+                source_id: source.id,
+                source_updated_at: source.updated_at,
+                name_snapshot: source.name_snapshot.clone(),
+                nutrition_snapshot: serde_json::from_value(source.nutrition_snapshot.clone())
+                    .unwrap(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_insert_collisions_resolve_owned_lww_in_both_revision_orders() {
+        let Some((db, schema, source)) = fixture().await else {
+            return;
+        };
+        for (winner_revision, winner_deleted, incoming_revision, incoming_deleted) in [
+            (200, None, 200, None),
+            (200, None, 201, Some(201)),
+            (201, Some(201), 200, None),
+            (200, None, 201, None),
+            (201, None, 200, None),
+        ] {
+            let id = Uuid::new_v4();
+            let mut winner_tx = db.user.pool.begin().await.unwrap();
+            sqlx::query("INSERT INTO meal_logs(id,user_id,template_id,name_snapshot,nutrition_snapshot,canonical_quantity,entry_snapshot,consumed_at,updated_at,deleted_at) VALUES ($1,1,NULL,$2,$3,75,$4,$5,$6,$7)")
+                .bind(id).bind(&source.name_snapshot).bind(&source.nutrition_snapshot)
+                .bind(&source.entry_snapshot).bind(source.consumed_at + 86_400_000)
+                .bind(winner_revision).bind(winner_deleted)
+                .execute(&mut *winner_tx).await.unwrap();
+            let search_path = schema.clone();
+            let incoming_pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .after_connect(move |connection, _| {
+                    let search_path = search_path.clone();
+                    Box::pin(async move {
+                        sqlx::query("SELECT set_config('search_path',$1,false)")
+                            .bind(search_path)
+                            .execute(connection)
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect(&std::env::var("BALANCE_TEST_DATABASE_URL").unwrap())
+                .await
+                .unwrap();
+            let incoming_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&incoming_pool)
+                .await
+                .unwrap();
+            let mut incoming = copy(&source, id, incoming_revision);
+            incoming.deleted_at = incoming_deleted;
+            if incoming_revision > winner_revision && incoming_deleted.is_none() {
+                incoming.canonical_quantity = 150.0;
+                incoming.entry.entered_quantity = 4.0;
+            }
+            let incoming_datasource = SyncDatasource::new(incoming_pool.clone());
+            let incoming_task =
+                tokio::spawn(async move { incoming_datasource.push_meal_log(1, incoming).await });
+            // Hold an actual uncommitted destination insert until the real push
+            // waits at its unique index, after its absent-row lookup. No timing
+            // sleep or production-only hook substitutes for this SQL barrier.
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    let waiting: bool = sqlx::query_scalar("SELECT COALESCE(wait_event_type='Lock' AND query LIKE '%INSERT INTO meal_logs%',false) FROM pg_stat_activity WHERE pid=$1")
+                        .bind(incoming_pid).fetch_one(&db.user.pool).await.unwrap();
+                    if waiting { break; }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }).await.expect("push must reach the blocked insert collision");
+            winner_tx.commit().await.unwrap();
+            let result = incoming_task.await.unwrap().unwrap();
+            let current = row(&db, id).await;
+            if incoming_revision > winner_revision {
+                assert!(result.is_none());
+                assert_eq!(current.updated_at, incoming_revision);
+                assert_eq!(current.deleted_at, incoming_deleted);
+                if incoming_deleted.is_none() {
+                    assert_eq!(current.canonical_quantity, 150.0);
+                }
+            } else {
+                assert_eq!(result.unwrap().updated_at, winner_revision);
+                assert_eq!(current.updated_at, winner_revision);
+                assert_eq!(current.deleted_at, winner_deleted);
+            }
+            assert_eq!(current.nutrition_snapshot, source.nutrition_snapshot);
+            incoming_pool.close().await;
+        }
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn copy_preserves_raw_history_and_pending_quantity_portion_time_edits() {
+        let Some((db, schema, source)) = fixture().await else {
+            return;
+        };
+        let id = Uuid::new_v4();
+        let mut mutation = copy(&source, id, 200);
+        mutation.canonical_quantity = 112.5;
+        mutation.entry.entered_quantity = 3.0;
+        mutation.consumed_at += 3 * 3_600_000;
+        let destination_time = mutation.consumed_at;
+        assert!(db.sync.push_meal_log(1, mutation).await.unwrap().is_none());
+        let created = row(&db, id).await;
+        assert_eq!(created.name_snapshot, source.name_snapshot);
+        assert_eq!(created.nutrition_snapshot, source.nutrition_snapshot);
+        assert!(created.nutrition_snapshot["nutritionPer100"]["fiber"].is_null());
+        assert!(
+            created.nutrition_snapshot["nutritionPer100"]
+                .get("cholesterolMg")
+                .is_none()
+        );
+        assert_eq!(
+            created.nutrition_snapshot["nutritionPer100"]["sodiumMg"],
+            json!(0)
+        );
+        assert_eq!(created.template_id, None);
+        assert_eq!(created.canonical_quantity, 112.5);
+        assert_eq!(created.entry_snapshot["enteredQuantity"], json!(3.0));
+        let created_entry: MealLogEntry =
+            serde_json::from_value(created.entry_snapshot.clone()).unwrap();
+        let mut expected_entry: MealLogEntry =
+            serde_json::from_value(source.entry_snapshot.clone()).unwrap();
+        expected_entry.entered_quantity = 3.0;
+        assert_eq!(created_entry, expected_entry);
+        assert_eq!(created.consumed_at, destination_time);
+        assert!(created.source_provider.is_none() && created.external_id.is_none());
+        assert_eq!(
+            serde_json::to_value(row(&db, source.id).await).unwrap(),
+            serde_json::to_value(&source).unwrap()
+        );
+
+        // A current/deleted template is not the authority for historical food.
+        let template = Uuid::new_v4();
+        sqlx::query("INSERT INTO meal_templates(id,user_id,name,details,updated_at,deleted_at) VALUES ($1,1,'Changed current template',$2,400,400)")
+            .bind(template)
+            .bind(json!({"schemaVersion":2,"canonicalUnit":"g","nutritionPer100":{"calories":999,"protein":99,"carbs":99,"fat":99},"portions":[]}))
+            .execute(&db.user.pool).await.unwrap();
+        sqlx::query("UPDATE meal_logs SET template_id=$2 WHERE id=$1")
+            .bind(source.id)
+            .bind(template)
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        let source_with_template = row(&db, source.id).await;
+        let second = Uuid::new_v4();
+        db.sync
+            .push_meal_log(1, copy(&source_with_template, second, 201))
+            .await
+            .unwrap();
+        let second = row(&db, second).await;
+        assert_eq!(second.template_id, Some(template));
+        assert_eq!(second.nutrition_snapshot, source.nutrition_snapshot);
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn copy_retry_and_tombstone_keep_identity_after_source_edit_or_delete() {
+        let Some((db, schema, source)) = fixture().await else {
+            return;
+        };
+        let id = Uuid::new_v4();
+        let mutation = copy(&source, id, 200);
+        db.sync.push_meal_log(1, mutation.clone()).await.unwrap();
+        sqlx::query("UPDATE meal_logs SET name_snapshot='Changed source',nutrition_snapshot=$2,updated_at=300,deleted_at=300 WHERE id=$1")
+            .bind(source.id)
+            .bind(json!({"schemaVersion":2,"canonicalUnit":"g","nutritionPer100":{"calories":999,"protein":99,"carbs":99,"fat":99}}))
+            .execute(&db.user.pool).await.unwrap();
+        // The first ACK was lost; source checks must not reject the saved UUID.
+        let retried = db
+            .sync
+            .push_meal_log(1, mutation.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(retried.id, id);
+        assert_eq!(retried.nutrition_snapshot, source.nutrition_snapshot);
+        let mut edit = mutation;
+        edit.updated_at = 400;
+        edit.canonical_quantity = 150.0;
+        edit.entry.entered_quantity = 4.0;
+        db.sync.push_meal_log(1, edit).await.unwrap();
+        assert_eq!(row(&db, id).await.canonical_quantity, 150.0);
+        assert_eq!(
+            row(&db, id).await.nutrition_snapshot,
+            source.nutrition_snapshot
+        );
+
+        let cancelled_id = Uuid::new_v4();
+        let earlier_create = copy(&source, cancelled_id, 500);
+        let mut tombstone = earlier_create.clone();
+        tombstone.updated_at = 501;
+        tombstone.deleted_at = Some(501);
+        tombstone.template_id = Some(Uuid::new_v4());
+        tombstone.copy_source.as_mut().unwrap().name_snapshot = "Cancelled payload".into();
+        db.sync.push_meal_log(1, tombstone).await.unwrap();
+        let cancelled = row(&db, cancelled_id).await;
+        assert_eq!(cancelled.deleted_at, Some(501));
+        assert_eq!(cancelled.updated_at, 501);
+        assert_eq!(cancelled.name_snapshot, "Changed source");
+        assert_eq!(cancelled.template_id, None);
+        let late = db
+            .sync
+            .push_meal_log(1, earlier_create)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(late.deleted_at, Some(501));
+        assert_eq!(row(&db, cancelled_id).await.deleted_at, Some(501));
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn copy_rejects_stale_changed_deleted_missing_and_foreign_sources() {
+        let Some((db, schema, source)) = fixture().await else {
+            return;
+        };
+        let mut mismatch = copy(&source, Uuid::new_v4(), 200);
+        mismatch
+            .copy_source
+            .as_mut()
+            .unwrap()
+            .nutrition_snapshot
+            .nutrition_per100
+            .calories += 1.0;
+        assert!(matches!(
+            db.sync.push_meal_log(1, mismatch).await,
+            Err(AppError::BadRequest(_))
+        ));
+        let mut stale = copy(&source, Uuid::new_v4(), 201);
+        stale.copy_source.as_mut().unwrap().source_updated_at -= 1;
+        assert!(matches!(
+            db.sync.push_meal_log(1, stale).await,
+            Err(AppError::BadRequest(_))
+        ));
+        // Same source revision is insufficient when authoritative food changed.
+        sqlx::query("UPDATE meal_logs SET name_snapshot='Changed at same revision' WHERE id=$1")
+            .bind(source.id)
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.sync
+                .push_meal_log(1, copy(&source, Uuid::new_v4(), 202))
+                .await,
+            Err(AppError::BadRequest(_))
+        ));
+        sqlx::query("UPDATE meal_logs SET name_snapshot=$2,deleted_at=203 WHERE id=$1")
+            .bind(source.id)
+            .bind(&source.name_snapshot)
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.sync
+                .push_meal_log(1, copy(&source, Uuid::new_v4(), 203))
+                .await,
+            Err(AppError::BadRequest(_))
+        ));
+
+        let foreign = db
+            .sync
+            .push_meal_log(2, copy(&source, Uuid::new_v4(), 204))
+            .await
+            .unwrap_err();
+        let mut missing = copy(&source, Uuid::new_v4(), 205);
+        missing.copy_source.as_mut().unwrap().source_id = Uuid::new_v4();
+        let missing = db.sync.push_meal_log(1, missing).await.unwrap_err();
+        assert_eq!(format!("{foreign:?}"), format!("{missing:?}"));
+        let mut foreign_tombstone = copy(&source, Uuid::new_v4(), 206);
+        foreign_tombstone.deleted_at = Some(206);
+        assert!(matches!(
+            db.sync.push_meal_log(2, foreign_tombstone).await,
+            Err(AppError::BadRequest(_))
+        ));
+        let own_second_source = Uuid::new_v4();
+        sqlx::query("INSERT INTO meal_logs(id,user_id,name_snapshot,nutrition_snapshot,canonical_quantity,entry_snapshot,consumed_at,updated_at) SELECT $2,2,name_snapshot,nutrition_snapshot,canonical_quantity,entry_snapshot,consumed_at,100 FROM meal_logs WHERE id=$1")
+            .bind(source.id).bind(own_second_source).execute(&db.user.pool).await.unwrap();
+        let second_source = row(&db, own_second_source).await;
+        let foreign_destination_before = row(&db, source.id).await;
+        assert!(matches!(
+            db.sync
+                .push_meal_log(2, copy(&second_source, source.id, 400))
+                .await,
+            Err(AppError::Conflict(_))
+        ));
+        assert_eq!(
+            serde_json::to_value(row(&db, source.id).await).unwrap(),
+            serde_json::to_value(foreign_destination_before).unwrap()
+        );
+        cleanup_identity_test_database(&db, &schema).await;
     }
 }
