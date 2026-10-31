@@ -62,6 +62,35 @@ interface OutboxEntry {
   queuedAt: number;
 }
 
+// Keep whole entries together: rejection indexes belong to the exact array sent
+// on the wire, including its previousDocument and revision for ACK arbitration.
+export function orderMealLogOutbox<T extends { document: SyncDocument }>(entries: T[]): { ordered: T[]; invalid: T[] } {
+  const byId = new Map(entries.map(entry => [entry.document.id, entry]));
+  const waiting = new Map<string, number>();
+  const dependents = new Map<string, T[]>();
+  for (const entry of entries) {
+    const source = (entry.document as { copySource?: { id: string } }).copySource;
+    const dependency = source && byId.has(source.id) ? source.id : null;
+    waiting.set(String(entry.document.id), dependency ? 1 : 0);
+    if (dependency) {
+      const siblings = dependents.get(dependency);
+      if (siblings) siblings.push(entry); else dependents.set(dependency, [entry]);
+    }
+  }
+  const ready = entries.filter(entry => waiting.get(String(entry.document.id)) === 0);
+  const ordered: T[] = [];
+  for (let index = 0; index < ready.length; index += 1) {
+    const entry = ready[index];
+    ordered.push(entry);
+    for (const dependent of dependents.get(String(entry.document.id)) ?? []) {
+      waiting.set(String(dependent.document.id), 0);
+      ready.push(dependent);
+    }
+  }
+  const emitted = new Set(ordered.map(entry => entry.document.id));
+  return { ordered, invalid: entries.filter(entry => !emitted.has(entry.document.id)) };
+}
+
 type ServerMessage = Record<string, unknown> & { event?: string; requestId?: string; collection?: string };
 
 const namespaceKey = (namespace: string) => namespace || 'guest';
@@ -468,11 +497,20 @@ export class SyncClient {
     document: SyncDocument,
     previousDocument?: SyncDocument | null
   ): Promise<void> {
+    return this.enqueueBatch(collection, [{ document, previousDocument }]);
+  }
+
+  async enqueueBatch(
+    collection: SyncCollection,
+    rows: { document: SyncDocument; previousDocument?: SyncDocument | null }[],
+  ): Promise<void> {
+    if (!rows.length) return;
+    const keys = rows.map(({ document }) => `${collection}:${document.id}`);
+    if (new Set(keys).size !== keys.length) throw new Error('SYNC_DUPLICATE_BATCH_ID');
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
-    const key = `${collection}:${document.id}`;
     const namespaceEnqueues = this.activeEnqueues.get(namespace) ?? new Map<string, number>();
-    namespaceEnqueues.set(key, (namespaceEnqueues.get(key) ?? 0) + 1);
+    for (const key of keys) namespaceEnqueues.set(key, (namespaceEnqueues.get(key) ?? 0) + 1);
     this.activeEnqueues.set(namespace, namespaceEnqueues);
     this.publishStatus();
     const previous = this.enqueueChains.get(namespace) ?? Promise.resolve();
@@ -500,14 +538,17 @@ export class SyncClient {
           // Invalid outbox data is discarded for this namespace only.
         }
       }
-      const key = `${collection}:${document.id}`;
-      const queued = entries.get(key);
-      entries.set(key, {
-        collection,
-        document,
-        previousDocument: queued ? queued.previousDocument : previousDocument,
-        queuedAt: Date.now(),
-      });
+      for (const { document, previousDocument } of rows) {
+        const key = `${collection}:${document.id}`;
+        const queued = entries.get(key);
+        entries.set(key, {
+          collection,
+          document,
+          previousDocument: queued ? queued.previousDocument : previousDocument,
+          queuedAt: Date.now(),
+        });
+      }
+      // One owner write commits the entire local selection, or none of it.
       await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(entries.values())));
       if (this.isCurrent(namespace, generation)) {
         this.outbox = entries;
@@ -543,21 +584,29 @@ export class SyncClient {
     this.enqueueChains.set(namespace, operation.catch(() => undefined));
     try {
       await operation;
-      const failedRevision = this.failedEnqueueRevisions.get(key);
-      if (this.namespace === namespace && failedRevision !== undefined && document.updatedAt >= failedRevision) {
-        this.failedEnqueueRevisions.delete(key);
-        this.statusErrors.delete(`enqueue:${key}`);
+      for (const { document } of rows) {
+        const key = `${collection}:${document.id}`;
+        const failedRevision = this.failedEnqueueRevisions.get(key);
+        if (this.namespace === namespace && failedRevision !== undefined && document.updatedAt >= failedRevision) {
+          this.failedEnqueueRevisions.delete(key);
+          this.statusErrors.delete(`enqueue:${key}`);
+        }
       }
     } catch (error) {
       if (this.namespace === namespace) {
-        this.failedEnqueueRevisions.set(key, Math.max(document.updatedAt, this.failedEnqueueRevisions.get(key) ?? document.updatedAt));
-        this.statusErrors.set(`enqueue:${key}`, 'local');
+        for (const { document } of rows) {
+          const key = `${collection}:${document.id}`;
+          this.failedEnqueueRevisions.set(key, Math.max(document.updatedAt, this.failedEnqueueRevisions.get(key) ?? document.updatedAt));
+          this.statusErrors.set(`enqueue:${key}`, 'local');
+        }
       }
       throw error;
     } finally {
       const pending = this.activeEnqueues.get(namespace);
-      const count = pending?.get(key) ?? 1;
-      if (count <= 1) pending?.delete(key); else pending?.set(key, count - 1);
+      for (const key of keys) {
+        const count = pending?.get(key) ?? 1;
+        if (count <= 1) pending?.delete(key); else pending?.set(key, count - 1);
+      }
       if (pending?.size === 0) this.activeEnqueues.delete(namespace);
       this.publishStatus();
     }
@@ -841,11 +890,31 @@ export class SyncClient {
     return promise;
   }
 
-  private async persistOutbox(): Promise<void> {
+  private async persistOutbox(retired: OutboxEntry[]): Promise<void> {
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
+    // ACK retirement is an outbox mutation too. Queue it behind receipts that
+    // are currently committing; serializing an older RAM map before that write
+    // finishes could otherwise overwrite a newly acknowledged local save.
+    const previous = this.enqueueChains.get(namespace) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      if (!this.isCurrent(namespace, generation)) return;
+      await this.loadOutbox();
+      if (!this.isCurrent(namespace, generation)) return;
+      const remaining = new Map(this.outbox);
+      for (const entry of retired) {
+        const key = `${entry.collection}:${entry.document.id}`;
+        if (remaining.get(key)?.document.updatedAt === entry.document.updatedAt) remaining.delete(key);
+      }
+      await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(remaining.values())));
+      if (this.isCurrent(namespace, generation)) {
+        this.outbox = remaining;
+        this.outboxLoadedFor = namespace;
+      }
+    });
+    this.enqueueChains.set(namespace, operation.catch(() => undefined));
     try {
-      await storage.setItem(outboxStorageKey(namespace), JSON.stringify(Array.from(this.outbox.values())));
+      await operation;
     } catch (error) {
       // An acknowledged entry may still exist on disk. Require a fresh owner
       // hydration before a retry can claim the queue has been drained; resending
@@ -866,10 +935,31 @@ export class SyncClient {
       for (const collection of SYNC_COLLECTIONS) {
         if (!this.operationIsCurrent(namespace, generation, epoch)) return;
         if (this.disabledCollections.has(collection)) continue;
-        const entries = Array.from(this.outbox.values()).filter((entry) => entry.collection === collection);
+        let entries = Array.from(this.outbox.values()).filter((entry) => entry.collection === collection);
         if (!entries.length) continue;
         let localOperation = false;
         try {
+          if (collection === 'mealLogs') {
+            const ordered = orderMealLogOutbox(entries);
+            if (ordered.invalid.length) {
+              localOperation = true;
+              const handlers = this.handlers.get(collection);
+              // Apply the existing durable owner barriers before retiring a
+              // malformed dependency; never invent a second failed-upload queue.
+              await handlers?.onPushConflicts?.([]);
+              if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
+              await handlers?.onPushRejected?.(ordered.invalid.map(entry => ({
+                document: entry.document, previousDocument: entry.previousDocument,
+                code: 'copy_source_unavailable', message: 'Vuelve a seleccionar los registros que quieres copiar.',
+              })));
+              if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
+              await this.persistOutbox(ordered.invalid);
+              this.statusErrors.set(`push:${collection}`, 'upload');
+            }
+            entries = ordered.ordered;
+            if (!entries.length) continue;
+            localOperation = false;
+          }
           const result = await this.push(collection, entries.map((entry) => ({ newDocumentState: entry.document })));
           if (!this.operationIsCurrent(namespace, generation, epoch)) return;
           localOperation = true;
@@ -891,11 +981,7 @@ export class SyncClient {
             await handlers?.onPushRejected?.(rejectedDocuments);
             if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return;
           }
-          for (const entry of entries) {
-            const current = this.outbox.get(`${collection}:${entry.document.id}`);
-            if (current?.document.updatedAt === entry.document.updatedAt) this.outbox.delete(`${collection}:${entry.document.id}`);
-          }
-          await this.persistOutbox();
+          await this.persistOutbox(entries);
         } catch {
           if (this.operationIsCurrent(namespace, generation, epoch) && this.isReady()) this.statusErrors.set(`push:${collection}`, localOperation ? 'local' : 'upload');
           return;

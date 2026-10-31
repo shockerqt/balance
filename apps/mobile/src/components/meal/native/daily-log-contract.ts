@@ -4,6 +4,7 @@ import type { WeightLogDoc } from '@/services/sync/types';
 import { isDateId } from '@/services/sync/types';
 import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
 import type { DailyLogEvent } from '../../../../modules/balance-daily-log';
+import { isCopyOperationId } from './copy-selection-contract';
 
 export function projectDays(logs: Record<string, DayLog>, weights: Record<string, WeightLogDoc>) {
   return Object.fromEntries([...new Set([...Object.keys(logs), ...Object.keys(weights)])].filter(isDateId).map(date => {
@@ -37,8 +38,17 @@ export function acceptDailyEvent(value: unknown, session: string, lastSequence: 
   const e = value as DailyLogEvent;
   if (e.commandRevision !== commandRevision || e.session !== session || !Number.isSafeInteger(e.sequence) || e.sequence <= lastSequence || !isDateId(e.date)) return false;
   if (e.action === 'date') return true;
-  if (!['add', 'edit', 'weight', 'delete', 'move'].includes(e.action) || e.date !== selected) return false;
+  if (!['add', 'edit', 'weight', 'delete', 'move', 'copy'].includes(e.action) || e.date !== selected) return false;
   if (e.time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(e.time)) return false;
+  if (e.action === 'copy') {
+    const input = e.input;
+    return Array.isArray(e.ids) && e.ids.length > 0 && new Set(e.ids).size === e.ids.length &&
+      e.ids.every(id => typeof id === 'string') && typeof e.time === 'string' &&
+      isCopyOperationId(input?.operationId) && isDateId(input?.destinationDate) &&
+      !!input?.revisions && typeof input.revisions === 'object' && !Array.isArray(input.revisions) &&
+      Object.keys(input.revisions).length === e.ids.length &&
+      e.ids.every(id => Number.isSafeInteger(input.revisions![id]) && input.revisions![id] > 0);
+  }
   if (['edit', 'delete', 'move'].includes(e.action)) {
     if (!Array.isArray(e.ids) || !e.ids.length || new Set(e.ids).size !== e.ids.length) return false;
     if (!e.ids.every(id => typeof id === 'string' && logs[e.date]?.foods.some(f => f.id === id))) return false;
