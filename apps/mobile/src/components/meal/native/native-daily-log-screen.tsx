@@ -15,9 +15,9 @@ import { acceptDailyEvent } from './daily-log-contract';
 import { acceptInterfaceEvent, createInterfaceDaysProjector, interfaceColors, projectInterfaceDays, weightGrams } from './interface-contract';
 import { prepareSelectionCopy, selectionCopyPlanIsCurrent, type SelectionCopyPlan } from './copy-selection-contract';
 
-// Remains disabled in released routes until the compatible API/native delivery
-// gates are satisfied. Tests can exercise the actual host with this explicit prop.
-export default function NativeDailyLogScreen({ copyEnabled = false }: { copyEnabled?: boolean } = {}) {
+// Enabled by default after the compatible API contract was promoted to
+// production; callers/tests may still pass copyEnabled=false to exercise the guard.
+export default function NativeDailyLogScreen({ copyEnabled = true }: { copyEnabled?: boolean } = {}) {
   const { user, isGuest } = useAuth();
   // Account changes replace the native tree and invalidate all queued events.
   return <DailyLogSession key={user?.id ?? (isGuest ? 'guest' : 'anonymous')} copyEnabled={copyEnabled} />;

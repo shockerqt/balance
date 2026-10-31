@@ -54,7 +54,7 @@ async function harness({ enabled = true, commit = async () => {} } = {}) {
     jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText, filename);
   const Screen = moduleUnderTest.exports.default;
-  const tree = () => React.createElement(Screen, { copyEnabled: enabled });
+  const tree = () => enabled === undefined ? React.createElement(Screen) : React.createElement(Screen, { copyEnabled: enabled });
   await renderer.act(async () => { view = renderer.create(tree()); });
   const props = () => view.root.findByType('native-shell').props;
   function event(p, sequence = 1, operationId = uuid(900), extra = {}) {
@@ -74,9 +74,14 @@ async function harness({ enabled = true, commit = async () => {} } = {}) {
   };
 }
 
-test('copy remains disabled until its compatible delivery gate is explicitly enabled', async () => {
+test('copy is enabled by default and can still be disabled explicitly', async () => {
+  const defaultHost = await harness({ enabled: undefined });
+  try {
+    assert.equal(defaultHost.props().copyEnabled, true);
+  } finally { await defaultHost.close(); }
   const h = await harness({ enabled: false });
   try {
+    assert.equal(h.props().copyEnabled, false);
     await h.dispatch(h.event(h.props()));
     assert.equal(h.writes.length, 0);
     assert.deepEqual(JSON.parse(h.props().copyStatus), {});
