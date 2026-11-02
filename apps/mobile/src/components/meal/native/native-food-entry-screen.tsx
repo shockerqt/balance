@@ -58,10 +58,10 @@ function FoodEntrySession() {
       time: typeof params.time === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(params.time) ? params.time : `${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}`,
     };
   });
-  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: interfaceColors,
+  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: theme.gradients?.header, actionGradient: theme.gradients?.action },
     templates: library.templateDocuments.filter(t => !t._deleted), ready: library.isLibraryReady, nutrientFields,
-  }), [session, documentId, initial, theme.colors, library.templateDocuments, library.isLibraryReady]);
-  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: interfaceColors.background }}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
+  }), [session, documentId, initial, theme, library.templateDocuments, library.isLibraryReady]);
+  return <Screen edges={['top', 'bottom']} style={{ backgroundColor: theme.colors.background ?? interfaceColors.background }}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}
     onAction={async ({ nativeEvent: event }) => {
       if (!live.current.active || live.current.saving || live.current.saved || !acceptFoodEntryEvent(event, live.current.session, live.current.sequence)) return;
       live.current.sequence = event.sequence;

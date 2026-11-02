@@ -38,6 +38,16 @@ jobs:
       - name: Generate Android project and resolve local module
         working-directory: apps/mobile
         run: APP_VARIANT=development npx expo prebuild --platform android --no-install
-      - name: Verify app compatibility, compile Compose and test calendar arithmetic
+      - name: Verify app compatibility, compile Compose and render Organic screenshots
         working-directory: apps/mobile/android
         run: ./gradlew :app:checkDebugAarMetadata :balance-daily-log:compileDebugKotlin :balance-daily-log:testDebugUnitTest --no-daemon -PreactNativeArchitectures=arm64-v8a
+      - name: Upload Organic PNGs and native unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: organic-screenshots-and-native-test-reports
+          path: |
+            apps/mobile/modules/balance-daily-log/android/build/outputs/organic-screenshots/**/*.png
+            apps/mobile/modules/balance-daily-log/android/build/reports/tests/**
+            apps/mobile/modules/balance-daily-log/android/build/test-results/**
+          if-no-files-found: warn

@@ -62,7 +62,8 @@ function setup({ reducedMotion = false, motionQuery } = {}) {
   };
   const common = { react: React, 'react/jsx-runtime': local('react/jsx-runtime') };
   const tokens = compile('src/theme/tokens.ts', {});
-  const theme = compile('src/theme/palettes.ts', { './tokens': tokens }).palettes.libroNoche;
+  const organic = compile('src/theme/organic-palettes.ts', {});
+  const theme = compile('src/theme/palettes.ts', { './tokens': tokens, './organic-palettes': organic }).makeOrganicTheme('forest', 'dark');
   const owner = { syncClient };
   const hook = compile('src/hooks/use-sync-status.ts', { react: React, '@/services/sync/sync-client': owner });
   const banner = compile('src/components/sync/sync-status-banner.tsx', {

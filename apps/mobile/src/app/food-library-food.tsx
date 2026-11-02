@@ -226,90 +226,98 @@ export default function FoodLibraryFoodScreen() {
       subtitle={isOfficial ? 'Ficha oficial · solo lectura' : 'Ficha personal · sincronización automática'}
       footer={footer}>
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={styles.content}
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        <View style={styles.originNote}>
-          <Icon name={isOfficial ? 'badge-check' : 'notebook-pen'} size={18} tone={isOfficial ? 'muted' : 'accent'} />
-          <View style={styles.originCopy}>
-            <Text variant="bodyStrong">{isOfficial ? 'Referencia oficial' : 'Tu alimento'}</Text>
-            <Text variant="caption" tone="secondary">
-              {isOfficial
-                ? 'Puedes consultarlo y usarlo al registrar, pero no cambiar sus valores.'
-                : 'Los cambios quedan disponibles sin conexión y se sincronizan al recuperar señal.'}
-            </Text>
-          </View>
-        </View>
+        <Text tone="secondary" accessibilityHint={isOfficial
+          ? 'Puedes consultarlo y usarlo al registrar, pero no cambiar sus valores.'
+          : 'Los cambios quedan disponibles sin conexión y se sincronizan al recuperar señal.'}>
+          {isOfficial ? 'Referencia oficial · solo lectura' : 'Tu alimento · ficha personal'}
+        </Text>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Identidad y porción</Text>
 
-        <Field label="Nombre">
+        <FoodField label="Nombre">
           <Input
+            style={styles.input}
             value={form.name}
             onChangeText={(value) => update('name', value)}
             placeholder="Pan de masa madre"
             editable={isEditable}
             autoFocus={isCreating}
           />
-        </Field>
+        </FoodField>
 
+        <FoodField label="Porción base" hint="100g, 250ml, 1 unidad…">
+          <Input style={styles.input} value={form.portion} onChangeText={(value) => update('portion', value)} editable={isEditable} placeholder="100g" />
+        </FoodField>
         <View style={styles.doubleRow}>
-          <Field label="Porción base" hint="100g, 250ml, 1 unidad…" style={styles.halfField}>
-            <Input
-              value={form.portion}
-              onChangeText={(value) => update('portion', value)}
-              editable={isEditable}
-              placeholder="100g"
-            />
-          </Field>
-          <Field label="Hora habitual" hint="HH:mm" style={styles.halfField}>
-            <Input
-              value={form.typicalTime}
-              onChangeText={(value) => update('typicalTime', value)}
-              editable={isEditable}
-              placeholder="12:00"
-              keyboardType="numbers-and-punctuation"
-            />
-          </Field>
+          <FoodField label="Hora habitual" hint="HH:mm" style={styles.halfField}>
+            <Input style={styles.input} value={form.typicalTime} onChangeText={(value) => update('typicalTime', value)} editable={isEditable} placeholder="12:00" keyboardType="numbers-and-punctuation" />
+          </FoodField>
+          <FoodField label="Categoría" hint="Opcional; también sirve para buscar" style={styles.halfField}>
+            <Input style={styles.input} value={form.category} onChangeText={(value) => update('category', value)} editable={isEditable} placeholder="Desayuno, lácteos, receta…" />
+          </FoodField>
         </View>
-
-        <Field label="Categoría" hint="Opcional; también sirve para buscar">
-          <Input
-            value={form.category}
-            onChangeText={(value) => update('category', value)}
-            editable={isEditable}
-            placeholder="Desayuno, lácteos, receta…"
-          />
-        </Field>
-
-        <View style={styles.ruleHeading}>
-          <Text variant="label">VALORES POR {form.portion.trim().toUpperCase() || 'PORCIÓN'}</Text>
-          <Text variant="caption" tone="muted">
-            Cifras de la etiqueta o receta
-          </Text>
         </View>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Información por {form.portion.trim() || 'porción'}</Text>
+          <Text variant="caption" tone="secondary">Cifras de la etiqueta o receta</Text>
 
         <View style={styles.macros}>
-          {macroFields.map((field) => (
-            <Field key={field.key} label={field.label} style={styles.macroField}>
+          {macroFields.slice(0, 4).map((field) => (
+            <FoodField key={field.key} label={field.label} style={styles.macroField}>
               <View style={styles.numberInput}>
                 <Input
+                  accessibilityLabel={`${field.label} (${field.suffix})`}
                   variant="number"
                   value={form[field.key]}
                   onChangeText={(value) => update(field.key, value)}
                   editable={isEditable}
                   keyboardType="decimal-pad"
                   placeholder="0"
-                  style={styles.numberControl}
+                  style={[styles.input, styles.numberControl]}
                 />
                 <Text variant="caption" tone="muted" style={styles.unit}>
                   {field.suffix}
                 </Text>
               </View>
-            </Field>
+            </FoodField>
           ))}
         </View>
 
-        <Field label="Sellos chilenos" hint="Marca solo los que aparecen en el envase">
+        </View>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Opcionales</Text>
+        <View style={styles.macros}>
+          {macroFields.slice(4).map((field) => (
+            <FoodField key={field.key} label={field.label} style={styles.macroField}>
+              <View style={styles.numberInput}>
+                <Input
+                  accessibilityLabel={`${field.label} (${field.suffix})`}
+                  variant="number"
+                  value={form[field.key]}
+                  onChangeText={(value) => update(field.key, value)}
+                  editable={isEditable}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  style={[styles.input, styles.numberControl]}
+                />
+                <Text variant="caption" tone="muted" style={styles.unit}>
+                  {field.suffix}
+                </Text>
+              </View>
+            </FoodField>
+          ))}
+        </View>
+
+          <Text variant="caption" tone="secondary">Sin valor no equivale a cero.</Text>
+        </View>
+        <View style={styles.group}>
+          <Text variant="title" accessibilityRole="header">Sellos chilenos</Text>
+        <FoodField label="Sellos chilenos" hint="Marca solo los que aparecen en el envase">
           <View style={styles.seals}>
             {sealOptions.map((seal) => {
               const selected = seals.has(seal);
@@ -332,7 +340,9 @@ export default function FoodLibraryFoodScreen() {
               );
             })}
           </View>
-        </Field>
+        </FoodField>
+
+        </View>
 
         {error ? (
           <View accessibilityRole="alert" style={styles.error}>
@@ -353,40 +363,39 @@ export default function FoodLibraryFoodScreen() {
   );
 }
 
+function FoodField({ label, hint, children, style, ...rest }: React.ComponentProps<typeof Field>) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.field, style]} {...rest}>
+      <Text tone="secondary">{label}</Text>
+      {React.Children.map(children, (child) =>
+        React.isValidElement<React.ComponentProps<typeof Input>>(child) && child.type === Input
+          ? React.cloneElement(child, { accessibilityLabel: child.props.accessibilityLabel ?? label })
+          : child
+      )}
+      {hint ? <Text variant="caption" tone="secondary">{hint}</Text> : null}
+    </View>
+  );
+}
+
 const useStyles = makeStyles((t) => ({
+  scroll: { backgroundColor: t.colors.background },
+  input: { minHeight: 48, borderRadius: 14 },
+  field: { gap: t.space.sm },
   content: {
     gap: t.space.xl,
     padding: t.space.xl,
     paddingBottom: t.space.xxxl
   },
-  originNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: t.space.md,
-    padding: t.space.lg,
-    borderLeftWidth: t.border.ruleHeavy,
-    borderColor: t.colors.text,
-    backgroundColor: t.colors.surfaceRaised
-  },
-  originCopy: { flex: 1, gap: t.space.xs },
+  group: { padding: t.space.xl, gap: t.space.lg, borderRadius: t.radius.xl, backgroundColor: t.colors.surface },
   doubleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: t.space.lg
   },
-  halfField: { flex: 1 },
-  ruleHeading: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    gap: t.space.md,
-    paddingTop: t.space.sm,
-    paddingBottom: t.space.sm,
-    borderBottomWidth: t.border.rule,
-    borderColor: t.colors.text
-  },
-  macros: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.lg },
-  macroField: { flexGrow: 1, flexBasis: '45%' },
+  halfField: { flex: 1, minWidth: 0 },
+  macros: { flexDirection: 'row', flexWrap: 'wrap', rowGap: t.space.lg, columnGap: '4%' },
+  macroField: { width: '48%', minWidth: 0 },
   numberInput: { position: 'relative' },
   numberControl: { paddingRight: t.space.xxxl + t.space.sm },
   unit: { position: 'absolute', right: t.space.md, top: t.space.lg },

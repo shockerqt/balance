@@ -1,57 +1,39 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { SyncStatusBanner } from '@/components/sync/sync-status-banner';
+import { gradientBackground } from '@/theme/gradient';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { FoodLibraryFilter, FoodLibraryList } from '@/components/food-library/food-library-list';
 import { Icon, Input, Screen, Text } from '@/components/ui';
-import { makeStyles } from '@/theme';
+import { makeStyles, useTheme } from '@/theme';
 
 const FILTERS: { value: FoodLibraryFilter; label: string }[] = [
-  { value: 'all', label: 'Todos' },
-  { value: 'personal', label: 'Míos' },
-  { value: 'official', label: 'Oficiales' }
+  { value: 'all', label: 'Todas' },
+  { value: 'personal', label: 'Personal' },
+  { value: 'official', label: 'Oficial' }
 ];
 
 export default function LibraryScreen() {
   const styles = useStyles();
+  const theme = useTheme();
   const router = useRouter();
   const { libraryFoods, isLibraryReady, syncNotice, clearSyncNotice } = useFoodLibraryStore();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FoodLibraryFilter>('all');
-
-  const counts = useMemo(
-    () => ({
-      personal: libraryFoods.filter((food) => !food.isOfficial).length,
-      official: libraryFoods.filter((food) => food.isOfficial).length
-    }),
-    [libraryFoods]
-  );
 
   const openFood = (id?: string) => {
     router.push({ pathname: '/food-library-food', params: id ? { id } : {} });
   };
 
   return (
-    <Screen>
-      <View style={styles.heading}>
-        <View style={styles.titleBlock}>
-          <Text variant="label" tone="muted">
-            BIBLIOTECA · {libraryFoods.length} REGISTROS
-          </Text>
-          <Text variant="display">Alimentos</Text>
-          <Text variant="body" tone="secondary">
-            Una sola ficha para cada porción que vuelves a registrar.
-          </Text>
-        </View>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Crear alimento personal"
-          activeOpacity={0.75}
-          style={styles.createButton}
-          onPress={() => openFood()}>
+    <Screen edges={[]}>
+      <Stack.Screen options={{ headerTitleStyle: { fontFamily: 'Outfit', fontSize: 21, fontWeight: '500' }, headerRight: () => (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Crear alimento personal" onPress={() => openFood()} style={[{ width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, gradientBackground(theme.gradients.action)]}>
           <Icon name="plus" size={22} tone="onPrimary" />
         </TouchableOpacity>
-      </View>
+      ) }} />
+      <SyncStatusBanner />
 
       <View style={styles.controls}>
         {syncNotice ? (
@@ -70,9 +52,10 @@ export default function LibraryScreen() {
         ) : null}
 
         <Input
+          style={{ borderRadius: 18, minHeight: 52, backgroundColor: theme.colors.surface }}
           value={query}
           onChangeText={setQuery}
-          placeholder="Buscar por nombre, categoría o porción"
+          placeholder="Buscar un alimento"
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
@@ -82,7 +65,6 @@ export default function LibraryScreen() {
         <View accessibilityRole="tablist" style={styles.filters}>
           {FILTERS.map((option) => {
             const selected = filter === option.value;
-            const count = option.value === 'all' ? libraryFoods.length : counts[option.value];
             return (
               <TouchableOpacity
                 key={option.value}
@@ -91,8 +73,8 @@ export default function LibraryScreen() {
                 activeOpacity={0.75}
                 style={[styles.filter, selected && styles.filterSelected]}
                 onPress={() => setFilter(option.value)}>
-                <Text variant="caption" tone={selected ? 'onPrimary' : 'secondary'}>
-                  {option.label} {count}
+                <Text variant="caption" tone={selected ? 'primary' : 'secondary'}>
+                  {option.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -143,7 +125,7 @@ const useStyles = makeStyles((t) => ({
     alignItems: 'center',
     gap: t.space.sm,
     padding: t.space.md,
-    borderWidth: t.border.hairline,
+    borderWidth: 0,
     borderColor: t.colors.primary,
     borderRadius: t.radius.sm,
     backgroundColor: t.colors.surfaceRaised
@@ -157,15 +139,17 @@ const useStyles = makeStyles((t) => ({
     flex: 1,
     alignItems: 'center',
     paddingHorizontal: t.space.sm,
+    minHeight: 48,
+    justifyContent: 'center',
     paddingVertical: t.space.sm,
-    borderWidth: t.border.hairline,
+    borderWidth: 0,
     borderColor: t.colors.border,
     borderRadius: t.radius.pill,
     backgroundColor: t.colors.surface
   },
   filterSelected: {
     borderColor: t.colors.primary,
-    backgroundColor: t.colors.primary
+    backgroundColor: t.colors.secondary
   },
   list: { flex: 1 }
 }));
