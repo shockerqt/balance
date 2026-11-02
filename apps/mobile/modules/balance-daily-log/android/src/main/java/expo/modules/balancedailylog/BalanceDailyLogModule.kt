@@ -6,6 +6,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class BalanceDailyLogModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("BalanceDailyLog")
+    Function("getSystemColors") { dark: Boolean ->
+      appContext.reactContext?.let { systemThemeColors(it, dark) }
+    }
     View<BalanceDailyLogView>(BalanceDailyLogView::class) {
       Events("onAction")
       Prop("data") { view: BalanceDailyLogView, value: String -> view.setData(value) }

@@ -19,8 +19,8 @@ export const Field: React.FC<FieldProps> = ({ label, hint, children, style, ...r
 
   return (
     <View style={[styles.field, style]} {...rest}>
-      <Text variant="label" tone="muted">
-        {label.toUpperCase()}
+      <Text variant="body" tone="secondary">
+        {label}
       </Text>
       {children}
       {hint ? (

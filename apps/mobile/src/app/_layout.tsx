@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router/stack';
 import { ThemeProvider as NavigationThemeProvider, DarkTheme, DefaultTheme } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -10,6 +10,7 @@ import { AuthProvider } from '@/hooks/use-auth';
 import { PreferencesProvider } from '@/hooks/use-preferences-store';
 import { WeightProvider } from '@/hooks/use-weight-store';
 import { ThemeProvider, useTheme } from '@/theme';
+import { gradientBackground } from '@/theme/gradient';
 
 /** Los sheets comparten configuracion salvo la altura. */
 const sheet = (detents: number[]) =>
@@ -26,15 +27,15 @@ function Navigation() {
   return (
     <NavigationThemeProvider value={theme.scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerTitleStyle: { fontFamily: 'Outfit', fontSize: 21, fontWeight: '500' }, headerBackground: () => <View style={[{ flex: 1 }, gradientBackground(theme.gradients.header)]} /> }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="auth-callback" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="food-search" options={Platform.OS === 'android' ? { presentation: 'card', animation: 'slide_from_right', gestureEnabled: false } : sheet([0.9, 1.0])} />
         <Stack.Screen name="food-portion" options={sheet([0.65, 0.9])} />
-        <Stack.Screen name="create-food" options={sheet([0.85, 1.0])} />
-        <Stack.Screen name="food-library-food" options={sheet([0.9, 1.0])} />
+        <Stack.Screen name="create-food" options={Platform.OS === 'android' ? { presentation: 'card' } : sheet([0.85, 1.0])} />
+        <Stack.Screen name="food-library-food" options={Platform.OS === 'android' ? { presentation: 'card' } : sheet([0.9, 1.0])} />
         <Stack.Screen name="date-picker" options={sheet([0.6])} />
         <Stack.Screen name="food-edit" options={sheet([0.6, 0.95])} />
         <Stack.Screen name="batch-move" options={sheet([0.55])} />

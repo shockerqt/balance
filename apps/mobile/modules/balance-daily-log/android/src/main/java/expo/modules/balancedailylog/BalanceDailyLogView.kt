@@ -141,6 +141,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
   var selected by remember { mutableStateOf(setOf<String>()) }
   var selectionDate by remember { mutableStateOf(settled) }
   var calendar by remember { mutableStateOf(false) }
+  var nutrition by remember { mutableStateOf(false) }
   var deleteConfirmation by remember { mutableStateOf(false) }
   var moveTime by remember { mutableStateOf(false) }
   var copyDraft by remember { mutableStateOf<SelectionCopyDraft?>(null) }
@@ -182,7 +183,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
     selected = if (selectionDate != settled || !active) emptySet() else selected.intersect(available)
     selectionDate = settled
     if (!active || copyDraft?.ids?.any { it !in available } == true) { copyDraft = null; copyChooseDate = false }
-    if (!active) { calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false; copyNotice = "" }
+    if (!active) { nutrition = false; calendar = false; deleteConfirmation = false; moveTime = false; registering = false; weightDialog = false; copyNotice = "" }
   }
   LaunchedEffect(copyStatus) {
     val draft = copyDraft
@@ -221,26 +222,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
     }
     if (destination == 0) {
     destinations.SaveableStateProvider(0) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = WireSpace.Page, vertical = WireSpace.Small), verticalAlignment = Alignment.CenterVertically) {
-      Column(Modifier.weight(1f)) {
-        Text("ALIMENTOS", fontSize = 11.sp, letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(visible.format(monthFormat).replaceFirstChar { it.titlecase(spanish) }, style = MaterialTheme.typography.titleLarge)
-      }
-      TextButton(onClick = { go(today) }, enabled = !locked && selected.isEmpty()) { Text("Hoy") }
-      IconButton(onClick = { calendar = true }, enabled = !locked && selected.isEmpty(),
-        modifier = Modifier.semantics { contentDescription = "Elegir fecha" }) { Icon(WireIcons.Calendar, null) }
-    }
-    val weekStart = visible.minusDays((visible.dayOfWeek.value - 1).toLong())
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-      repeat(7) { offset ->
-        val date = weekStart.plusDays(offset.toLong())
-        val chosen = date == visible
-        val day = days.optJSONObject(date.toString()) ?: empty
-        WireDateCell(date, chosen, day, !locked && selected.isEmpty()) { go(date) }
-
-      }
-    }
-    Spacer(Modifier.height(4.dp))
+    WireDiaryHeader(visible, today, days, empty, !locked && selected.isEmpty(), { go(it) }, { calendar = true }, { nutrition = true })
     HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth(),
       beyondViewportPageCount = 1, userScrollEnabled = active && !pendingCommand && selected.isEmpty(), key = { it }) { page ->
       val date = DailyLogDates.date(page)
@@ -308,7 +290,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text("Registrar", style = MaterialTheme.typography.titleLarge)
       Text(wireLongDate(LocalDate.parse(measurementDate)), color = MaterialTheme.colorScheme.onSurfaceVariant)
-      Button(onClick = {
+      OrganicButton(onClick = {
         registering = false; destination = 0
         val target = LocalDate.parse(measurementDate)
         scope.launch { pager.scrollToPage(DailyLogDates.page(target)) }
@@ -324,42 +306,43 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
     if (!locked) emitExtra(kind, LocalDate.parse(measurementDate), emptyList(), null, appliedCommand!!.revision, input)
     weightDialog = false
   }
+  if (nutrition && active) WireNutritionSheet(visible, days.optJSONObject(visible.toString()) ?: empty) { nutrition = false }
   if (calendar) {
     val state = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(settled), yearRange = 1900..9999)
     DatePickerDialog(onDismissRequest = { calendar = false },
-      confirmButton = { TextButton(onClick = {
+      confirmButton = { OrganicButton(onClick = {
         state.selectedDateMillis?.let { go(DailyLogDates.fromUtcMillis(it)) }; calendar = false
       }, enabled = state.selectedDateMillis != null) { Text("Ir al día") } },
-      dismissButton = { TextButton(onClick = { calendar = false }) { Text("Cancelar") } }) {
+      dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { calendar = false }) { Text("Cancelar") } }) {
       DatePicker(state = state, title = { Text("Elegir fecha", Modifier.padding(24.dp)) })
     }
   }
-  if (deleteConfirmation) AlertDialog(onDismissRequest = { deleteConfirmation = false },
+  if (deleteConfirmation) AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { deleteConfirmation = false },
     title = { Text("Eliminar ${selected.size} registros") },
     text = { Text("Se eliminarán los alimentos seleccionados de este día.") },
-    confirmButton = { TextButton(onClick = { action("delete", selected.toList()); selected = emptySet(); deleteConfirmation = false }) { Text("Eliminar") } },
-    dismissButton = { TextButton(onClick = { deleteConfirmation = false }) { Text("Cancelar") } })
+    confirmButton = { OrganicButton(onClick = { action("delete", selected.toList()); selected = emptySet(); deleteConfirmation = false }) { Text("Eliminar") } },
+    dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { deleteConfirmation = false }) { Text("Cancelar") } })
   if (moveTime) {
     val firstTime = foods(settledDay).firstOrNull { it.optString("id") in selected }?.optString("time") ?: "12:00"
     val state = rememberTimePickerState(initialHour = firstTime.substringBefore(":").toIntOrNull() ?: 12,
       initialMinute = firstTime.substringAfter(":").toIntOrNull() ?: 0, is24Hour = true)
-    AlertDialog(onDismissRequest = { moveTime = false }, title = { Text("Cambiar hora") },
+    AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { moveTime = false }, title = { Text("Cambiar hora") },
       text = { TimeInput(state = state) },
-      confirmButton = { TextButton(onClick = {
+      confirmButton = { OrganicButton(onClick = {
         action("move", selected.toList(), String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
         selected = emptySet(); moveTime = false
-      }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = { moveTime = false }) { Text("Cancelar") } })
+      }) { Text("Guardar") } }, dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { moveTime = false }) { Text("Cancelar") } })
   }
   val draft = copyDraft
   if (draft != null && active && copyEnabled) {
     if (copyChooseDate) {
       val dateState = rememberDatePickerState(initialSelectedDateMillis = DailyLogDates.utcMillis(draft.destinationDate), yearRange = 1970..9999)
       DatePickerDialog(onDismissRequest = { copyChooseDate = false },
-        confirmButton = { TextButton(onClick = {
+        confirmButton = { OrganicButton(onClick = {
           dateState.selectedDateMillis?.let { copyDraft = draft.copy(destinationDate = DailyLogDates.fromUtcMillis(it), operationId = UUID.randomUUID().toString(), error = "") }
           copyChooseDate = false
         }, enabled = dateState.selectedDateMillis != null) { Text("Elegir fecha") } },
-        dismissButton = { TextButton(onClick = { copyChooseDate = false }) { Text("Volver") } }) {
+        dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { copyChooseDate = false }) { Text("Volver") } }) {
         DatePicker(state = dateState, title = { Text("Destino de la copia", Modifier.padding(24.dp)) })
       }
     } else {
@@ -369,7 +352,7 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
       LaunchedEffect(chosenTime) {
         if (!draft.saving && chosenTime != draft.time) copyDraft = draft.copy(time = chosenTime, operationId = UUID.randomUUID().toString(), error = "")
       }
-      AlertDialog(onDismissRequest = { if (!draft.saving) copyDraft = null },
+      AlertDialog(containerColor = MaterialTheme.colorScheme.surface, shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp), onDismissRequest = { if (!draft.saving) copyDraft = null },
         title = { Text("Copiar ${draft.ids.size} ${if (draft.ids.size == 1) "registro" else "registros"}") },
         text = {
           Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -385,13 +368,13 @@ private fun DailyLog(data: JSONObject, command: DateCommand, active: Boolean, co
               modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
           }
         },
-        confirmButton = { TextButton(onClick = {
+        confirmButton = { OrganicButton(onClick = {
           val submitting = draft.copy(time = chosenTime, saving = true, error = "")
           copyDraft = submitting
           emitExtra("copy", draft.sourceDate, draft.ids, chosenTime, appliedCommand!!.revision,
             mapOf("operationId" to draft.operationId, "destinationDate" to draft.destinationDate.toString(), "revisions" to draft.revisions))
         }, enabled = !locked && !draft.saving) { Text(if (draft.saving) "Guardando…" else if (draft.error.isNotEmpty()) "Reintentar" else "Copiar") } },
-        dismissButton = { TextButton(onClick = { copyDraft = null }, enabled = !draft.saving) { Text("Cancelar") } })
+        dismissButton = { FilledTonalButton(modifier = Modifier.heightIn(min = 48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), onClick = { copyDraft = null }, enabled = !draft.saving) { Text("Cancelar") } })
     }
   }
 }

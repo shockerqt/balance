@@ -17,6 +17,12 @@ android {
     versionName "1.0.0"
   }
   buildFeatures { compose true }
+  testOptions {
+    unitTests.includeAndroidResources = true
+    unitTests.all {
+      systemProperty 'organic.screenshots.dir', layout.buildDirectory.dir('outputs/organic-screenshots').get().asFile.absolutePath
+    }
+  }
   compileOptions {
     coreLibraryDesugaringEnabled true
     sourceCompatibility JavaVersion.VERSION_17
@@ -31,4 +37,8 @@ dependencies {
   implementation 'androidx.activity:activity-compose:1.12.4'
   coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
   testImplementation 'junit:junit:4.13.2'
+  testImplementation platform('androidx.compose:compose-bom:2026.03.01')
+  testImplementation 'org.robolectric:robolectric:4.16.1'
+  testImplementation 'androidx.compose.ui:ui-test-junit4'
+  debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
