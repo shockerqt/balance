@@ -14,7 +14,6 @@ use axum::{
 #[derive(Clone)]
 pub struct CurrentUser {
     pub id: i32,
-    pub email: String,
 }
 
 pub struct AuthError {
@@ -38,10 +37,10 @@ impl AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        if self.status == StatusCode::UNAUTHORIZED {
-            if let Some(challenge) = self.challenge {
-                headers.insert(axum::http::header::WWW_AUTHENTICATE, challenge);
-            }
+        if self.status == StatusCode::UNAUTHORIZED
+            && let Some(challenge) = self.challenge
+        {
+            headers.insert(axum::http::header::WWW_AUTHENTICATE, challenge);
         }
         (self.status, headers).into_response()
     }
@@ -150,13 +149,7 @@ pub async fn authenticate_token(
         }
     };
 
-    Ok((
-        CurrentUser {
-            id: user.id,
-            email: user.email,
-        },
-        claims.exp,
-    ))
+    Ok((CurrentUser { id: user.id }, claims.exp))
 }
 
 async fn resolve_subject_user(

@@ -22,14 +22,6 @@ pub struct NewUser {
     pub picture: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct UpdateUser {
-    pub name: Option<String>,
-    pub family_name: Option<String>,
-    pub given_name: Option<String>,
-    pub picture: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct UserDatasource {
     pub pool: PgPool,
@@ -149,30 +141,6 @@ impl UserDatasource {
         .await?;
         tx.commit().await?;
         Ok(created)
-    }
-
-    pub async fn update(&self, user_id: i32, user: &UpdateUser) -> Result<User, sqlx::Error> {
-        let rec = sqlx::query_as!(
-            User,
-            r#"
-            UPDATE users
-            SET name = $1,
-                family_name = $2,
-                given_name = $3,
-                picture = $4
-            WHERE id = $5
-            RETURNING id, email, name, created_at, family_name, given_name, picture
-            "#,
-            user.name,
-            user.family_name,
-            user.given_name,
-            user.picture,
-            user_id
-        )
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(rec)
     }
 }
 

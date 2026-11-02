@@ -153,6 +153,17 @@ function isNutritionSnapshot(value: unknown): value is NutritionSnapshot {
   return snapshot.schemaVersion === 2 && isCanonicalUnit(snapshot.canonicalUnit) && isNutrition(snapshot.nutritionPer100);
 }
 
+function isMealLogCopySource(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  return (
+    Object.keys(source).every(key => key === 'id' || key === 'updatedAt') &&
+    typeof source.id === 'string' && source.id.length > 0 && source.id === source.id.trim() &&
+    typeof source.updatedAt === 'number' && Number.isSafeInteger(source.updatedAt) && source.updatedAt > 0
+  );
+}
+
 function isMealLogEntry(value: unknown, canonicalQuantity: number): value is MealLogEntry {
   if (!value || typeof value !== 'object') return false;
   const entry = value as Record<string, unknown>;
@@ -188,7 +199,9 @@ export function isMealLogDoc(value: unknown): value is MealLogDoc {
     typeof doc.consumedAt === 'number' && Number.isFinite(doc.consumedAt) &&
     typeof doc.updatedAt === 'number' &&
     typeof doc._deleted === 'boolean' &&
-    isImportProvenance(doc.provenance)
+    isImportProvenance(doc.provenance) &&
+    isMealLogCopySource(doc.copySource) &&
+    (doc.copySource === undefined || doc.provenance === undefined || doc.provenance === null)
   );
 }
 
