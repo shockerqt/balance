@@ -124,6 +124,7 @@ interface MealStoreContextType {
   dayLogs: Record<string, DayLog>;
   mealDocuments: MealLogDoc[];
   registerMealLog: (document: MealLogDoc) => Promise<void>;
+  registerMealLogs: (documents: MealLogDoc[]) => Promise<void>;
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
   addMultipleFoods: (dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => void;
   updateFood: (dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => void;
@@ -209,11 +210,16 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         await updateLogs(previous => mergeLogs(mergeLogs(previous, pending), documents));
       },
       onPushRejected: (rejections) => {
-        const rejectedIds = new Set(
-          rejections.filter((value) => isMealLogDoc(value.document)).map((value) => value.document.id)
+        const rejectedRevisions = new Map(
+          rejections.filter((value) => isMealLogDoc(value.document)).map((value) => [value.document.id, value.document.updatedAt])
         );
-        if (cancelled || !rejectedIds.size) return;
-        const persisted = updateLogs(previous => previous.filter(doc => !rejectedIds.has(doc.id)));
+        if (cancelled || !rejectedRevisions.size) return;
+        const persisted = updateLogs(previous => previous.filter(doc => {
+          const rejectedAt = rejectedRevisions.get(doc.id);
+          // An answer belongs to its sent revision, not an edit queued while
+          // that answer was in flight. Keep the newer local value visible.
+          return rejectedAt === undefined || doc.updatedAt > rejectedAt;
+        }));
         void syncClient.resetCollection('mealLogs');
         return persisted;
       },
@@ -227,10 +233,11 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Outbox persistence owns durability; only acknowledge the native editor
   // after enqueue succeeds. Never publish a late save into a different account.
-  const registerMealLog = useCallback(async (document: MealLogDoc) => {
-    if (!isMealLogDoc(document) || document._deleted) throw new Error('INVALID_MEAL_LOG');
+  const registerMealLogs = useCallback(async (documents: MealLogDoc[]) => {
+    if (!documents.length || new Set(documents.map(doc => doc.id)).size !== documents.length ||
+        documents.some(document => !isMealLogDoc(document) || document._deleted)) throw new Error('INVALID_MEAL_LOG');
     if (!scope.active || currentNamespace.current !== namespace) throw new Error('STALE_ACCOUNT');
-    await syncClient.enqueue('mealLogs', document);
+    await syncClient.enqueueBatch('mealLogs', documents.map(document => ({ document })));
     if (!scope.active || currentNamespace.current !== namespace) return;
     // A macrotask lets the editor observe the durable receipt before any full
     // history merge/stringify or derived React/native work. Never persist a
@@ -256,6 +263,8 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
     }, 0);
   }, [namespace, updateLogs, scope]);
+
+  const registerMealLog = useCallback((document: MealLogDoc) => registerMealLogs([document]), [registerMealLogs]);
 
   const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
     const doc = docFromFood(dateId, food, uuid());
@@ -283,7 +292,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         current,
         updated.portion ?? display.portion,
         consumedAt,
-        Date.now()
+        Math.max(Date.now(), current.updatedAt + 1)
       );
       if (!nextDoc) return previous;
       const next = mergeLogs(previous, [nextDoc]);
@@ -297,7 +306,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     void updateLogs((previous) => {
       const current = previous.find((doc) => doc.id === foodId);
       if (!current) return previous;
-      const deleted = { ...current, updatedAt: Date.now(), _deleted: true };
+      const deleted = { ...current, updatedAt: Math.max(Date.now(), current.updatedAt + 1), _deleted: true };
       const next = mergeLogs(previous, [deleted]);
       void syncClient.enqueue('mealLogs', deleted).catch(() => undefined);
       return next;
@@ -308,7 +317,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     void dateId;
     const ids = new Set(foodIds);
     void updateLogs((previous) => {
-      const deleted = previous.filter((doc) => ids.has(doc.id)).map((doc) => ({ ...doc, updatedAt: Date.now(), _deleted: true }));
+      const deleted = previous.filter((doc) => ids.has(doc.id)).map((doc) => ({ ...doc, updatedAt: Math.max(Date.now(), doc.updatedAt + 1), _deleted: true }));
       if (!deleted.length) return previous;
       const next = mergeLogs(previous, deleted);
       for (const doc of deleted) void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
@@ -324,7 +333,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const changed = previous.filter((doc) => ids.has(doc.id) && !doc._deleted).map((doc) => ({
         ...doc,
         consumedAt,
-        updatedAt: Date.now(),
+        updatedAt: Math.max(Date.now(), doc.updatedAt + 1),
       }));
       if (!changed.length) return previous;
       const next = mergeLogs(previous, changed);
@@ -344,6 +353,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dayLogs,
     mealDocuments: logs,
     registerMealLog,
+    registerMealLogs,
     addFood,
     addMultipleFoods,
     updateFood,
@@ -351,7 +361,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteMultipleFoods,
     moveMultipleFoodsTime,
     replaceMealDocuments,
-  }), [dayLogs, logs, registerMealLog, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  }), [dayLogs, logs, registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
 };
 
