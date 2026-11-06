@@ -33,6 +33,7 @@ export function InteractiveDayWindow({ dateId, revision, position, interaction, 
   const commandRevision = useSharedValue(revision);
   const gestureRevision = useSharedValue(revision);
   const generation = useSharedValue(0);
+  const gestureGeneration = useSharedValue(0);
   const enabled = useSharedValue(active);
   const dragging = useSharedValue(false);
   const settling = useSharedValue(false);
@@ -60,23 +61,27 @@ export function InteractiveDayWindow({ dateId, revision, position, interaction, 
     return () => { mounted.current = false; enabled.value = false; cancelAnimation(position); };
   }, [enabled, position]);
 
-  const reportEnd = useCallback((target: number, expectedRevision: number, changed: boolean) => {
-    if (!mounted.current) return;
-    if (changed && acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) {
+  const reportEnd = useCallback((target: number, expectedRevision: number, expectedGeneration: number) => {
+    if (!mounted.current || expectedGeneration !== generation.value) return;
+    if (acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) {
       latest.current.onSettle(epochDayToDateId(target), expectedRevision);
     }
-  }, []);
+  }, [generation]);
 
   const gesture = useMemo(() => Gesture.Pan()
     .enabled(active).maxPointers(1).activeOffsetX([-16, 16]).failOffsetY([-12, 12])
-    .onStart(() => {
-      if (!enabled.value || settling.value) return;
+    .onBegin(() => {
       gestureRevision.value = commandRevision.value;
+      gestureGeneration.value = generation.value;
+    })
+    .onStart(() => {
+      if (!enabled.value || settling.value || gestureRevision.value !== commandRevision.value ||
+          gestureGeneration.value !== generation.value) return;
       dragging.value = true;
       interaction.value = 1;
     })
     .onUpdate(event => {
-      if (!dragging.value || gestureRevision.value !== commandRevision.value) return;
+      if (!dragging.value || gestureRevision.value !== commandRevision.value || gestureGeneration.value !== generation.value) return;
       position.value = anchor.value + Math.max(-1, Math.min(1, -event.translationX / width));
     })
     .onEnd((event, success) => {
@@ -96,7 +101,7 @@ export function InteractiveDayWindow({ dateId, revision, position, interaction, 
         // Lock changed pages until React has installed their prepared neighbors.
         interaction.value = 0;
         if (!offset) settling.value = false;
-        if (offset) runOnJS(reportEnd)(target, expected, true);
+        if (offset) runOnJS(reportEnd)(target, expected, token);
       });
     })
     .onFinalize(() => {
@@ -104,7 +109,7 @@ export function InteractiveDayWindow({ dateId, revision, position, interaction, 
       dragging.value = false;
       interaction.value = 0;
       position.value = withSpring(anchor.value, { reduceMotion: ReduceMotion.System });
-    }), [active, anchor, commandRevision, dragging, enabled, generation, gestureRevision, interaction, position, reportEnd, settling, width]);
+    }), [active, anchor, commandRevision, dragging, enabled, generation, gestureGeneration, gestureRevision, interaction, position, reportEnd, settling, width]);
 
   return <GestureDetector gesture={gesture}>
     <View collapsable={false} style={styles.viewport} onLayout={event => {

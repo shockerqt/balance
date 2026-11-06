@@ -32,7 +32,7 @@ const hooks = registerHooks({
         const handlers = {};
         const gesture = { handlers };
         for (const name of ['enabled', 'maxPointers', 'activeOffsetX', 'failOffsetY']) gesture[name] = () => gesture;
-        for (const name of ['onStart', 'onUpdate', 'onEnd', 'onFinalize']) gesture[name] = fn => { handlers[name] = fn; return gesture; };
+        for (const name of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) gesture[name] = fn => { handlers[name] = fn; return gesture; };
         globalThis.__pagerTest.gestures.push(gesture);
         return gesture;
       } };
@@ -86,7 +86,7 @@ function setup() {
     return React.createElement(React.Profiler, { id: 'host', onRender: () => commits++ },
       React.createElement(InteractiveDayWindow, { dateId: date, revision: nav.getRevision(), position, interaction, active, onSettle: settle, renderDay }));
   }
-  return { nav, position, interaction, Host, commits: () => commits, blur: () => { active = false; } };
+  return { nav, position, interaction, Host, commits: () => commits, blur: () => { active = false; }, focus: () => { active = true; } };
 }
 
 test('drag frames update translation with zero React commits; only completed settle changes the authority', async () => {
@@ -95,7 +95,7 @@ test('drag frames update translation with zero React commits; only completed set
   const neighbor = pane(tree, '2026-11-07');
   const baseline = app.commits();
   const g = state.gestures.at(-1).handlers;
-  await act(() => { g.onStart(); flushJS(); for (let px = 1; px <= 200; px++) g.onUpdate({ translationX: -px }); });
+  await act(() => { g.onBegin(); g.onStart(); flushJS(); for (let px = 1; px <= 200; px++) g.onUpdate({ translationX: -px }); });
   assert.equal(app.commits(), baseline);
   assert.equal(app.nav.get(), '2026-11-06');
   assert.equal(app.interaction.value, 1);
@@ -114,7 +114,7 @@ test('distant jumps mount the target directly before preparing neighbors and inv
   const app = setup(); let tree;
   await act(() => { tree = create(React.createElement(app.Host)); });
   const g = state.gestures.at(-1).handlers;
-  await act(() => { g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position); });
+  await act(() => { g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position); });
   await act(() => app.nav.set('2040-01-01'));
   assert.equal(app.position.value, dateIdToEpochDay('2040-01-01'));
   assert.equal(app.position.pending, null);
@@ -131,16 +131,41 @@ test('short and cancelled drags return to the current date; blur rejects queued 
   const app = setup(); let tree;
   await act(() => { tree = create(React.createElement(app.Host)); });
   let g = state.gestures.at(-1).handlers;
-  await act(() => { g.onStart(); g.onUpdate({ translationX: -20 }); g.onEnd({ translationX: -20, velocityX: 0 }, true); finish(app.position); flushJS(); });
+  await act(() => { g.onBegin(); g.onStart(); g.onUpdate({ translationX: -20 }); g.onEnd({ translationX: -20, velocityX: 0 }, true); finish(app.position); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-06');
-  await act(() => { g.onStart(); g.onUpdate({ translationX: -200 }); g.onFinalize(); finish(app.position); flushJS(); });
+  await act(() => { g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 }); g.onFinalize(); finish(app.position); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-06');
-  await act(() => { g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position); });
+  await act(() => { g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position); });
   app.blur();
   await act(() => tree.update(React.createElement(app.Host)));
   await act(() => flushJS());
   assert.equal(app.nav.get(), '2026-11-06');
   assert.equal(tree.root.findAllByType('AnimatedView').every(p => p.props.pointerEvents === 'none'), true);
+  await act(() => tree.unmount());
+});
+
+test('a queued settle cannot survive blur and return with the same revision', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const g = state.gestures.at(-1).handlers;
+  await act(() => { g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position); });
+  app.blur(); await act(() => tree.update(React.createElement(app.Host)));
+  app.focus(); await act(() => tree.update(React.createElement(app.Host)));
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2026-11-06');
+  assert.equal(app.position.value, dateIdToEpochDay('2026-11-06'));
+  await act(() => tree.unmount());
+});
+
+test('an external command before pan activation cancels that touch sequence', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const g = state.gestures.at(-1).handlers;
+  await act(() => g.onBegin());
+  await act(() => app.nav.shift(1));
+  await act(() => { g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-07');
+  assert.equal(app.position.pending, null);
   await act(() => tree.unmount());
 });
 
