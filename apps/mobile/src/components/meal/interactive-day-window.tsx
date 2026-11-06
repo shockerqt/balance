@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { cancelAnimation, ReduceMotion, runOnJS, useAnimatedStyle, useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
+import Animated, { cancelAnimation, ReduceMotion, runOnJS, runOnUI, useAnimatedStyle, useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
 import { dateIdToEpochDay, epochDayToDateId, shiftDateId } from '../../lib/dates';
 import { acceptDaySettle, dayPagerOffset } from '../../lib/day-pager';
 
@@ -48,6 +48,8 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   const commandRevision = useSharedValue(revision);
   const gestureRevision = useSharedValue(revision);
   const generation = useSharedValue(0);
+  const uiSession = useSharedValue(0);
+  const commandSession = useRef(0);
   const gestureGeneration = useSharedValue(0);
   const enabled = useSharedValue(active);
   const dragging = useSharedValue(false);
@@ -56,15 +58,15 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
 
   useLayoutEffect(() => { latest.current = { dateId, revision, readRevision, active, onSettle }; });
 
-  const prepareDestination = useCallback((target: number, token: number) => {
-    if (!mounted.current || token !== generation.value || !latest.current.active || interaction.value === 1) return;
+  const prepareDestination = useCallback((target: number, token: number, session: number) => {
+    if (!mounted.current || session !== commandSession.current || token !== generation.value || !latest.current.active || interaction.value === 1) return;
     const next = epochDayToDateId(target);
     setPrepared(previous => previous.dateId === next && previous.radius === PREPARED_RADIUS
       ? previous : { dateId: next, radius: PREPARED_RADIUS });
   }, [generation, interaction]);
 
-  const reportEnd = useCallback((target: number, expectedRevision: number, token: number) => {
-    if (!mounted.current || token !== generation.value ||
+  const reportEnd = useCallback((target: number, expectedRevision: number, token: number, session: number) => {
+    if (!mounted.current || session !== commandSession.current || token !== generation.value ||
         expectedRevision !== latest.current.readRevision() ||
         !acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) return;
     const next = epochDayToDateId(target);
@@ -82,6 +84,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
     const target = destination.value;
     const visibleTarget = Math.max(lowerBound.value, Math.min(upperBound.value, target));
     const token = generation.value;
+    const session = uiSession.value;
     interaction.value = 2;
     position.value = withSpring(visibleTarget, {
       stiffness: 900, damping: 60, mass: 1, energyThreshold: 0.0001, velocity,
@@ -91,35 +94,41 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       // If JS was busy through several flicks, hold the rendered edge rather
       // than reveal an unprepared day. Preparation resumes the latest intent.
       if (visibleTarget !== destination.value) {
-        runOnJS(prepareDestination)(destination.value, token);
+        runOnJS(prepareDestination)(destination.value, token, session);
         return;
       }
       interaction.value = 0;
-      runOnJS(reportEnd)(target, commandRevision.value, token);
+      runOnJS(reportEnd)(target, commandRevision.value, token, session);
     });
-  }, [commandRevision, destination, dragging, enabled, generation, interaction, lowerBound, position, prepareDestination, reportEnd, upperBound]);
+  }, [commandRevision, destination, dragging, enabled, generation, interaction, lowerBound, position, prepareDestination, reportEnd, uiSession, upperBound]);
 
   useLayoutEffect(() => {
     const previous = committed.current;
     const own = acknowledgement.current?.dateId === dateId && acknowledgement.current.revision === revision;
     const preserved = own && previous.width === width && previous.active === active;
     committed.current = { day, revision, width, active };
-    commandRevision.value = revision;
     acknowledgement.current = null;
-    if (preserved) {
-      // The authority acknowledges a settled page; presentation can already be
-      // following the next gesture. Update its revision without rebasing it.
-      if (gestureGeneration.value === generation.value) gestureRevision.value = revision;
-      if (interaction.value === 0 && destination.value !== day) animateToDestination(0);
-      return;
-    }
-    generation.value += 1;
-    cancelAnimation(position);
-    destination.value = day;
-    position.value = day;
-    dragging.value = false;
-    interaction.value = 0;
-    enabled.value = active && neighborsReady;
+    if (!preserved) commandSession.current += 1;
+    runOnUI((keepPresentation: boolean, nextDay: number, nextRevision: number, isActive: boolean, ready: boolean, session: number) => {
+      'worklet';
+      commandRevision.value = nextRevision;
+      uiSession.value = session;
+      if (keepPresentation) {
+        // Acknowledgement and a simultaneous next pan are serialized on the UI
+        // thread; JavaScript cannot reset a gesture between these operations.
+        if (gestureGeneration.value === generation.value) gestureRevision.value = nextRevision;
+        if (interaction.value === 0 && destination.value !== nextDay) animateToDestination(0);
+        return;
+      }
+      generation.value += 1;
+      cancelAnimation(position);
+      destination.value = nextDay;
+      position.value = nextDay;
+      dragging.value = false;
+      interaction.value = 0;
+      enabled.value = isActive && ready;
+    })(preserved, day, revision, active, neighborsReady, commandSession.current);
+    if (preserved) return;
     if (externalCommand || previous.width !== width || previous.active !== active) {
       const radius = externalCommand && Math.abs(day - previous.day) > 1 ? 0 : PREPARED_RADIUS;
       setPrepared(current => current.dateId === dateId && current.radius === radius ? current : { dateId, radius });
@@ -130,16 +139,18 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   }, [day, revision, width, active]);
 
   useLayoutEffect(() => {
-    lowerBound.value = lower;
-    upperBound.value = upper;
-    enabled.value = active && neighborsReady;
-    if (active && neighborsReady && interaction.value === 2 && !dragging.value) {
-      // A long JS stall can coalesce many release preparations. If the new
-      // bounded window excludes the old presentation, reveal its target before
-      // paint instead of animating through dates that have no prepared pane.
-      if (position.value < lower || position.value > upper) position.value = destination.value;
-      animateToDestination(0);
-    }
+    runOnUI((nextLower: number, nextUpper: number, isActive: boolean, ready: boolean) => {
+      'worklet';
+      lowerBound.value = nextLower;
+      upperBound.value = nextUpper;
+      enabled.value = isActive && ready;
+      if (isActive && ready && interaction.value === 2 && !dragging.value) {
+        // A long JS stall can coalesce many releases. Reveal the prepared
+        // destination before paint instead of moving through missing panes.
+        if (position.value < nextLower || position.value > nextUpper) position.value = destination.value;
+        animateToDestination(0);
+      }
+    })(lower, upper, active, neighborsReady);
   }, [active, animateToDestination, destination, dragging, enabled, interaction, lower, lowerBound, neighborsReady, position, upper, upperBound]);
   useEffect(() => {
     if (neighborsReady) return;
@@ -178,16 +189,16 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       dragging.value = false;
       destination.value = gestureBase.value + dayPagerOffset(event.translationX, event.velocityX, width, success);
       animateToDestination(-event.velocityX / width);
-      runOnJS(prepareDestination)(destination.value, generation.value);
+      runOnJS(prepareDestination)(destination.value, generation.value, uiSession.value);
     })
     .onFinalize(() => {
       if (!dragging.value) return;
       dragging.value = false;
       destination.value = gestureBase.value;
       animateToDestination(0);
-      runOnJS(prepareDestination)(destination.value, generation.value);
+      runOnJS(prepareDestination)(destination.value, generation.value, uiSession.value);
     }), [active, animateToDestination, commandRevision, destination, dragOrigin, dragging, enabled,
-    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, upperBound, width]);
+    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, uiSession, upperBound, width]);
 
   return <GestureDetector gesture={gesture}>
     <View collapsable={false} style={styles.viewport} onLayout={event => {

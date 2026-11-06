@@ -8,7 +8,7 @@ import { dateIdToEpochDay, epochDayToDateId } from '../src/lib/dates.ts';
 import { createLogNavigation } from '../src/lib/log-navigation.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const state = globalThis.__pagerTest = { gestures: [], js: [], frames: new Map(), nextFrame: 0 };
+const state = globalThis.__pagerTest = { gestures: [], js: [], ui: [], deferUI: false, frames: new Map(), nextFrame: 0 };
 const originalRAF = globalThis.requestAnimationFrame, originalCancel = globalThis.cancelAnimationFrame;
 globalThis.requestAnimationFrame = callback => { const id = ++state.nextFrame; state.frames.set(id, callback); return id; };
 globalThis.cancelAnimationFrame = id => state.frames.delete(id);
@@ -43,6 +43,7 @@ const hooks = registerHooks({
       export const ReduceMotion = { System: 'system' };
       export const useAnimatedStyle = read => ({ read });
       export const runOnJS = fn => (...args) => globalThis.__pagerTest.js.push(() => fn(...args));
+      export const runOnUI = fn => (...args) => { if (globalThis.__pagerTest.deferUI) globalThis.__pagerTest.ui.push(() => fn(...args)); else fn(...args); };
       export const withSpring = (target, config, callback) => ({ target, callback });
       export const cancelAnimation = value => { const pending = value.pending; value.pending = null; pending?.callback?.(false); };
       export function useSharedValue(initial) {
@@ -315,6 +316,25 @@ test('external date commands and resizing cancel a chain without accepting its q
   assert.equal(app.nav.get(), '2040-01-01');
   assert.equal(app.position.value, dateIdToEpochDay('2040-01-01'));
   assert.equal(app.position.pending, null);
+  await act(() => tree.unmount());
+});
+
+test('blur and return invalidate queued results even before asynchronous UI reset work executes', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position);
+  });
+  state.deferUI = true;
+  app.blur(); await act(() => tree.update(React.createElement(app.Host)));
+  app.focus(); await act(() => tree.update(React.createElement(app.Host)));
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2026-11-06');
+  state.deferUI = false;
+  await act(() => { for (const fn of state.ui.splice(0)) fn(); });
+  assert.equal(app.position.value, dateIdToEpochDay('2026-11-06'));
   await act(() => tree.unmount());
 });
 
