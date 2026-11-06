@@ -33,6 +33,7 @@ function AccountSpike() {
   const interaction = useSharedValue(0);
   const scrolling = useSharedValue(false);
   const collecting = useSharedValue(false);
+  const focused = useSharedValue(active);
   const frames = useSharedValue({ count: 0, totalMs: 0, maxMs: 0, over25ms: 0 });
   const diagnostics = useMemo(createPagerDiagnostics, []);
   const acknowledging = useRef(false);
@@ -40,16 +41,18 @@ function AccountSpike() {
     if (!acknowledging.current) diagnostics.command('jump');
   }), [diagnostics]);
   useEffect(() => {
-    if (!active) {
-      collecting.value = false;
-      scrolling.value = false;
-      diagnostics.stop();
-      setCapturing(false);
-    }
-  }, [active, collecting, scrolling, diagnostics]);
+    focused.value = active;
+    if (!active) scrolling.value = false;
+  }, [active, focused, scrolling]);
+  // Keep a trial alive through the calendar route so its return can be measured;
+  // only visible interaction contributes UI frames. Unmount ends the trial.
+  useEffect(() => () => {
+    collecting.value = false;
+    diagnostics.stop();
+  }, [collecting, diagnostics]);
 
   useFrameCallback(frame => {
-    if (!collecting.value || (interaction.value === 0 && !scrolling.value) || frame.timeSincePreviousFrame === null) return;
+    if (!collecting.value || !focused.value || (interaction.value === 0 && !scrolling.value) || frame.timeSincePreviousFrame === null) return;
     const ms = frame.timeSincePreviousFrame;
     const old = frames.value;
     frames.value = { count: old.count + 1, totalMs: old.totalMs + ms,
@@ -87,7 +90,7 @@ function AccountSpike() {
     }, null, 2));
   };
   return <Profiler id="rn-log-spike" onRender={(_id, _phase, duration, _base, _start, commitTime) => {
-    diagnostics.commit(interaction.value, duration, commitTime);
+    diagnostics.commit(active ? interaction.value : -1, duration, commitTime);
   }}>
     <Screen>
       <View style={{ padding: 12, gap: 8 }}>

@@ -19,7 +19,7 @@ This listens on localhost. Use an already approved connectivity procedure for
 the physical phone; this document does not authorize port exposure or a tunnel.
 Open Settings and choose **Comparar diario React Native**. The route is also
 `/rn-log-spike`. Both that route and its Settings entry require the development
-binary variant plus `EXPO_PUBLIC_BALANCE_RN_SPIKE=1`; Daily and production
+configuration variant plus `EXPO_PUBLIC_BALANCE_RN_SPIKE=1`; Daily and production
 redirect to the regular log even if the public switch is present. `__DEV__` is
 not the gate because it is false in this required minified trial.
 
@@ -54,6 +54,8 @@ sets `recycleItems`.
 Results remain local in memory. They contain engine/mode, bounded commit samples
 and aggregate UI-frame intervals during active pan/settle or vertical scrolling;
 no dates, foods, account identifiers, network traffic or persistence are added.
+Calendar navigation keeps the trial alive while pausing offscreen frame counts;
+Profiler samples while the route is unfocused use phase `-1`.
 The >25 ms count is a fixed exploratory threshold, not a refresh-rate adjusted
 jank percentage. UI-thread frame intervals do not prove input-to-pixel latency.
 There is no synthetic history mutation to manufacture a dense day.
