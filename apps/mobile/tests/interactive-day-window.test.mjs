@@ -79,12 +79,12 @@ function setup() {
   const interaction = { value: 0 };
   let commits = 0, active = true;
   const settle = (target, revision) => {
-    if (revision === nav.getRevision()) nav.shift(dateIdToEpochDay(target) - dateIdToEpochDay(nav.get()), revision);
+    if (revision === nav.getRevision()) { nav.shift(dateIdToEpochDay(target) - dateIdToEpochDay(nav.get()), revision); return nav.getRevision(); }
   };
   function Host() {
     const date = useSyncExternalStore(nav.subscribe, nav.get, nav.get);
     return React.createElement(React.Profiler, { id: 'host', onRender: () => commits++ },
-      React.createElement(InteractiveDayWindow, { dateId: date, revision: nav.getRevision(), position, interaction, active, onSettle: settle, renderDay }));
+      React.createElement(InteractiveDayWindow, { dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision, position, interaction, active, onSettle: settle, renderDay }));
   }
   return { nav, position, interaction, Host, commits: () => commits, blur: () => { active = false; }, focus: () => { active = true; } };
 }
@@ -123,7 +123,7 @@ test('distant jumps mount the target directly before preparing neighbors and inv
   await act(() => flushJS());
   assert.equal(app.nav.get(), '2040-01-01');
   await act(() => flushFrames());
-  assert.equal(tree.root.findAllByType('Day').length, 3);
+  assert.equal(tree.root.findAllByType('Day').length, 5);
   await act(() => tree.unmount());
 });
 
@@ -165,6 +165,155 @@ test('an external command before pan activation cancels that touch sequence', as
   await act(() => app.nav.shift(1));
   await act(() => { g.onStart(); g.onUpdate({ translationX: -200 }); g.onEnd({ translationX: -200, velocityX: 0 }, true); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-07');
+  assert.equal(app.position.pending, null);
+  await act(() => tree.unmount());
+});
+
+test('another swipe grabs the presentation immediately and accumulates the next day before the previous spring finishes', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const baseline = app.commits(), first = dateIdToEpochDay(app.nav.get());
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+    // The first spring is still moving, not at its target.
+    app.position.value = first + 0.6;
+    g.onBegin(); g.onStart();
+    assert.equal(app.interaction.value, 1);
+    assert.equal(app.position.value, first + 0.6, 'new touch never snaps to the old target');
+    g.onUpdate({ translationX: -80 });
+    assert.ok(Math.abs(app.position.value - first - 0.8) < 1e-9);
+    g.onEnd({ translationX: -80, velocityX: -900 }, true);
+  });
+  assert.equal(app.commits(), baseline, 'gesture frames and releases do not update React');
+  assert.equal(app.position.pending.target, first + 2);
+  assert.equal(app.nav.get(), '2026-11-06');
+  await act(() => flushJS());
+  await act(() => { finish(app.position); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
+  assert.equal(x(pane(tree, '2026-11-08')), 0);
+  await act(() => tree.unmount());
+});
+
+test('reversing or cancelling a grabbed spring preserves the intended date without a dead period', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const first = dateIdToEpochDay(app.nav.get());
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+    app.position.value = first + 0.6;
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: 160 });
+    g.onEnd({ translationX: 160, velocityX: 0 }, true);
+    assert.equal(app.position.pending.target, first);
+    finish(app.position); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-06');
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+    app.position.value = first + 0.6;
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -40 }); g.onFinalize();
+    assert.equal(app.position.pending.target, first + 1, 'cancel keeps the previous valid swipe intent');
+    finish(app.position); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-07');
+  await act(() => tree.unmount());
+});
+
+test('an authority acknowledgement arriving during the next drag does not reset its presentation', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const first = dateIdToEpochDay(app.nav.get());
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+    finish(app.position); flushJS(); // Authority notifies, React has not committed yet.
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -80 });
+  });
+  assert.equal(app.nav.get(), '2026-11-07');
+  assert.equal(app.interaction.value, 1);
+  assert.ok(Math.abs(app.position.value - first - 1.2) < 1e-9, 'acknowledgement does not rebase a live drag');
+  await act(() => {
+    g.onEnd({ translationX: -160, velocityX: -900 }, true);
+    finish(app.position); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('many rapid swipes with delayed JS retain the final intent and never animate through an unprepared gap', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const first = dateIdToEpochDay(app.nav.get()), baseline = app.commits();
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    for (let i = 0; i < 10; i++) {
+      g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+      g.onEnd({ translationX: -200, velocityX: -900 }, true);
+    }
+  });
+  assert.equal(app.commits(), baseline);
+  assert.ok(app.position.pending.target <= first + 2, 'presentation remains inside the rendered five-day window');
+  await act(() => flushJS());
+  assert.equal(tree.root.findAllByType('Day').length, 5, 'window stays bounded after coalescing releases');
+  assert.equal(app.position.value, first + 10, 'reveal the final prepared target before paint');
+  await act(() => { finish(app.position); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-16');
+  assert.equal(x(pane(tree, '2026-11-16')), 0);
+  await act(() => tree.unmount());
+});
+
+test('a completed spring with its JS acknowledgement queued cannot cancel the next active drag', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const first = dateIdToEpochDay(app.nav.get()), baseline = app.commits();
+  const g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position);
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -80 });
+    flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-06');
+  assert.equal(app.commits(), baseline, 'stale release preparation cannot commit during the new drag');
+  assert.equal(app.interaction.value, 1);
+  assert.ok(Math.abs(app.position.value - first - 1.2) < 1e-9);
+  await act(() => {
+    g.onEnd({ translationX: -160, velocityX: -900 }, true); finish(app.position); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('external date commands and resizing cancel a chain without accepting its queued result', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  let g = state.gestures.at(-1).handlers;
+  await act(() => {
+    for (let i = 0; i < 2; i++) {
+      g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+      g.onEnd({ translationX: -200, velocityX: -900 }, true);
+    }
+    finish(app.position);
+  });
+  await act(() => { app.nav.set('2040-01-01'); });
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2040-01-01');
+  assert.equal(app.position.value, dateIdToEpochDay('2040-01-01'));
+  await act(() => flushFrames());
+  g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true); finish(app.position);
+  });
+  await act(() => tree.root.findByType('View').props.onLayout({ nativeEvent: { layout: { width: 320 } } }));
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2040-01-01');
+  assert.equal(app.position.value, dateIdToEpochDay('2040-01-01'));
   assert.equal(app.position.pending, null);
   await act(() => tree.unmount());
 });

@@ -61,11 +61,10 @@ function AccountSpike() {
   const settle = useCallback((target: string, revision: number) => {
     // Recheck the live authority; React props can lag a calendar command.
     if (logsDateStore.getRevision() !== revision) return;
-    const offset = dateIdToEpochDay(target) - dateIdToEpochDay(logsDateStore.get());
-    if (Math.abs(offset) !== 1) return;
+    if (target === logsDateStore.get()) return logsDateStore.getRevision();
     acknowledging.current = true;
     diagnostics.command('settle');
-    try { logsDateStore.shift(offset, revision); }
+    try { logsDateStore.set(target); return logsDateStore.getRevision(); }
     finally { acknowledging.current = false; }
   }, [diagnostics]);
   const renderDay = useCallback((dateId: string) => <SpikeDay dateId={dateId} engine={engine} scrolling={scrolling} />, [engine, scrolling]);
@@ -105,7 +104,7 @@ function AccountSpike() {
       </View>
       <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
       {report ? <ScrollView style={{ maxHeight: 220 }}><Text selectable variant="caption">{report}</Text></ScrollView> : null}
-      <InteractiveDayWindow dateId={date} revision={logsDateStore.getRevision()} position={position}
+      <InteractiveDayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision} position={position}
         interaction={interaction} active={active} onSettle={settle} renderDay={renderDay} />
     </Screen>
   </Profiler>;

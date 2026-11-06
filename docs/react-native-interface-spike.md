@@ -76,7 +76,9 @@ must record their sync conditions.
 
 Renderer tests demonstrate zero React commits over 200 simulated gesture updates,
 fixed neighboring pane identity, post-spring date acknowledgement, stale revision
-rejection, blur cancellation and target-first distant jumps. Those are software
+rejection, blur cancellation and target-first distant jumps. Chained-swipe tests
+also cover interrupting springs, reversing/cancelling an interrupted gesture,
+acknowledgements arriving during the next drag, and ten releases with delayed JS. Those are software
 regressions, not instrumented physical-phone or Daily release evidence.
 
 ## Store and pager boundaries
@@ -97,8 +99,16 @@ identity/order reconciliation: this is not an O(delta) canonical store rewrite.
 
 The pager retains PreparedDayWindow's absolute calendar-day layout, using the
 installed Gesture Handler/Reanimated modules. Pan frames update shared UI values
-only. Position/velocity select one prepared neighbor, and only a completed spring
-reports to the date authority with its expected revision. External commands snap,
+only. Position/velocity advance at most one day per gesture, relative to the previous
+release's intended destination. A new pan grabs the current presentation without
+waiting for the spring or React acknowledgement. A bounded five-day window
+prepares at release; stale preparation callbacks are discarded during a new drag.
+If JS falls behind many gestures, presentation stays inside the prepared window
+until the final intended day is ready, then catches up without exposing an empty
+intermediate range. Only a completed final spring reports the settled date to the
+authority with its expected revision. An interrupted chain may settle several
+days from the last reported date; its acknowledgements do not command or rebase a
+newer active gesture. External commands snap,
 including adjacent calendar selections; distant jumps mount the target alone in
 the first commit and prepare neighbors on a later frame. Paging is paused until
 those neighbors exist. Focus, unmount, resize and external commands cancel stale

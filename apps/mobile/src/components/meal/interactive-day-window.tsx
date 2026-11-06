@@ -5,68 +5,151 @@ import Animated, { cancelAnimation, ReduceMotion, runOnJS, useAnimatedStyle, use
 import { dateIdToEpochDay, epochDayToDateId, shiftDateId } from '../../lib/dates';
 import { acceptDaySettle, dayPagerOffset } from '../../lib/day-pager';
 
-/** Evolves PreparedDayWindow's fixed absolute layout; React never handles frames. */
-export function InteractiveDayWindow({ dateId, revision, position, interaction, active = true, onSettle, renderDay }: {
+const PREPARED_RADIUS = 2;
+type Window = { dateId: string; radius: number };
+type Acknowledgement = { dateId: string; revision: number };
+
+/** Fixed absolute calendar-day layout. React never handles drag frames. */
+export function InteractiveDayWindow({ dateId, revision, readRevision, position, interaction, active = true, onSettle, renderDay }: {
   dateId: string;
   revision: number;
+  readRevision: () => number;
   position: SharedValue<number>;
   interaction: SharedValue<number>;
   active?: boolean;
-  onSettle: (date: string, expectedRevision: number) => void;
+  onSettle: (date: string, expectedRevision: number) => number | undefined;
   renderDay: (date: string) => React.ReactNode;
 }) {
   const { width: screenWidth } = useWindowDimensions();
   const [width, setWidth] = useState(screenWidth);
   const day = dateIdToEpochDay(dateId);
-  const previousDay = useRef(day);
-  const [preparedDate, setPreparedDate] = useState(dateId);
-  const dates = useMemo(() => Math.abs(previousDay.current - day) > 1 && preparedDate !== dateId
-    ? [dateId] : [shiftDateId(dateId, -1), dateId, shiftDateId(dateId, 1)], [dateId, day, preparedDate]);
-  const neighborsReady = dates.length === 3;
-  useLayoutEffect(() => { previousDay.current = day; }, [day]);
-  useEffect(() => {
-    if (neighborsReady) return;
-    const frame = requestAnimationFrame(() => setPreparedDate(dateId));
-    return () => cancelAnimationFrame(frame);
-  }, [dateId, neighborsReady]);
-  const anchor = useSharedValue(day);
+  const [prepared, setPrepared] = useState<Window>({ dateId, radius: PREPARED_RADIUS });
+  const acknowledgement = useRef<Acknowledgement | null>(null);
+  const committed = useRef({ day, revision, width, active });
+  const commandChanged = committed.current.day !== day || committed.current.revision !== revision;
+  const ownAcknowledgement = acknowledgement.current?.dateId === dateId && acknowledgement.current.revision === revision;
+  const externalCommand = commandChanged && !ownAcknowledgement;
+  // A distant external command mounts its target in the first commit, then
+  // prepares neighbors. Speculative release preparation never commands the date.
+  const window = externalCommand
+    ? { dateId, radius: Math.abs(day - committed.current.day) > 1 ? 0 : PREPARED_RADIUS }
+    : prepared;
+  const center = dateIdToEpochDay(window.dateId);
+  const lower = center - window.radius, upper = center + window.radius;
+  const neighborsReady = window.radius > 0;
+  const dates = useMemo(() => Array.from({ length: window.radius * 2 + 1 }, (_, i) =>
+    shiftDateId(window.dateId, i - window.radius)), [window.dateId, window.radius]);
+
+  const destination = useSharedValue(day);
+  const dragOrigin = useSharedValue(day);
+  const gestureBase = useSharedValue(day);
+  const lowerBound = useSharedValue(lower);
+  const upperBound = useSharedValue(upper);
   const commandRevision = useSharedValue(revision);
   const gestureRevision = useSharedValue(revision);
   const generation = useSharedValue(0);
   const gestureGeneration = useSharedValue(0);
   const enabled = useSharedValue(active);
   const dragging = useSharedValue(false);
-  const settling = useSharedValue(false);
-  const latest = useRef({ revision, active, onSettle });
+  const latest = useRef({ dateId, revision, readRevision, active, onSettle });
   const mounted = useRef(true);
 
+  useLayoutEffect(() => { latest.current = { dateId, revision, readRevision, active, onSettle }; });
+
+  const prepareDestination = useCallback((target: number, token: number) => {
+    if (!mounted.current || token !== generation.value || !latest.current.active || interaction.value === 1) return;
+    const next = epochDayToDateId(target);
+    setPrepared(previous => previous.dateId === next && previous.radius === PREPARED_RADIUS
+      ? previous : { dateId: next, radius: PREPARED_RADIUS });
+  }, [generation, interaction]);
+
+  const reportEnd = useCallback((target: number, expectedRevision: number, token: number) => {
+    if (!mounted.current || token !== generation.value ||
+        expectedRevision !== latest.current.readRevision() ||
+        !acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) return;
+    const next = epochDayToDateId(target);
+    if (next === latest.current.dateId) return;
+    // Set before the store notification: an acknowledgement may render
+    // synchronously, and must never cancel a newer drag already in progress.
+    const pending = { dateId: next, revision: expectedRevision + 1 };
+    acknowledgement.current = pending;
+    const accepted = latest.current.onSettle(next, expectedRevision);
+    if (accepted !== pending.revision && acknowledgement.current === pending) acknowledgement.current = null;
+  }, [generation]);
+
+  const animateToDestination = useCallback((velocity: number) => {
+    'worklet';
+    const target = destination.value;
+    const visibleTarget = Math.max(lowerBound.value, Math.min(upperBound.value, target));
+    const token = generation.value;
+    interaction.value = 2;
+    position.value = withSpring(visibleTarget, {
+      stiffness: 900, damping: 60, mass: 1, energyThreshold: 0.0001, velocity,
+      overshootClamping: true, reduceMotion: ReduceMotion.System,
+    }, finished => {
+      if (!finished || generation.value !== token || !enabled.value || dragging.value) return;
+      // If JS was busy through several flicks, hold the rendered edge rather
+      // than reveal an unprepared day. Preparation resumes the latest intent.
+      if (visibleTarget !== destination.value) {
+        runOnJS(prepareDestination)(destination.value, token);
+        return;
+      }
+      interaction.value = 0;
+      runOnJS(reportEnd)(target, commandRevision.value, token);
+    });
+  }, [commandRevision, destination, dragging, enabled, generation, interaction, lowerBound, position, prepareDestination, reportEnd, upperBound]);
+
   useLayoutEffect(() => {
-    latest.current = { revision, active, onSettle };
-  });
-  useLayoutEffect(() => {
+    const previous = committed.current;
+    const own = acknowledgement.current?.dateId === dateId && acknowledgement.current.revision === revision;
+    const preserved = own && previous.width === width && previous.active === active;
+    committed.current = { day, revision, width, active };
+    commandRevision.value = revision;
+    acknowledgement.current = null;
+    if (preserved) {
+      // The authority acknowledges a settled page; presentation can already be
+      // following the next gesture. Update its revision without rebasing it.
+      if (gestureGeneration.value === generation.value) gestureRevision.value = revision;
+      if (interaction.value === 0 && destination.value !== day) animateToDestination(0);
+      return;
+    }
     generation.value += 1;
     cancelAnimation(position);
-    anchor.value = day;
+    destination.value = day;
     position.value = day;
-    commandRevision.value = revision;
-    enabled.value = active && neighborsReady;
     dragging.value = false;
-    settling.value = false;
     interaction.value = 0;
-    // External commands, including adjacent calendar selections, snap directly.
-    // A settled acknowledgement is already at this position and never animates.
-  }, [day, revision, width, active, anchor, commandRevision, dragging, enabled, generation, interaction, neighborsReady, position, settling]);
+    enabled.value = active && neighborsReady;
+    if (externalCommand || previous.width !== width || previous.active !== active) {
+      const radius = externalCommand && Math.abs(day - previous.day) > 1 ? 0 : PREPARED_RADIUS;
+      setPrepared(current => current.dateId === dateId && current.radius === radius ? current : { dateId, radius });
+    }
+    // Only actual authority commands, focus and geometry changes reset motion.
+    // Neighbor preparation is deliberately excluded from this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, revision, width, active]);
+
+  useLayoutEffect(() => {
+    lowerBound.value = lower;
+    upperBound.value = upper;
+    enabled.value = active && neighborsReady;
+    if (active && neighborsReady && interaction.value === 2 && !dragging.value) {
+      // A long JS stall can coalesce many release preparations. If the new
+      // bounded window excludes the old presentation, reveal its target before
+      // paint instead of animating through dates that have no prepared pane.
+      if (position.value < lower || position.value > upper) position.value = destination.value;
+      animateToDestination(0);
+    }
+  }, [active, animateToDestination, destination, dragging, enabled, interaction, lower, lowerBound, neighborsReady, position, upper, upperBound]);
+  useEffect(() => {
+    if (neighborsReady) return;
+    const frame = requestAnimationFrame(() => setPrepared({ dateId, radius: PREPARED_RADIUS }));
+    return () => cancelAnimationFrame(frame);
+  }, [dateId, neighborsReady]);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; enabled.value = false; cancelAnimation(position); };
   }, [enabled, position]);
-
-  const reportEnd = useCallback((target: number, expectedRevision: number, expectedGeneration: number) => {
-    if (!mounted.current || expectedGeneration !== generation.value) return;
-    if (acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) {
-      latest.current.onSettle(epochDayToDateId(target), expectedRevision);
-    }
-  }, [generation]);
 
   const gesture = useMemo(() => Gesture.Pan()
     .enabled(active).maxPointers(1).activeOffsetX([-16, 16]).failOffsetY([-12, 12])
@@ -75,41 +158,36 @@ export function InteractiveDayWindow({ dateId, revision, position, interaction, 
       gestureGeneration.value = generation.value;
     })
     .onStart(() => {
-      if (!enabled.value || settling.value || gestureRevision.value !== commandRevision.value ||
-          gestureGeneration.value !== generation.value) return;
+      if (!enabled.value || gestureRevision.value !== commandRevision.value || gestureGeneration.value !== generation.value) return;
+      // Grab a settling page exactly where it is. Never wait for a spring tail
+      // or a React acknowledgement before accepting another horizontal gesture.
+      generation.value += 1;
+      gestureGeneration.value = generation.value;
+      cancelAnimation(position);
+      dragOrigin.value = position.value;
+      gestureBase.value = destination.value;
       dragging.value = true;
       interaction.value = 1;
     })
     .onUpdate(event => {
       if (!dragging.value || gestureRevision.value !== commandRevision.value || gestureGeneration.value !== generation.value) return;
-      position.value = anchor.value + Math.max(-1, Math.min(1, -event.translationX / width));
+      position.value = Math.max(lowerBound.value, Math.min(upperBound.value, dragOrigin.value - event.translationX / width));
     })
     .onEnd((event, success) => {
       if (!dragging.value) return;
       dragging.value = false;
-      settling.value = true;
-      interaction.value = 2;
-      const offset = dayPagerOffset(event.translationX, event.velocityX, width, success);
-      const target = anchor.value + offset;
-      const expected = gestureRevision.value;
-      const token = generation.value;
-      position.value = withSpring(target, {
-        stiffness: 900, damping: 120, mass: 1, velocity: -event.velocityX / width,
-        overshootClamping: true, reduceMotion: ReduceMotion.System,
-      }, finished => {
-        if (!finished || generation.value !== token || !enabled.value) return;
-        // Lock changed pages until React has installed their prepared neighbors.
-        interaction.value = 0;
-        if (!offset) settling.value = false;
-        if (offset) runOnJS(reportEnd)(target, expected, token);
-      });
+      destination.value = gestureBase.value + dayPagerOffset(event.translationX, event.velocityX, width, success);
+      animateToDestination(-event.velocityX / width);
+      runOnJS(prepareDestination)(destination.value, generation.value);
     })
     .onFinalize(() => {
       if (!dragging.value) return;
       dragging.value = false;
-      interaction.value = 0;
-      position.value = withSpring(anchor.value, { reduceMotion: ReduceMotion.System });
-    }), [active, anchor, commandRevision, dragging, enabled, generation, gestureGeneration, gestureRevision, interaction, position, reportEnd, settling, width]);
+      destination.value = gestureBase.value;
+      animateToDestination(0);
+      runOnJS(prepareDestination)(destination.value, generation.value);
+    }), [active, animateToDestination, commandRevision, destination, dragOrigin, dragging, enabled,
+    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, upperBound, width]);
 
   return <GestureDetector gesture={gesture}>
     <View collapsable={false} style={styles.viewport} onLayout={event => {
