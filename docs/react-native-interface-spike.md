@@ -77,7 +77,9 @@ must record their sync conditions.
 Renderer tests demonstrate zero React commits over 200 simulated gesture updates,
 fixed neighboring pane identity, post-spring date acknowledgement, stale revision
 rejection, blur cancellation and target-first distant jumps. Chained-swipe tests
-also cover interrupting springs, reversing/cancelling an interrupted gesture,
+also cover one spring per ordinary release with no new list mount during the
+slide, late bounds preserving the next spring, interrupting springs,
+reversing/cancelling an interrupted gesture,
 acknowledgements arriving during the next drag, and ten releases with delayed JS. Those are software
 regressions, not instrumented physical-phone or Daily release evidence.
 
@@ -101,8 +103,12 @@ The pager retains PreparedDayWindow's absolute calendar-day layout, using the
 installed Gesture Handler/Reanimated modules. Pan frames update shared UI values
 only. Position/velocity advance at most one day per gesture, relative to the previous
 release's intended destination. A new pan grabs the current presentation without
-waiting for the spring or React acknowledgement. A bounded five-day window
-prepares at release; stale preparation callbacks are discarded during a new drag.
+waiting for the spring or React acknowledgement. A bounded five-day window normally prepares after the final settle, keeping new
+list mounting and measurement off the ordinary slide. It prepares earlier only
+when a chained destination extends beyond the current window. Stale preparation
+callbacks are discarded during a new drag; bounds changes resume a spring only
+if it was waiting for unavailable content, preserving an already valid spring's
+velocity.
 If JS falls behind many gestures, presentation stays inside the prepared window
 until the final intended day is ready, then catches up without exposing an empty
 intermediate range. Only a completed final spring reports the settled date to the

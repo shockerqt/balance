@@ -53,6 +53,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   const gestureGeneration = useSharedValue(0);
   const enabled = useSharedValue(active);
   const dragging = useSharedValue(false);
+  const waitingForPreparation = useSharedValue(false);
   const latest = useRef({ dateId, revision, readRevision, active, onSettle });
   const mounted = useRef(true);
 
@@ -70,6 +71,10 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
         expectedRevision !== latest.current.readRevision() ||
         !acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) return;
     const next = epochDayToDateId(target);
+    // The spring is finished. Preparing the next offscreen list here avoids
+    // layout/measurement work during an ordinary animated transition.
+    setPrepared(previous => previous.dateId === next && previous.radius === PREPARED_RADIUS
+      ? previous : { dateId: next, radius: PREPARED_RADIUS });
     if (next === latest.current.dateId) return;
     // Set before the store notification: an acknowledgement may render
     // synchronously, and must never cancel a newer drag already in progress.
@@ -86,6 +91,8 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
     const token = generation.value;
     const session = uiSession.value;
     interaction.value = 2;
+    waitingForPreparation.value = visibleTarget !== target;
+    if (visibleTarget !== target) runOnJS(prepareDestination)(target, token, session);
     position.value = withSpring(visibleTarget, {
       stiffness: 900, damping: 60, mass: 1, energyThreshold: 0.0001, velocity,
       overshootClamping: true, reduceMotion: ReduceMotion.System,
@@ -100,7 +107,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       interaction.value = 0;
       runOnJS(reportEnd)(target, commandRevision.value, token, session);
     });
-  }, [commandRevision, destination, dragging, enabled, generation, interaction, lowerBound, position, prepareDestination, reportEnd, uiSession, upperBound]);
+  }, [commandRevision, destination, dragging, enabled, generation, interaction, lowerBound, position, prepareDestination, reportEnd, uiSession, upperBound, waitingForPreparation]);
 
   useLayoutEffect(() => {
     const previous = committed.current;
@@ -125,6 +132,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       destination.value = nextDay;
       position.value = nextDay;
       dragging.value = false;
+      waitingForPreparation.value = false;
       interaction.value = 0;
       enabled.value = isActive && ready;
     })(preserved, day, revision, active, neighborsReady, commandSession.current);
@@ -144,14 +152,14 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       lowerBound.value = nextLower;
       upperBound.value = nextUpper;
       enabled.value = isActive && ready;
-      if (isActive && ready && interaction.value === 2 && !dragging.value) {
+      if (isActive && ready && waitingForPreparation.value && interaction.value === 2 && !dragging.value) {
         // A long JS stall can coalesce many releases. Reveal the prepared
         // destination before paint instead of moving through missing panes.
         if (position.value < nextLower || position.value > nextUpper) position.value = destination.value;
         animateToDestination(0);
       }
     })(lower, upper, active, neighborsReady);
-  }, [active, animateToDestination, destination, dragging, enabled, interaction, lower, lowerBound, neighborsReady, position, upper, upperBound]);
+  }, [active, animateToDestination, destination, dragging, enabled, interaction, lower, lowerBound, neighborsReady, position, upper, upperBound, waitingForPreparation]);
   useEffect(() => {
     if (neighborsReady) return;
     const frame = requestAnimationFrame(() => setPrepared({ dateId, radius: PREPARED_RADIUS }));
@@ -175,6 +183,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       generation.value += 1;
       gestureGeneration.value = generation.value;
       cancelAnimation(position);
+      waitingForPreparation.value = false;
       dragOrigin.value = position.value;
       gestureBase.value = destination.value;
       dragging.value = true;
@@ -189,16 +198,14 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       dragging.value = false;
       destination.value = gestureBase.value + dayPagerOffset(event.translationX, event.velocityX, width, success);
       animateToDestination(-event.velocityX / width);
-      runOnJS(prepareDestination)(destination.value, generation.value, uiSession.value);
     })
     .onFinalize(() => {
       if (!dragging.value) return;
       dragging.value = false;
       destination.value = gestureBase.value;
       animateToDestination(0);
-      runOnJS(prepareDestination)(destination.value, generation.value, uiSession.value);
     }), [active, animateToDestination, commandRevision, destination, dragOrigin, dragging, enabled,
-    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, uiSession, upperBound, width]);
+    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, uiSession, upperBound, waitingForPreparation, width]);
 
   return <GestureDetector gesture={gesture}>
     <View collapsable={false} style={styles.viewport} onLayout={event => {

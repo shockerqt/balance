@@ -8,7 +8,7 @@ import { dateIdToEpochDay, epochDayToDateId } from '../src/lib/dates.ts';
 import { createLogNavigation } from '../src/lib/log-navigation.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const state = globalThis.__pagerTest = { gestures: [], js: [], ui: [], deferUI: false, frames: new Map(), nextFrame: 0 };
+const state = globalThis.__pagerTest = { gestures: [], springs: [], js: [], ui: [], deferUI: false, frames: new Map(), nextFrame: 0 };
 const originalRAF = globalThis.requestAnimationFrame, originalCancel = globalThis.cancelAnimationFrame;
 globalThis.requestAnimationFrame = callback => { const id = ++state.nextFrame; state.frames.set(id, callback); return id; };
 globalThis.cancelAnimationFrame = id => state.frames.delete(id);
@@ -44,7 +44,7 @@ const hooks = registerHooks({
       export const useAnimatedStyle = read => ({ read });
       export const runOnJS = fn => (...args) => globalThis.__pagerTest.js.push(() => fn(...args));
       export const runOnUI = fn => (...args) => { if (globalThis.__pagerTest.deferUI) globalThis.__pagerTest.ui.push(() => fn(...args)); else fn(...args); };
-      export const withSpring = (target, config, callback) => ({ target, callback });
+      export const withSpring = (target, config, callback) => { globalThis.__pagerTest.springs.push({ target, config }); return { target, callback }; };
       export const cancelAnimation = value => { const pending = value.pending; value.pending = null; pending?.callback?.(false); };
       export function useSharedValue(initial) {
         const ref = useRef(null);
@@ -335,6 +335,49 @@ test('blur and return invalidate queued results even before asynchronous UI rese
   state.deferUI = false;
   await act(() => { for (const fn of state.ui.splice(0)) fn(); });
   assert.equal(app.position.value, dateIdToEpochDay('2026-11-06'));
+  await act(() => tree.unmount());
+});
+
+test('ordinary adjacent release does not restart its spring or mount neighbors while it is animating', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const g = state.gestures.at(-1).handlers;
+  const springs = state.springs.length, commits = app.commits();
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: -900 }, true);
+  });
+  await act(() => flushJS());
+  assert.equal(state.springs.length - springs, 1, 'one release must keep its original spring and velocity');
+  assert.equal(app.commits(), commits, 'mounting another list waits for the settled page');
+  assert.equal(app.nav.get(), '2026-11-06');
+  await act(() => { finish(app.position); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-07');
+  assert.equal(tree.root.findAllByType('Day').length, 5);
+  await act(() => tree.unmount());
+});
+
+test('late bounds from the previous settled page do not restart the next valid spring', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const g = state.gestures.at(-1).handlers, springs = state.springs.length;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: -900 }, true); finish(app.position);
+  });
+  state.deferUI = true;
+  await act(() => flushJS());
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: -900 }, true);
+  });
+  const nextSpring = app.position.pending;
+  state.deferUI = false;
+  await act(() => { for (const fn of state.ui.splice(0)) fn(); });
+  assert.equal(app.position.pending, nextSpring, 'bounds must leave an already covered destination alone');
+  assert.equal(state.springs.length - springs, 2, 'two releases use exactly two springs');
+  await act(() => { finish(app.position); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
   await act(() => tree.unmount());
 });
 
