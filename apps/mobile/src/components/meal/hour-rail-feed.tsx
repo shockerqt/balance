@@ -53,7 +53,7 @@ const HourNode: React.FC<{
   );
 });
 
-interface FeedActions {
+export interface FeedActions {
   onSelectFood: (food: LoggedFoodItem) => void;
   onAddAtHour: (hour: string) => void;
   isSelectionMode?: boolean;
@@ -64,7 +64,7 @@ interface FeedActions {
   onToggleSelectGroup?: (foodIds: string[]) => void;
 }
 
-const RailRow = React.memo(function RailRow({ row, isLast, ...actions }: FeedActions & {
+export const RailRow = React.memo(function RailRow({ row, isLast, ...actions }: FeedActions & {
   row: HourRailRow;
   isLast: boolean;
 }) {

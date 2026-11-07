@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/services/config';
 import { authDataNamespace } from '@/services/auth/session-state';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { storage } from '@/services/storage';
 import { useAuth } from './use-auth';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
@@ -9,10 +9,12 @@ import { MealLogDoc, NutritionSnapshot, SyncDocument, isMealLogDoc } from '@/ser
 import { updateMealLogQuantityAndTime } from '@/lib/food-portions';
 import { parsePortion } from '@/lib/portion';
 import { sumNutrition } from '@/lib/nutrition';
+import { createMealDayProjector, createMealDaySubscriptions } from '@/lib/meal-day-projection';
+export { createMealDayProjector, emptyDayLog } from '@/lib/meal-day-projection';
 import { recoverGuestImport } from '@/services/import/guest-import';
-import { epochForChileDateTime, toDateId, todayId, displayDateFor } from '@/lib/dates';
-export { toDateId, todayId, displayDateFor };
-import { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
+import { epochForChileDateTime } from '@/lib/dates';
+export { toDateId, todayId, displayDateFor } from '@/lib/dates';
+import type { DayTargets } from '@/lib/day-targets';
 export { DEFAULT_TARGETS, type DayTargets } from '@/lib/day-targets';
 
 export interface LoggedFoodItem {
@@ -44,40 +46,6 @@ function uuid(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-export function emptyDayLog(dateId: string): DayLog {
-  return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
-}
-
-// View-only cache. Immutable canonical document references are its keys; old
-// revisions are weakly held, and the day map retains only the current history.
-export function createMealDayProjector() {
-  const display = new WeakMap<MealLogDoc, { date: string; food: LoggedFoodItem }>();
-  let previous: Record<string, DayLog> = {};
-  let previousToday = '';
-  return (documents: MealLogDoc[]): Record<string, DayLog> => {
-    const grouped: Record<string, DayLog> = {};
-    const today = todayId();
-    for (const doc of documents) {
-      if (doc._deleted) continue;
-      let item = display.get(doc);
-      if (!item) {
-        item = { date: toDateId(new Date(doc.consumedAt)), food: logToLoggedFood(doc) };
-        display.set(doc, item);
-      }
-      const day = grouped[item.date] ?? (grouped[item.date] = emptyDayLog(item.date));
-      day.foods.push(item.food);
-    }
-    for (const date of Object.keys(grouped)) {
-      const old = previous[date], next = grouped[date];
-      if (previousToday === today && old && old.foods.length === next.foods.length &&
-          old.foods.every((food, i) => food === next.foods[i])) grouped[date] = old;
-    }
-    previous = grouped;
-    previousToday = today;
-    return grouped;
-  };
 }
 
 function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[], keepCurrentRevision = false): MealLogDoc[] {
@@ -134,6 +102,10 @@ interface MealStoreContextType {
   replaceMealDocuments: (documents: MealLogDoc[]) => void;
 }
 
+type MealActions = Omit<MealStoreContextType, 'dayLogs' | 'mealDocuments'>;
+const MealActionsContext = createContext<MealActions | undefined>(undefined);
+const MealDayContext = createContext<ReturnType<typeof createMealDaySubscriptions> | undefined>(undefined);
+
 const MealStoreContext = createContext<MealStoreContextType | undefined>(undefined);
 
 export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -145,6 +117,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   currentNamespace.current = namespace;
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
   const logsRef = useRef<MealLogDoc[]>([]);
+  const logsNamespace = useRef(namespace);
   const cacheValid = useRef(false);
   const updateLogs = useCallback((update: (previous: MealLogDoc[]) => MealLogDoc[]) => {
     if (currentNamespace.current !== namespace) return Promise.resolve();
@@ -166,6 +139,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let cancelled = false;
     scope.active = true;
     logsRef.current = [];
+    logsNamespace.current = namespace;
     cacheValid.current = false;
     setLogs([]);
     const ready = (async () => {
@@ -343,7 +317,10 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [namespace, updateLogs]);
 
   const projectDayLogs = useMemo(createMealDayProjector, [namespace]);
-  const dayLogs = useMemo(() => projectDayLogs(logs), [logs, projectDayLogs]);
+  const dayLogs = useMemo(() => projectDayLogs(logsNamespace.current === namespace ? logs : []), [logs, namespace, projectDayLogs]);
+
+  const daySubscriptions = useMemo(() => createMealDaySubscriptions(), [namespace]);
+  useLayoutEffect(() => { daySubscriptions.publish(dayLogs); }, [daySubscriptions, dayLogs]);
 
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
     logsRef.current = documents;
@@ -362,7 +339,16 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     moveMultipleFoodsTime,
     replaceMealDocuments,
   }), [dayLogs, logs, registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
-  return <MealStoreContext.Provider value={value}>{children}</MealStoreContext.Provider>;
+  const actions = useMemo<MealActions>(() => ({
+    registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood,
+    deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments,
+  }), [registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood,
+    deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  return <MealStoreContext.Provider value={value}>
+    <MealActionsContext.Provider value={actions}>
+      <MealDayContext.Provider value={daySubscriptions}>{children}</MealDayContext.Provider>
+    </MealActionsContext.Provider>
+  </MealStoreContext.Provider>;
 };
 
 export const useMealStore = () => {
@@ -373,4 +359,19 @@ export const useMealStore = () => {
 
 export function sumDay(foods: LoggedFoodItem[]) {
   return sumNutrition(foods);
+}
+
+/** A pane subscribes only to its own day's immutable presentation snapshot. */
+export function useMealDay(dateId: string): DayLog {
+  const store = useContext(MealDayContext);
+  if (!store) throw new Error('useMealDay requires MealStoreProvider');
+  const subscribe = useCallback((listener: () => void) => store.subscribe(dateId, listener), [store, dateId]);
+  const get = useCallback(() => store.get(dateId), [store, dateId]);
+  return useSyncExternalStore(subscribe, get, get);
+}
+
+export function useMealActions(): MealActions {
+  const actions = useContext(MealActionsContext);
+  if (!actions) throw new Error('useMealActions requires MealStoreProvider');
+  return actions;
 }
