@@ -12,6 +12,7 @@ import { Button, Screen, Text } from '../ui';
 import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
 import { InteractiveDayWindow } from './interactive-day-window';
+import { NativeDayWindow } from './native-day-window';
 import { RecyclingHourRailFeed, type RecyclingListEngine } from './recycling-hour-rail-feed';
 
 const noop = () => {};
@@ -27,6 +28,7 @@ function AccountSpike() {
   const active = useIsFocused();
   const [date, setDate] = useLogsSelectedDate();
   const [engine, setEngine] = useState<RecyclingListEngine>('flash');
+  const [pagerEngine, setPagerEngine] = useState<'native' | 'custom'>('native');
   const [report, setReport] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const position = useSharedValue(dateIdToEpochDay(date));
@@ -81,30 +83,33 @@ function AccountSpike() {
     setCapturing(false);
     const result = diagnostics.results();
     const timing = frames.value;
-    setReport(JSON.stringify({ engine, mode: __DEV__ ? 'debug' : 'development-client-minified',
+    setReport(JSON.stringify({ engine, pagerEngine, mode: __DEV__ ? 'debug' : 'development-client-minified',
       // React's production renderer normally disables Profiler callbacks.
       // Missing samples must NEVER be reported as evidence of zero commits.
       reactCommitEvidence: result.commits ? result : 'unavailable: use a profiling renderer',
       uiFrames: { ...timing, meanMs: timing.count ? timing.totalMs / timing.count : null },
     }, null, 2));
   };
+  const DayWindow = pagerEngine === 'native' ? NativeDayWindow : InteractiveDayWindow;
   return <Profiler id="rn-log-spike" onRender={(_id, _phase, duration, _base, _start, commitTime) => {
     diagnostics.commit(active ? interaction.value : -1, duration, commitTime);
   }}>
     <Screen>
       <View style={{ padding: 12, gap: 8 }}>
         <Text variant="title">Comparar diario React Native</Text>
-        <Text variant="caption" tone="secondary">Solo lectura · {__DEV__ ? 'JavaScript debug' : 'JavaScript minificado en Dev client'}</Text>
+        <Text variant="caption" tone="secondary">Solo lectura · {pagerEngine === 'native' ? 'Pager Android' : 'Pager experimental'} · {engine === 'flash' ? 'FlashList' : 'Legend List'} · {__DEV__ ? 'JavaScript debug' : 'JavaScript minificado en Dev client'}</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Button size="md" style={{ paddingHorizontal: 12 }} title="Volver" variant="secondary" onPress={() => router.back()} />
           <Button size="md" style={{ paddingHorizontal: 12 }} title={engine === 'flash' ? 'Usar Legend' : 'Usar FlashList'} variant="secondary"
             disabled={capturing} onPress={() => { setEngine(engine === 'flash' ? 'legend' : 'flash'); setReport(null); }} />
+          <Button size="md" style={{ paddingHorizontal: 12 }} title={pagerEngine === 'native' ? 'Usar movimiento anterior' : 'Usar movimiento Android'}
+            variant="secondary" disabled={capturing} onPress={() => { setPagerEngine(pagerEngine === 'native' ? 'custom' : 'native'); setReport(null); }} />
           <Button size="md" style={{ paddingHorizontal: 12 }} title={capturing ? 'Detener' : 'Medir'} onPress={capturing ? stop : start} />
         </View>
       </View>
       <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
       {report ? <ScrollView style={{ maxHeight: 220 }}><Text selectable variant="caption">{report}</Text></ScrollView> : null}
-      <InteractiveDayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision} position={position}
+      <DayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision} position={position}
         interaction={interaction} active={active} onSettle={settle} renderDay={renderDay} />
     </Screen>
   </Profiler>;

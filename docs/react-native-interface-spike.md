@@ -140,3 +140,30 @@ References: [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/),
 [FlashList 2 usage](https://shopify.github.io/flash-list/docs/usage/),
 [Legend List 3 API](https://legendapp.com/open-source/list/v3/api/),
 [Reanimated spring semantics](https://docs.swmansion.com/react-native-reanimated/docs/animations/withSpring/).
+
+## Native Android paging comparison
+
+The spike now starts with **Pager Android**, using the existing
+`react-native-pager-view` 8.0.2 (Android ViewPager2), already included in the
+installed Development APK. This changes no native dependency or APK. Its actual
+physics differ from Compose Foundation's HorizontalPager; equivalence is not
+claimed. Press **Usar movimiento anterior** to compare the custom Reanimated
+pager with identical React Native content. Keep the same list engine, dates and
+measurement sequence. Results include `pagerEngine` to distinguish the trials.
+
+Native scroll events update the shared position/week marker on the UI thread.
+Page-selected events alone never change the date; the date authority is notified
+only after idle, with stale view/session/revision checks. Own acknowledgements
+preserve an ongoing next native gesture. External jumps, focus return and resize
+create a fresh native surface at the target instead of commanding a scroll
+through intermediate dates. The target content mounts first, then neighbors.
+
+This candidate retains a bounded 15-date content window (seven dates either
+side); Android keeps adjacent native pages attached with `offscreenPageLimit=1`.
+Ordinary settled pages do not recenter the native pager or mount another date's
+list. Near a window edge it rebases after settling. That edge remount is a known
+flicker/continuity risk, not a proven final infinite-pager design. Test at least
+eight successive swipes and reversals as well as slow drags, flicks, calendar
+jumps and vertical-scroll arbitration. Compare initial preparation cost/memory
+as well as steady paging: this window differs from the custom five-date window.
+The final engine/window strategy remains pending physical comparison.
