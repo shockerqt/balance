@@ -49,7 +49,7 @@ const scroll = (p, index, offset) => p.props.onPageScroll({ eventName: 'onPageSc
 function setup() {
   const nav = createLogNavigation('2026-11-07');
   const position = { value: dateIdToEpochDay(nav.get()) }, interaction = { value: 0 };
-  let commits = 0, active = true;
+  let commits = 0, active = true, scrollEnabled = true;
   const settle = (date, revision) => {
     if (revision !== nav.getRevision()) return;
     nav.set(date); return nav.getRevision();
@@ -58,9 +58,9 @@ function setup() {
     const date = useSyncExternalStore(nav.subscribe, nav.get, nav.get);
     return React.createElement(React.Profiler, { id: 'host', onRender: () => commits++ },
       React.createElement(NativeDayWindow, { dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision,
-        position, interaction, active, onSettle: settle, renderDay }));
+        position, interaction, active, scrollEnabled, onSettle: settle, renderDay }));
   }
-  return { nav, position, interaction, Host, commits: () => commits, blur: () => { active = false; }, focus: () => { active = true; } };
+  return { nav, position, interaction, Host, commits: () => commits, lock: () => { scrollEnabled = false; }, unlock: () => { scrollEnabled = true; }, blur: () => { active = false; }, focus: () => { active = true; } };
 }
 async function mount(app) {
   let tree;
@@ -169,6 +169,20 @@ test('Strict Mode effect cleanup and restoration leave native interaction enable
   const p = pager(tree);
   await act(() => { phase(p, 'dragging'); scroll(p, 7, 0.5); phase(p, 'settling'); selected(p, 8); phase(p, 'idle'); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('selection locks paging without remounting the native surface and rejects queued idle acknowledgements', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => { phase(p, 'dragging'); phase(p, 'settling'); selected(p, 8); phase(p, 'idle'); });
+  app.lock(); await act(() => tree.update(React.createElement(app.Host)));
+  assert.equal(pager(tree), p);
+  assert.equal(pager(tree).props.scrollEnabled, false);
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2026-11-07');
+  app.unlock(); await act(() => tree.update(React.createElement(app.Host)));
+  assert.equal(pager(tree), p);
+  assert.equal(pager(tree).props.scrollEnabled, true);
   await act(() => tree.unmount());
 });
 

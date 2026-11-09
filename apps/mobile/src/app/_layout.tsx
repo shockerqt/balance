@@ -39,6 +39,8 @@ function Navigation() {
         <Stack.Screen name="date-picker" options={sheet([0.6])} />
         <Stack.Screen name="food-edit" options={sheet([0.6, 0.95])} />
         <Stack.Screen name="batch-move" options={sheet([0.55])} />
+        <Stack.Screen name="batch-copy" options={sheet([0.8, 1.0])} />
+        <Stack.Screen name="day-nutrition" options={sheet([0.8, 1.0])} />
         <Stack.Screen name="weight-entry" options={sheet([0.5])} />
         <Stack.Screen
           name="settings"

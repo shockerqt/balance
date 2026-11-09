@@ -98,6 +98,10 @@ npm y el paquete TS puro `@balance/domain`, que debe conservar cero dependencias
 externas, hooks de instalación y configuración nativa. También permite la adición
 verificada de `react-test-renderer@19.2.3` solo para pruebas, con manifiestos y
 entrada de lock exactos; las condiciones acotadas están en `delivery.md`.
+BAL-048 permite además las versiones JS puras exactas Legend 3.7.1, FlashList
+2.3.3 y su shim use-sync-external-store 1.7.0, solo si ambos manifiestos y todas
+sus entradas de lock coinciden con la fixture auditada. No es una excepción
+general para librerías ni para cambios nativos.
 Un cambio incompatible
 produce `NEW_APK_REQUIRED`; crear y verificar una APK nueva antes de actualizar
 la referencia mediante PR. Esta comprobación conservadora puede exigir revisión

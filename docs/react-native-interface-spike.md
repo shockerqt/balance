@@ -1,8 +1,10 @@
 # React Native interface spike (BAL-048)
 
-Phase 1 adds a read-only day-pager/list comparison. Android still starts in the
-accepted Compose interface. No screen parity or physical-phone performance
-acceptance is claimed by this spike.
+Phase 1 adds a read-only day-pager/list comparison. This document describes that
+Development-only trial. Phase three now connects the Android entry points to
+the [complete React Native interface](react-native-interface.md); the comparison
+route remains available only in Development. No physical-phone release performance
+acceptance is inferred from the spike.
 
 ## Open on the existing Development APK
 

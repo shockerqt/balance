@@ -24,6 +24,8 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
 }) => {
   const theme = useTheme();
   const totals = sumNutrition(foods);
+  const knownFiber = foods.filter(food => typeof food.fiber === 'number');
+  const fiber = knownFiber.length ? `${formatMacroGrams(totals.fiber)}g${knownFiber.length < foods.length ? '*' : ''}` : '—';
 
   const calPercent = Math.min(Math.round((totals.calories / targetCalories) * 100), 100);
   const isOverCal = totals.calories > targetCalories;
@@ -52,7 +54,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
           </Text>
           <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
           <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            F <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.fiber)}g</Text>
+            F <Text accessibilityLabel={knownFiber.length < foods.length ? 'Fibra parcial o sin datos; ver detalle nutricional' : 'Fibra'} style={[styles.macroVal, { color: theme.colors.text }]}>{fiber}</Text>
           </Text>
         </View>
       </View>

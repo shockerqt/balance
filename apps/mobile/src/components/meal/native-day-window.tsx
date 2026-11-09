@@ -17,11 +17,12 @@ type Props = {
   position: SharedValue<number>;
   interaction: SharedValue<number>;
   active?: boolean;
+  scrollEnabled?: boolean;
   onSettle: (date: string, expectedRevision: number) => number | undefined;
   renderDay: (date: string) => React.ReactNode;
 };
 
-/** Development comparison: Android owns touch arbitration, fling and snapping. */
+/** Android owns touch arbitration, fling and snapping. */
 export function NativeDayWindow({ active = true, ...props }: Props) {
   const { width } = useWindowDimensions();
   const { dateId, revision } = props;
@@ -49,7 +50,7 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
   }, []);
 
   const settle = useCallback((index: number, expectedRevision: number, surface: number) => {
-    if (!mounted.current || surface !== currentSession.current || !live.current.active ||
+    if (!mounted.current || surface !== currentSession.current || !live.current.active || live.current.scrollEnabled === false ||
         live.current.readRevision() !== expectedRevision || !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) return;
     const next = epochDayToDateId(dateIdToEpochDay(session.baseDate) - RADIUS + index);
     if (next === live.current.dateId) return;
@@ -70,10 +71,10 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
   if (!active) return <View style={styles.fill}>{props.renderDay(dateId)}</View>;
   return <NativeSurface key={session.id} baseDate={session.baseDate} surface={session.id}
     revision={revision} selectedDate={dateId} position={props.position} interaction={props.interaction}
-    onSettle={settle} renderDay={props.renderDay} />;
+    onSettle={settle} renderDay={props.renderDay} scrollEnabled={props.scrollEnabled !== false} />;
 }
 
-const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, revision, selectedDate, position, interaction, onSettle, renderDay }: {
+const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, revision, selectedDate, position, interaction, onSettle, renderDay, scrollEnabled }: {
   baseDate: string;
   surface: number;
   revision: number;
@@ -82,6 +83,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   interaction: SharedValue<number>;
   onSettle: (index: number, revision: number, surface: number) => void;
   renderDay: (date: string) => React.ReactNode;
+  scrollEnabled: boolean;
 }) {
   const firstDay = dateIdToEpochDay(baseDate) - RADIUS;
   const [prepared, setPrepared] = useState(false);
@@ -167,6 +169,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
 
   const dates = useMemo(() => Array.from({ length: PAGE_COUNT }, (_, i) => shiftDateId(baseDate, i - RADIUS)), [baseDate]);
   return <AnimatedPager style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
+    scrollEnabled={scrollEnabled}
     orientation="horizontal" layoutDirection="ltr" overScrollMode="never"
     onPageScroll={pageScroll} onPageSelected={pageSelected} onPageScrollStateChanged={pageState}>
     {dates.map(date => <View key={date} collapsable={false} style={styles.page}
