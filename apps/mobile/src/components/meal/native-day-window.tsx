@@ -94,7 +94,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   // Do not depend on receipt/order of a separate UI scroll-state worklet to
   // accept onPageSelected. Intermediate scroll states may be absent/coalesced.
   const motion = useRef({ index: RADIUS, acknowledged: RADIUS, revision,
-    expectedRevision: revision, generation: 0, phase: 'idle', initialized: false, mounted: true });
+    expectedRevision: revision, generation: 0, idleSequence: 0, phase: 'idle', initialized: false, mounted: true });
   const latest = useRef({ onSettle, readRevision });
   useLayoutEffect(() => { latest.current = { onSettle, readRevision }; }, [onSettle, readRevision]);
   useLayoutEffect(() => {
@@ -111,10 +111,14 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  const reportIdle = useCallback((index: number, expectedRevision: number, token: number) => {
+  const reportIdle = useCallback((expectedRevision: number, token: number, idleSequence: number) => {
     const current = motion.current;
+    // Read selection after the batch: a coalesced idle event can occupy an
+    // earlier dispatch slot than the non-coalescing selected-page event.
+    const index = current.index;
     if (!current.mounted || current.generation !== token || current.phase !== 'idle' ||
-        current.revision !== expectedRevision || latest.current.readRevision() !== expectedRevision || current.acknowledged === index) return;
+        current.idleSequence !== idleSequence || current.revision !== expectedRevision ||
+        latest.current.readRevision() !== expectedRevision || current.acknowledged === index) return;
     setPrepared(true);
     const accepted = latest.current.onSettle(index, expectedRevision, surface);
     if (accepted === undefined) return;
@@ -122,8 +126,17 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     // a next native gesture can already be queued in this same event batch.
     current.revision = accepted;
     current.expectedRevision = accepted;
+    const previousIndex = current.acknowledged;
     current.acknowledged = index;
-  }, [surface]);
+    runOnUI((settledIndex: number, acknowledgedIndex: number) => {
+      'worklet';
+      if (!enabled.value) return;
+      // Reconcile a missing/rounded final frame without pulling the marker
+      // back if the UI is already following a newer native gesture.
+      if (Math.abs(position.value - firstDay - acknowledgedIndex) < 0.001 ||
+          Math.abs(position.value - firstDay - settledIndex) < 0.001) position.value = firstDay + settledIndex;
+    })(index, previousIndex);
+  }, [enabled, firstDay, position, surface]);
 
   useLayoutEffect(() => {
     const current = motion.current;
@@ -134,14 +147,13 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     current.acknowledged = dateIdToEpochDay(selectedDate) - firstDay;
   }, [firstDay, revision, selectedDate]);
 
-  const updatePresentation = useCallback((phase: number, index = -1) => {
-    runOnUI((nextPhase: number, settledIndex: number) => {
+  const updatePresentation = useCallback((phase: number) => {
+    runOnUI((nextPhase: number) => {
       'worklet';
       if (!enabled.value) return;
       interaction.value = nextPhase;
-      if (settledIndex >= 0) position.value = firstDay + settledIndex;
-    })(phase, index);
-  }, [enabled, firstDay, interaction, position]);
+    })(phase);
+  }, [enabled, interaction]);
 
   // Only per-frame position uses a worklet; it never waits for a JS movement
   // flag and never renders React. The native pager still owns the actual motion.
@@ -157,7 +169,6 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     // Ignore the native attachment's placeholder selection before initialPage.
     if (!current.initialized && index !== RADIUS) return;
     current.initialized = true;
-    if (current.index !== index) current.generation++;
     current.index = index;
   }, []);
   const pageState = useCallback((event: PageScrollStateChangedNativeEvent) => {
@@ -179,11 +190,12 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       updatePresentation(2);
     } else if (phase === 'idle') {
       current.phase = phase;
-      updatePresentation(0, current.index);
-      const { index, expectedRevision, generation } = current;
+      updatePresentation(0);
+      const { expectedRevision, generation } = current;
+      const idleSequence = ++current.idleSequence;
       // Let the current native event batch finish before committing: a newer
       // drag/selection, external command or blur invalidates this pending idle.
-      runOnJS(reportIdle)(index, expectedRevision, generation);
+      runOnJS(reportIdle)(expectedRevision, generation, idleSequence);
     }
   }, [reportIdle, updatePresentation]);
 

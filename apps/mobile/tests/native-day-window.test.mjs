@@ -219,6 +219,25 @@ test('own acknowledgements and a reversal in the same native batch use the live 
   await act(() => tree.unmount());
 });
 
+test('a coalesced idle preceding selected in the same native batch still acknowledges the final page', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => { phase(p, 'idle'); selected(p, 8); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('an old idle acknowledgement does not pull back UI frames from a newer native gesture', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree), base = app.position.value;
+  await act(() => {
+    phase(p, 'dragging'); selected(p, 8); phase(p, 'idle');
+    // UI frames can already lead the next discrete JS callback.
+    scroll(p, 8, 0.3); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-08');
+  assert.ok(Math.abs(app.position.value - base - 1.3) < 1e-9);
+  await act(() => tree.unmount());
+});
+
 test.after(() => {
   hooks.deregister(); delete globalThis.__nativeWindowTest;
   globalThis.requestAnimationFrame = originalRAF; globalThis.cancelAnimationFrame = originalCancel;

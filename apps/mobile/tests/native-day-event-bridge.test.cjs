@@ -87,6 +87,9 @@ test('installed PagerView callback forwarding keeps visible day, header/week and
     const next = tree.root.findByType('PagerHost');
     await renderer.act(async () => { selected(next, 9); phase(next, 'idle'); flush(); });
     assert.equal(nav.get(), '2026-11-10', 'missing intermediate states cannot strand the header');
+    await renderer.act(async () => { phase(next, 'idle'); selected(next, 10); flush(); });
+    assert.equal(tree.root.findByType('Header').props.date, '2026-11-11', 'coalesced idle before selection must use the final batch selection');
+    assert.equal(position.value, dates.dateIdToEpochDay('2026-11-11'), 'the week marker must finish on that same date');
   } finally {
     if (tree) await renderer.act(async () => tree.unmount());
     global.requestAnimationFrame = raf; global.cancelAnimationFrame = cancel;
