@@ -699,7 +699,10 @@ fn tool_success(id: Value, summary: &str, structured: Value) -> axum::response::
         "jsonrpc": "2.0",
         "id": id,
         "result": {
-            "content": [{ "type": "text", "text": summary }],
+            "content": [
+                { "type": "text", "text": structured.to_string() },
+                { "type": "text", "text": summary }
+            ],
             "structuredContent": structured,
             "isError": false
         }
@@ -1519,11 +1522,76 @@ mod tests {
         assert_eq!(val["id"], "req-1");
         assert_eq!(val["result"]["isError"], false);
         assert_eq!(val["result"]["content"][0]["type"], "text");
-        assert_eq!(val["result"]["content"][0]["text"], "Exito");
+        let text_payload: Value =
+            serde_json::from_str(val["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text_payload, val["result"]["structuredContent"]);
+        assert_eq!(val["result"]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(val["result"]["content"][1]["type"], "text");
+        assert_eq!(val["result"]["content"][1]["text"], "Exito");
         assert_eq!(
             val["result"]["structuredContent"],
             json!({ "status": "ok" })
         );
+    }
+
+    #[test]
+    fn test_text_success_weight_history_contains_dates_and_numeric_weights() {
+        let entry = weight_output(&WeightLogRow {
+            user_id: 1,
+            measured_on: NaiveDate::from_ymd_opt(2026, 1, 2).unwrap(),
+            weight_grams: 72_300,
+            updated_at: 1_767_398_400_000,
+            deleted_at: None,
+        });
+        let payload = json!({ "entries": [entry] });
+        let response = extract_json_response(tool_success(
+            json!(42),
+            "Found 1 weight entries.",
+            payload.clone(),
+        ));
+        let text_payload: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+
+        assert_eq!(text_payload, payload);
+        assert_eq!(text_payload, response["result"]["structuredContent"]);
+        assert_eq!(text_payload["entries"][0]["date"], "2026-01-02");
+        assert_eq!(text_payload["entries"][0]["weightKg"].as_f64(), Some(72.3));
+        assert_eq!(
+            text_payload["entries"][0]["updatedAt"].as_i64(),
+            Some(1_767_398_400_000)
+        );
+        assert_eq!(response["id"], 42);
+        assert_eq!(
+            response["result"]["content"][1]["text"],
+            "Found 1 weight entries."
+        );
+    }
+
+    #[test]
+    fn test_text_success_preserves_empty_null_escaped_and_typed_values() {
+        let summary = "Summary with \"quotes\", a newline\n and café 🥣";
+        for payload in [
+            json!({ "entries": [], "measurement": null }),
+            json!({
+                "name": "Café \"quoted\"\nline\t\\path 🥣",
+                "nested": [{ "enabled": true, "count": 2, "quantity": 1.5 }],
+                "disabled": false,
+                "nothing": null
+            }),
+        ] {
+            let response =
+                extract_json_response(tool_success(Value::Null, summary, payload.clone()));
+            let text_payload: Value =
+                serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                    .unwrap();
+
+            assert_eq!(text_payload, payload);
+            assert_eq!(text_payload, response["result"]["structuredContent"]);
+            assert_eq!(response["result"]["content"][1]["text"], summary);
+            assert_eq!(response["id"], Value::Null);
+            assert_eq!(response["result"]["isError"], false);
+        }
     }
 
     #[test]
