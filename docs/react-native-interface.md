@@ -27,6 +27,16 @@ idle. The initial preparation/memory cost and potential edge-remount flicker are
 known limitations for final physical acceptance. Neither Compose-equivalent
 physics nor measured superiority is claimed.
 
+Discrete page-selected/scroll-state events use PagerView's ordinary JavaScript
+callbacks with `nativeEvent` payloads. Selection does not depend on a prior
+dragging notification; omitted/interleaved state events cannot strand the header
+on the old date. Only idle schedules a guarded acknowledgement after the current
+native batch. Own acknowledgements update the live revision immediately, so a
+queued reversal is valid before React props catch up. Per-frame position remains
+a UI worklet and does not wait for a JavaScript movement flag. Regression coverage
+also executes the installed PagerView wrapper's callback forwarding, rather than
+only injecting raw worklet events.
+
 The operator qualitatively preferred Legend after the Development comparison and
 reported no clear pager distinction. No numerical benchmark was supplied. Keep
 the Development-only comparison available for diagnostics, without requesting
