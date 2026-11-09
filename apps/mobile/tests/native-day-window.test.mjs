@@ -43,8 +43,8 @@ const renderDay = dateId => React.createElement('Day', { dateId });
 const flushJS = () => { for (const fn of state.js.splice(0)) fn(); };
 const flushFrames = () => { for (const [id, fn] of [...state.frames]) { state.frames.delete(id); fn(); } };
 const pager = tree => tree.root.findByType('NativePager');
-const selected = (p, index) => p.props.onPageSelected({ eventName: 'onPageSelected', position: index });
-const phase = (p, value) => p.props.onPageScrollStateChanged({ eventName: 'onPageScrollStateChanged', pageScrollState: value });
+const selected = (p, index) => p.props.onPageSelected({ nativeEvent: { position: index } });
+const phase = (p, value) => p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } });
 const scroll = (p, index, offset) => p.props.onPageScroll({ eventName: 'onPageScroll', position: index, offset });
 function setup() {
   const nav = createLogNavigation('2026-11-07');
@@ -130,9 +130,9 @@ test('calendar jumps, blur/return and resize discard callbacks from old native s
   app.blur(); await act(() => tree.update(React.createElement(app.Host)));
   app.focus(); await act(() => tree.update(React.createElement(app.Host)));
   await act(() => {
-    oldProps.onPageScrollStateChanged({ eventName: 'onPageScrollStateChanged', pageScrollState: 'dragging' });
-    oldProps.onPageSelected({ eventName: 'onPageSelected', position: 9 });
-    oldProps.onPageScrollStateChanged({ eventName: 'onPageScrollStateChanged', pageScrollState: 'idle' }); flushJS();
+    oldProps.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'dragging' } });
+    oldProps.onPageSelected({ nativeEvent: { position: 9 } });
+    oldProps.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'idle' } }); flushJS();
   });
   assert.equal(app.nav.get(), '2040-01-01');
   const beforeResize = pager(tree);
@@ -183,6 +183,58 @@ test('selection locks paging without remounting the native surface and rejects q
   app.unlock(); await act(() => tree.update(React.createElement(app.Host)));
   assert.equal(pager(tree), p);
   assert.equal(pager(tree).props.scrollEnabled, true);
+  await act(() => tree.unmount());
+});
+
+test('a selected page arriving before dragging still updates the date when native becomes idle', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => { selected(p, 8); phase(p, 'dragging'); phase(p, 'settling'); phase(p, 'idle'); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('selected plus idle can acknowledge a real page even when intermediate scroll states were omitted', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => { selected(p, 8); phase(p, 'idle'); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('own acknowledgements and a reversal in the same native batch use the live revision before React props commit', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => {
+    phase(p, 'dragging'); selected(p, 8); phase(p, 'idle'); flushJS();
+    assert.equal(app.nav.get(), '2026-11-08');
+    phase(p, 'dragging'); selected(p, 7); phase(p, 'idle'); flushJS();
+    assert.equal(app.nav.get(), '2026-11-07');
+  });
+  assert.equal(pager(tree), p);
+  await act(() => {
+    app.nav.set('2040-01-01');
+    // Old native events cannot capture the new authority revision before the
+    // calendar target has even committed/replaced their surface.
+    phase(p, 'dragging'); selected(p, 8); phase(p, 'idle'); flushJS();
+  });
+  assert.equal(app.nav.get(), '2040-01-01');
+  await act(() => tree.unmount());
+});
+
+test('a coalesced idle preceding selected in the same native batch still acknowledges the final page', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  await act(() => { phase(p, 'idle'); selected(p, 8); flushJS(); });
+  assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('an old idle acknowledgement does not pull back UI frames from a newer native gesture', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree), base = app.position.value;
+  await act(() => {
+    phase(p, 'dragging'); selected(p, 8); phase(p, 'idle');
+    // UI frames can already lead the next discrete JS callback.
+    scroll(p, 8, 0.3); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-08');
+  assert.ok(Math.abs(app.position.value - base - 1.3) < 1e-9);
   await act(() => tree.unmount());
 });
 
