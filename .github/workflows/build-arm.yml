@@ -22,6 +22,7 @@ on:
       - 'scripts/delivery/source_identity.py'
       - 'scripts/delivery/test_packaging.py'
       - 'scripts/delivery/compiled_identity.py'
+      - 'scripts/delivery/test_compiled_identity.py'
       - 'Cross.toml'
   pull_request:
     branches:
@@ -44,6 +45,7 @@ on:
       - 'scripts/delivery/source_identity.py'
       - 'scripts/delivery/test_packaging.py'
       - 'scripts/delivery/compiled_identity.py'
+      - 'scripts/delivery/test_compiled_identity.py'
       - 'Cross.toml'
   workflow_dispatch:
 
@@ -82,7 +84,9 @@ jobs:
           components: rustfmt, clippy
 
       - name: Test artifact source and compiled identity provenance
-        run: python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
+        run: |
+          python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
+          python3 -m unittest discover -s scripts/delivery -p test_compiled_identity.py -v
 
       - name: Install SQLx CLI
         run: >-
