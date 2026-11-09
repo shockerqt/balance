@@ -1,0 +1,2 @@
+[build.env]
+passthrough = ["SQLX_OFFLINE", "BALANCE_BUILD_SOURCE_SHA", "BALANCE_BUILD_RUN_ID"]

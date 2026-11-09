@@ -5,11 +5,14 @@ import os
 from pathlib import Path
 import tarfile
 from source_identity import verified_source_sha
+from compiled_identity import verify_compiled_identity
 
 sha = verified_source_sha()
 binary = Path('target/aarch64-unknown-linux-gnu/release/server')
+binary_bytes = binary.read_bytes()
+verify_compiled_identity(binary_bytes, sha, os.environ['GITHUB_RUN_ID'])
 metadata = {'source_sha': sha, 'run_id': os.environ['GITHUB_RUN_ID'],
-    'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+    'binary_sha256': hashlib.sha256(binary_bytes).hexdigest(),
     'migrations': {p.name.split('_')[0]: hashlib.sha384(p.read_bytes()).hexdigest() for p in sorted(Path('apps/server/migrations').glob('*.sql'))}}
 Path('api-release.json').write_text(json.dumps(metadata) + '\n')
 with tarfile.open('api.tar.gz', 'w:gz') as archive:
