@@ -3,6 +3,7 @@ import { Alert, Modal, Pressable, ScrollView, Switch, TouchableOpacity, View } f
 import { Stack, useRouter } from 'expo-router';
 import { Button, Icon, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
+import { reactNativeSpikeEnabled } from '@/dev/react-native-spike-gate';
 import { paletteNames } from '@/theme/organic-palettes';
 import type { Appearance, ColorSource } from '@/theme/organic-palettes';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -108,6 +109,8 @@ export default function SettingsScreen() {
           />
         </View>
 
+        {reactNativeSpikeEnabled ? <Button title="Comparar diario React Native"
+          variant="secondary" onPress={() => router.push('/rn-log-spike')} /> : null}
         <View style={{ height: theme.space.xl }} />
       </ScrollView>
     </Screen>
