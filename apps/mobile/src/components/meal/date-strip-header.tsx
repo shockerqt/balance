@@ -3,16 +3,18 @@ import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme';
 import { Icon } from '@/components/ui';
+import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { DateSwipe } from './date-swipe';
-import { DAY_NAMES, MONTH_NAMES, buildWeekGroup, getMondayDateId, parseDateId, todayId } from '@/lib/dates';
+import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, buildWeekGroup, getMondayDateId, parseDateId, todayId } from '@/lib/dates';
 
 interface DateStripHeaderProps {
+  pagerPosition?: SharedValue<number>;
   selectedDateId: string;
   onSelectDate: (dateId: string) => void;
   onShiftDate: (days: number) => void;
 }
 
-export function DateStripHeader({ selectedDateId, onSelectDate, onShiftDate }: DateStripHeaderProps) {
+export function DateStripHeader({ selectedDateId, onSelectDate, onShiftDate, pagerPosition }: DateStripHeaderProps) {
   const theme = useTheme();
   const router = useRouter();
   const today = todayId();
@@ -61,11 +63,12 @@ export function DateStripHeader({ selectedDateId, onSelectDate, onShiftDate }: D
                 accessibilityState={{ selected }}
                 onPress={() => onSelectDate(item.dateId)}
                 style={[styles.dayPill, {
-                  backgroundColor: selected ? theme.colors.primary : theme.colors.surface,
+                  backgroundColor: selected && !pagerPosition ? theme.colors.primary : theme.colors.surface,
                   borderColor: selected || item.isToday ? theme.colors.primary : theme.colors.border,
                 }]}>
-                <Text style={[styles.dayNameText, { color: selected ? theme.colors.onPrimary : theme.colors.textMuted }]}>{item.dayName}</Text>
-                <Text style={[styles.dayNumberText, { color: selected ? theme.colors.onPrimary : theme.colors.text }]}>{item.dayNumber}</Text>
+                {pagerPosition && <DayMarker day={dateIdToEpochDay(item.dateId)} position={pagerPosition} color={theme.colors.primary} />}
+                <Text style={[styles.dayNameText, { color: selected && !pagerPosition ? theme.colors.onPrimary : theme.colors.textMuted }]}>{item.dayName}</Text>
+                <Text style={[styles.dayNumberText, { color: selected && !pagerPosition ? theme.colors.onPrimary : theme.colors.text }]}>{item.dayNumber}</Text>
               </TouchableOpacity>
             );
           })}
@@ -73,6 +76,11 @@ export function DateStripHeader({ selectedDateId, onSelectDate, onShiftDate }: D
       </DateSwipe>
     </View>
   );
+}
+
+function DayMarker({ day, position, color }: { day: number; position: SharedValue<number>; color: string }) {
+  const animated = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - Math.abs(position.value - day)) }));
+  return <Animated.View style={[{ position: 'absolute', bottom: 2, height: 3, width: 24, borderRadius: 2, backgroundColor: color }, animated]} />;
 }
 
 const styles = StyleSheet.create({

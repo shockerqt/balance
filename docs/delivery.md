@@ -27,6 +27,15 @@ devDependencies and its complete lock entry matches the reviewed version,
 registry URL, integrity and metadata. Shared/transitive lock entries remain
 checked. Other dev dependencies and future renderer versions require review;
 this is not a general exemption for development dependencies.
+BAL-048 adds an equally bounded exception for JavaScript-only Legend List 3.7.1,
+FlashList 2.3.3 and use-sync-external-store 1.7.0. Both manifests must pin the two
+lists exactly and exclusively as runtime dependencies, and all three complete
+lock entries (registry, integrity, dependencies, peers and metadata) must match
+`scripts/delivery/fixtures/bal-048-pure-lists.json`. The audited installed archives
+contain no native sources, autolinking/config plugins or installation hooks.
+Other dependencies, transitive entries, native modules/config and assets remain
+in the fingerprint. Changing any audited version or metadata requires review;
+removing Compose still requires a new APK/runtime.
 The version available in EAS and the version running on each phone are distinct.
 
 ## Dashboard

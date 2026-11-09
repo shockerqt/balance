@@ -7,6 +7,10 @@ const purePackage = '@balance/domain';
 // shared react-is/scheduler dependencies remain in the contract. Never exempt
 // devDependencies generally: they can contain native modules/config plugins.
 const testPackage = 'react-test-renderer';
+// BAL-048 audited these exact npm archives: JavaScript/TS only, no native
+// registration, config plugins or install hooks. This is an all-or-nothing
+// exception for this locked list comparison, including its one new JS shim.
+const verifiedLists = JSON.parse(readFileSync(new URL('./fixtures/bal-048-pure-lists.json', import.meta.url), 'utf8'));
 const verifiedTestLock = {
   version: '19.2.3',
   resolved: 'https://registry.npmjs.org/react-test-renderer/-/react-test-renderer-19.2.3.tgz',
@@ -27,6 +31,13 @@ export function nativeContract(ref) {
   delete pkg.dependencies[purePackage];
   const lock = JSON.parse(read(ref, 'apps/mobile/package-lock.json'));
   const root = lock.packages[''];
+  const pureLists = [pkg, root].every(manifest => Object.entries(verifiedLists.dependencies).every(([name, version]) =>
+    manifest.dependencies?.[name] === version && ['devDependencies', 'optionalDependencies', 'peerDependencies'].every(key => !manifest[key]?.[name]))) &&
+    Object.entries(verifiedLists.packages).every(([path, entry]) => JSON.stringify(sorted(lock.packages[path])) === JSON.stringify(sorted(entry)));
+  if (pureLists) {
+    for (const name of Object.keys(verifiedLists.dependencies)) { delete pkg.dependencies[name]; delete root.dependencies[name]; }
+    for (const path of Object.keys(verifiedLists.packages)) delete lock.packages[path];
+  }
   const testOnly = [pkg, root].every(manifest =>
     manifest.devDependencies?.[testPackage] === '^19.2.3' &&
     ['dependencies', 'optionalDependencies', 'peerDependencies'].every(key => !manifest[key]?.[testPackage]));

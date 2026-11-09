@@ -1,1 +1,1 @@
-export { default } from './native/native-daily-log-screen';
+export { default } from './react-native-interface-screen';

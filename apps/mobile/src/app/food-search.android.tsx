@@ -1,1 +1,1 @@
-export { default } from '@/components/meal/native/native-food-entry-screen';
+export { default } from '@/components/meal/react-native-food-entry-screen';

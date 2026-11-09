@@ -74,7 +74,7 @@ export const Button: React.FC<ButtonProps> = ({
       ) : (
         <>
           {icon}
-          <Text variant="heading" tone={label}>
+          <Text variant="heading" tone={label} style={{ flexShrink: 1 }}>
             {title}
           </Text>
         </>
