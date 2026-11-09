@@ -27,7 +27,7 @@ function AccountSpike() {
   const router = useRouter();
   const active = useIsFocused();
   const [date, setDate] = useLogsSelectedDate();
-  const [engine, setEngine] = useState<RecyclingListEngine>('flash');
+  const [engine, setEngine] = useState<RecyclingListEngine>('legend');
   const [pagerEngine, setPagerEngine] = useState<'native' | 'custom'>('native');
   const [report, setReport] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);

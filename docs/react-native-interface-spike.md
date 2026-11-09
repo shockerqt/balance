@@ -167,3 +167,16 @@ eight successive swipes and reversals as well as slow drags, flicks, calendar
 jumps and vertical-scroll arbitration. Compare initial preparation cost/memory
 as well as steady paging: this window differs from the custom five-date window.
 The final engine/window strategy remains pending physical comparison.
+
+
+## Operator comparison decision (2026-11-09)
+
+After trying both, the operator prefers Legend's presentation and reports no clear
+subjective distinction between the two pager candidates. Legend is now the
+initial list engine for continued implementation; both pager candidates remain
+available. This is a physical qualitative preference, not a numerical benchmark
+or a claim that Legend is universally faster. No additional manual list/pager
+tuning rounds are requested. The agent completes the technical pager review;
+the expected next operator validation is one combined Daily acceptance session
+once the full interface is ready, with targeted retesting only for a concrete
+failure. Existing final native APK/delivery acceptance gates still apply.
