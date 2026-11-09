@@ -21,6 +21,9 @@ on:
       - 'scripts/delivery/package-api.py'
       - 'scripts/delivery/source_identity.py'
       - 'scripts/delivery/test_packaging.py'
+      - 'scripts/delivery/compiled_identity.py'
+      - 'scripts/delivery/test_compiled_identity.py'
+      - 'Cross.toml'
   pull_request:
     branches:
       - main
@@ -41,6 +44,9 @@ on:
       - 'scripts/delivery/package-api.py'
       - 'scripts/delivery/source_identity.py'
       - 'scripts/delivery/test_packaging.py'
+      - 'scripts/delivery/compiled_identity.py'
+      - 'scripts/delivery/test_compiled_identity.py'
+      - 'Cross.toml'
   workflow_dispatch:
 
 permissions:
@@ -72,13 +78,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Test artifact source provenance
-        run: python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Test artifact source and compiled identity provenance
+        run: |
+          python3 -m unittest discover -s scripts/delivery -p test_packaging.py -v
+          python3 -m unittest discover -s scripts/delivery -p test_compiled_identity.py -v
 
       - name: Install SQLx CLI
         run: >-
@@ -124,6 +132,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SQLX_OFFLINE: 'true'
+      BALANCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BALANCE_BUILD_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BALANCE_BUILD_RUN_ID: ${{ github.run_id }}
+      CROSS_CONFIG: Cross.toml
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -134,7 +146,9 @@ jobs:
         uses: taiki-e/install-action@cross
 
       - name: Build server with cross for ARM64
-        run: cross build --target=aarch64-unknown-linux-gnu --release --manifest-path apps/server/Cargo.toml
+        run: |
+          python3 -c "import sys; sys.path.insert(0, 'scripts/delivery'); from source_identity import verified_source_sha; verified_source_sha()"
+          cross build --target=aarch64-unknown-linux-gnu --release --manifest-path apps/server/Cargo.toml
 
       - name: Package source-bound API artifact
         env:

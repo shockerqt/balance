@@ -29,6 +29,8 @@ use crate::{
     shared::error::AppError,
 };
 
+pub mod observation;
+
 const MCP_URL: &str = "https://balance.shocker.cl/api/mcp";
 const AUTHORIZATION_SERVER: &str = "https://auth.shocker.cl/realms/balance";
 const TIMEZONE: &str = "America/Santiago";
@@ -203,9 +205,27 @@ async fn mcp_post_handler(
     Extension(db): Extension<Arc<Database>>,
     Extension(sync_hub): Extension<SyncHub>,
     Extension(user): Extension<CurrentUser>,
+    observation: Option<Extension<observation::Observation>>,
     Json(payload): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    let observation = observation.as_ref().map(|Extension(value)| value);
+    if let Some(observation) = observation {
+        observation.request(
+            &payload.method,
+            (payload.method == "tools/call").then(|| {
+                payload
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            }),
+        );
+    }
     if payload.jsonrpc != "2.0" {
+        if let Some(observation) = observation {
+            observation.outcome("json_rpc_error");
+        }
         return json_rpc_error(payload.id, -32600, "Invalid JSON-RPC version");
     }
     let id = payload.id.unwrap_or(Value::Null);
@@ -221,7 +241,12 @@ async fn mcp_post_handler(
             }
         }))
         .into_response(),
-        "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+        "notifications/initialized" => {
+            if let Some(observation) = observation {
+                observation.outcome("notification_accepted");
+            }
+            StatusCode::ACCEPTED.into_response()
+        }
         "ping" => Json(json!({"jsonrpc": "2.0", "id": id, "result": {}})).into_response(),
         "tools/list" => Json(json!({
             "jsonrpc": "2.0",
@@ -245,12 +270,17 @@ async fn mcp_post_handler(
                     if let Some(collection) = mutated_collection(name) {
                         sync_hub.notify(user.id, collection);
                     }
-                    tool_success(id, &summary, structured)
+                    tool_success(id, &summary, structured, observation)
                 }
-                Err(error) => tool_failure(id, error),
+                Err(error) => tool_failure(id, error, observation),
             }
         }
-        _ => json_rpc_error(Some(id), -32601, "Method not found"),
+        _ => {
+            if let Some(observation) = observation {
+                observation.outcome("json_rpc_error");
+            }
+            json_rpc_error(Some(id), -32601, "Method not found")
+        }
     }
 }
 
@@ -694,10 +724,14 @@ fn weight_output(row: &WeightLogRow) -> Value {
     })
 }
 
-fn tool_success(id: Value, summary: &str, structured: Value) -> axum::response::Response {
-    Json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
+fn tool_success(
+    id: Value,
+    summary: &str,
+    structured: Value,
+    observation: Option<&observation::Observation>,
+) -> axum::response::Response {
+    let envelope = json!({
+        "jsonrpc": "2.0", "id": id,
         "result": {
             "content": [
                 { "type": "text", "text": structured.to_string() },
@@ -706,34 +740,44 @@ fn tool_success(id: Value, summary: &str, structured: Value) -> axum::response::
             "structuredContent": structured,
             "isError": false
         }
-    }))
-    .into_response()
+    });
+    if let Some(observation) = observation {
+        observation.result(&envelope["result"], "none");
+    }
+    Json(envelope).into_response()
 }
 
-fn tool_failure(id: Value, error: AppError) -> axum::response::Response {
+fn tool_failure(
+    id: Value,
+    error: AppError,
+    observation: Option<&observation::Observation>,
+) -> axum::response::Response {
     let (code, message) = match error {
         AppError::BadRequest(message) => ("invalid_arguments", message),
         AppError::NotFound(message) => ("not_found", message),
         AppError::Conflict(message) => ("conflict", message),
         AppError::Db(error) => {
-            tracing::error!(?error, "MCP database operation failed");
+            // Consume the diagnostic without formatting or retaining its content.
+            drop(error);
             ("database_error", "Database operation failed".into())
         }
         AppError::Internal(error) => {
-            tracing::error!(%error, "MCP internal operation failed");
+            drop(error);
             ("internal_error", "Internal operation failed".into())
         }
     };
-    Json(json!({
-        "jsonrpc": "2.0",
-        "id": id,
+    let envelope = json!({
+        "jsonrpc": "2.0", "id": id,
         "result": {
             "content": [{ "type": "text", "text": message }],
             "structuredContent": { "error": { "code": code, "message": message } },
             "isError": true
         }
-    }))
-    .into_response()
+    });
+    if let Some(observation) = observation {
+        observation.result(&envelope["result"], code);
+    }
+    Json(envelope).into_response()
 }
 
 fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> axum::response::Response {
@@ -1515,7 +1559,7 @@ mod tests {
 
     #[test]
     fn test_structured_success_response_envelope() {
-        let res = tool_success(json!("req-1"), "Exito", json!({ "status": "ok" }));
+        let res = tool_success(json!("req-1"), "Exito", json!({ "status": "ok" }), None);
         let val = extract_json_response(res);
 
         assert_eq!(val["jsonrpc"], "2.0");
@@ -1548,6 +1592,7 @@ mod tests {
             json!(42),
             "Found 1 weight entries.",
             payload.clone(),
+            None,
         ));
         let text_payload: Value =
             serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
@@ -1581,7 +1626,7 @@ mod tests {
             }),
         ] {
             let response =
-                extract_json_response(tool_success(Value::Null, summary, payload.clone()));
+                extract_json_response(tool_success(Value::Null, summary, payload.clone(), None));
             let text_payload: Value =
                 serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
                     .unwrap();
@@ -1596,7 +1641,7 @@ mod tests {
 
     #[test]
     fn test_structured_failure_response_envelope_variants() {
-        let bad = tool_failure(json!(10), AppError::BadRequest("bad input".into()));
+        let bad = tool_failure(json!(10), AppError::BadRequest("bad input".into()), None);
         let v_bad = extract_json_response(bad);
         assert_eq!(v_bad["jsonrpc"], "2.0");
         assert_eq!(v_bad["id"], 10);
@@ -1610,7 +1655,7 @@ mod tests {
             "bad input"
         );
 
-        let not_found = tool_failure(json!(11), AppError::NotFound("item missing".into()));
+        let not_found = tool_failure(json!(11), AppError::NotFound("item missing".into()), None);
         let v_nf = extract_json_response(not_found);
         assert_eq!(
             v_nf["result"]["structuredContent"]["error"]["code"],
@@ -1621,14 +1666,14 @@ mod tests {
             "item missing"
         );
 
-        let conflict = tool_failure(json!(12), AppError::Conflict("already exists".into()));
+        let conflict = tool_failure(json!(12), AppError::Conflict("already exists".into()), None);
         let v_cf = extract_json_response(conflict);
         assert_eq!(
             v_cf["result"]["structuredContent"]["error"]["code"],
             "conflict"
         );
 
-        let db_err = tool_failure(json!(13), AppError::Db(sqlx::Error::RowNotFound));
+        let db_err = tool_failure(json!(13), AppError::Db(sqlx::Error::RowNotFound), None);
         let v_db = extract_json_response(db_err);
         assert_eq!(
             v_db["result"]["structuredContent"]["error"]["code"],
@@ -1639,7 +1684,7 @@ mod tests {
             "Database operation failed"
         );
 
-        let int_err = tool_failure(json!(14), AppError::Internal("internal crash".into()));
+        let int_err = tool_failure(json!(14), AppError::Internal("internal crash".into()), None);
         let v_int = extract_json_response(int_err);
         assert_eq!(
             v_int["result"]["structuredContent"]["error"]["code"],

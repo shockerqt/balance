@@ -9,7 +9,7 @@ use modules::{
         routes::auth_routes,
     },
     imports::import_routes,
-    mcp::{mcp_metadata_routes, mcp_routes},
+    mcp::{mcp_metadata_routes, mcp_routes, observation},
     sync::routes::{
         WsAllowedOrigins, application_sync_routes, public_template_routes, sync_routes,
     },
@@ -32,7 +32,9 @@ async fn main() -> anyhow::Result<()> {
     dotenv::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/.env")).ok();
 
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(observation::logging_filter(
+            std::env::var_os("RUST_LOG").as_deref(),
+        ))
         .init();
 
     let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
@@ -56,7 +58,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", axum::routing::get(health))
         .merge(public_template_routes()) // Public Unauthenticated Endpoint
         .merge(mcp_metadata_routes(&oidc, &mcp_oidc))
-        .merge(mcp_routes().route_layer(middleware::from_fn_with_state(mcp_oidc, auth)))
+        .merge(observation::observe_routes(
+            mcp_routes().route_layer(middleware::from_fn_with_state(mcp_oidc, auth)),
+        ))
         .nest(
             "/me",
             user_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth)),

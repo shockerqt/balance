@@ -9,6 +9,8 @@ import tarfile
 import tempfile
 import unittest
 
+from compiled_identity import START, END, verify_compiled_identity
+
 SCRIPTS = Path(__file__).resolve().parent
 
 
@@ -34,6 +36,8 @@ class PackagingTests(unittest.TestCase):
         self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                  'commit', '-qm', 'Synthetic packaging fixture')
         self.sha = self.git('rev-parse', 'HEAD').strip()
+        self.binary += START + f'{self.sha}:123456'.encode() + END
+        (self.root / 'target/aarch64-unknown-linux-gnu/release/server').write_bytes(self.binary)
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, text=True)
@@ -96,6 +100,23 @@ class PackagingTests(unittest.TestCase):
                                    'apps/dashboard/dist/release.json',
                                    'dashboard.tar.gz', 'dashboard.sha256'):
                         self.assertFalse((self.root / output).exists(), output)
+
+    def test_compiled_identity_rejects_absent_stale_run_and_ambiguous_records(self):
+        valid = START + f'{self.sha}:123456'.encode() + END
+        for record in (b'', START + f'{self.sha}:123457'.encode() + END,
+                       START + f'{"0" * 40}:123456'.encode() + END,
+                       START + b'unknown:unknown' + END,
+                       valid + valid, valid + START + b'malformed' + END):
+            with self.subTest(record=record):
+                (self.root / 'target/aarch64-unknown-linux-gnu/release/server').write_bytes(record)
+                result = self.package('api', self.sha)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('compiled source/build identity', result.stderr)
+                for output in ('api-release.json', 'api.tar.gz', 'api.sha256'):
+                    self.assertFalse((self.root / output).exists())
+        for run in ('', '0', '01', '123\n', 'x', '1' * 21):
+            with self.assertRaises(ValueError):
+                verify_compiled_identity(valid, self.sha, run)
 
 
 if __name__ == '__main__':
