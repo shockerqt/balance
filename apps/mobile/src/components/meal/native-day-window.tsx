@@ -3,6 +3,7 @@ import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import PagerView, { type PagerViewOnPageScrollEvent, type PagerViewOnPageSelectedEvent, type PageScrollStateChangedNativeEvent } from 'react-native-pager-view';
 import Animated, { runOnJS, runOnUI, useEvent, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { dateIdToEpochDay, epochDayToDateId, shiftDateId } from '../../lib/dates';
+import { recordNativePagerEvent as tracePager } from '../../dev/native-pager-status';
 
 const AnimatedPager = Animated.createAnimatedComponent(PagerView);
 const RADIUS = 7;
@@ -45,13 +46,21 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
     currentSession.current = session.id;
   });
   useLayoutEffect(() => {
+    tracePager('render', { index: dateIdToEpochDay(dateId) - dateIdToEpochDay(session.baseDate) + RADIUS, revision });
+  }, [dateId, revision, session.baseDate]);
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
 
   const settle = useCallback((index: number, expectedRevision: number, surface: number) => {
     if (!mounted.current || surface !== currentSession.current || !live.current.active || live.current.scrollEnabled === false ||
-        live.current.readRevision() !== expectedRevision || !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) return;
+        live.current.readRevision() !== expectedRevision || !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) {
+      tracePager('rejected', { index, expected: expectedRevision, revision: live.current.readRevision(), reason:
+        !mounted.current ? 'surface-unmounted' : surface !== currentSession.current ? 'old-surface' : !live.current.active ? 'inactive' :
+          live.current.scrollEnabled === false ? 'selection-locked' : live.current.readRevision() !== expectedRevision ? 'root-revision' : 'invalid-index' });
+      return;
+    }
     const next = epochDayToDateId(dateIdToEpochDay(session.baseDate) - RADIUS + index);
     if (next === live.current.dateId && live.current.revision === expectedRevision) return expectedRevision;
     const pending = { dateId: next, revision: expectedRevision + 1 };
@@ -59,6 +68,7 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
     const accepted = live.current.onSettle(next, expectedRevision);
     if (accepted !== pending.revision) {
       if (acknowledgement.current === pending) acknowledgement.current = null;
+      tracePager('rejected', { index, expected: pending.revision, revision: accepted, reason: 'delegate-rejected' });
       return;
     }
     // Keep native indices stable for ordinary navigation. Only a window edge
@@ -102,7 +112,8 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     enabled.value = true;
     position.value = firstDay + RADIUS;
     interaction.value = 0;
-    return () => { motion.current.mounted = false; motion.current.generation++; enabled.value = false; };
+    tracePager('mount', { index: RADIUS, revision: motion.current.revision });
+    return () => { motion.current.mounted = false; motion.current.generation++; enabled.value = false; tracePager('unmount'); };
   }, [enabled, firstDay, interaction, position]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -118,7 +129,12 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     const index = current.index;
     if (!current.mounted || current.generation !== token || current.phase !== 'idle' ||
         current.idleSequence !== idleSequence || current.revision !== expectedRevision ||
-        latest.current.readRevision() !== expectedRevision || current.acknowledged === index) return;
+        latest.current.readRevision() !== expectedRevision || current.acknowledged === index) {
+      tracePager(current.acknowledged === index ? 'skip' : 'rejected', { index, expected: expectedRevision, revision: latest.current.readRevision(), reason:
+        !current.mounted ? 'unmounted' : current.generation !== token ? 'new-gesture' : current.phase !== 'idle' ? 'not-idle' :
+          current.idleSequence !== idleSequence ? 'new-idle' : current.revision !== expectedRevision || latest.current.readRevision() !== expectedRevision ? 'revision' : 'same-index' });
+      return;
+    }
     setPrepared(true);
     const accepted = latest.current.onSettle(index, expectedRevision, surface);
     if (accepted === undefined) return;
@@ -128,6 +144,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     current.expectedRevision = accepted;
     const previousIndex = current.acknowledged;
     current.acknowledged = index;
+    tracePager('accepted', { index, revision: accepted });
     runOnUI((settledIndex: number, acknowledgedIndex: number) => {
       'worklet';
       if (!enabled.value) return;
@@ -163,18 +180,29 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   }, ['onPageScroll']);
   const pageSelected = useCallback((event: PagerViewOnPageSelectedEvent) => {
     const current = motion.current;
-    const index = event.nativeEvent.position;
+    const index = event?.nativeEvent?.position;
+    tracePager('selected', { index });
+    if (index === undefined) { tracePager('rejected', { reason: 'selected-shape' }); return; }
     if (!current.mounted || latest.current.readRevision() !== current.revision ||
-        !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) return;
+        !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) {
+      tracePager('rejected', { index, expected: current.revision, revision: latest.current.readRevision(), reason:
+        !current.mounted ? 'unmounted' : latest.current.readRevision() !== current.revision ? 'revision' : 'invalid-index' });
+      return;
+    }
     // Ignore the native attachment's placeholder selection before initialPage.
-    if (!current.initialized && index !== RADIUS) return;
+    if (!current.initialized && index !== RADIUS) { tracePager('skip', { index, reason: 'await-initial-page' }); return; }
     current.initialized = true;
     current.index = index;
   }, []);
   const pageState = useCallback((event: PageScrollStateChangedNativeEvent) => {
     const current = motion.current;
-    if (!current.mounted || latest.current.readRevision() !== current.revision) return;
-    const phase = event.nativeEvent.pageScrollState;
+    const phase = event?.nativeEvent?.pageScrollState;
+    tracePager('state', { phase: phase === 'idle' || phase === 'dragging' || phase === 'settling' ? phase : 'missing' });
+    if (phase === undefined) { tracePager('rejected', { reason: 'state-shape' }); return; }
+    if (!current.mounted || latest.current.readRevision() !== current.revision) {
+      tracePager('rejected', { expected: current.revision, revision: latest.current.readRevision(), reason: !current.mounted ? 'unmounted' : 'revision' });
+      return;
+    }
     if (phase === 'dragging') {
       current.generation++;
       current.expectedRevision = current.revision;
@@ -193,6 +221,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       updatePresentation(0);
       const { expectedRevision, generation } = current;
       const idleSequence = ++current.idleSequence;
+      tracePager('queued', { index: current.index, expected: expectedRevision });
       // Let the current native event batch finish before committing: a newer
       // drag/selection, external command or blur invalidates this pending idle.
       runOnJS(reportIdle)(expectedRevision, generation, idleSequence);

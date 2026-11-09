@@ -8,6 +8,7 @@ import { paletteNames } from '@/theme/organic-palettes';
 import type { Appearance, ColorSource } from '@/theme/organic-palettes';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { makeStyles, useTheme, useThemeControls } from '@/theme';
+import { UpdateInformation } from '@/components/updates/update-information';
 
 export default function SettingsScreen() {
   const styles = useStyles();
@@ -109,6 +110,7 @@ export default function SettingsScreen() {
           />
         </View>
 
+        <UpdateInformation />
         {reactNativeSpikeEnabled ? <Button title="Comparar diario React Native"
           variant="secondary" onPress={() => router.push('/rn-log-spike')} /> : null}
         <View style={{ height: theme.space.xl }} />

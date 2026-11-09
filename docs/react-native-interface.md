@@ -91,3 +91,19 @@ Publish only through the existing verified-main Deliver Balance Clients workflow
 An export or passing CI does not prove Daily publication or physical acceptance.
 The expected operator check is one final combined Daily session, followed only
 by targeted retesting for actual failures. Compose removal waits for that acceptance.
+
+## Verify the code running on a phone
+
+The Android APK version (for example Daily1.9.0) does not identify the OTA that
+is currently executing. Settings → Información de la app displays the native
+expo-updates running-update ID, channel, runtime and embedded/OTA origin. A
+downloaded pending update is identified separately; it is never labelled as the
+running update. Recovery launches and disabled OTA are explicit.
+
+Expand Ver diagnóstico del deslizamiento to inspect the last sixteen anonymous
+discrete pager events, callback counts and date-confirmation guard reasons.
+The trace contains relative page indices and revision counters; it does not
+include account IDs, date strings or food records. Per-frame scroll handling is
+unchanged and adds no JS trace calls. The trace stays in memory and is shared
+only when the operator presses Compartir diagnóstico in the native share sheet.
+It creates no server telemetry, persistence or parallel date authority.
