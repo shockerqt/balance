@@ -30,12 +30,23 @@ changed by this task. Do not export a raw service journal as a diagnostic report
 
 - `arrived`: a fresh random server correlation UUID and compiled source/build.
   The correlation is not a JSON-RPC ID, user identity or caller-supplied header.
-- `response_prepared`: the same correlation, duration in milliseconds, HTTP
-  status, allowlisted method/tool labels, outcome, error class and result shape.
-  HTTP200 can contain a `tool_error` or `json_rpc_error`; inspect the outcome.
-- `abandoned`: an admitted request future was dropped before completion. Status0
-  and outcome `abandoned` do not describe an HTTP response. Process termination,
-  failed logging and forced termination cannot guarantee a final event.
+  Arrival suppression does not remove the safe request context.
+- `tool_result_prepared`: allowlisted tool/method, outcome/error class and bounded
+  shape of the actual final Value envelope. This synchronous helper-stage event
+  occurs before Json conversion and has **no `http_status` field**. Its duration
+  ends at Value preparation, excluding diagnostic inspection and subsequent HTTP
+  serialization/completion. The unchanged helpers' HTTP200 behavior is a wire
+  contract, not a status measured by this event. A terminal can exist without an
+  `arrived` event, using its own server correlation and compiled source/build.
+- `response_prepared`: actual returned HTTP status and duration for protocol or
+  rejection paths that did not attempt a final tool-result hook. HTTP200 can
+  contain a JSON-RPC error; inspect the outcome. It does not duplicate a tool
+  terminal, including when that terminal was suppressed.
+- `abandoned`: an unfinished request future was dropped without a final tool
+  result attempt. Status0 and outcome `abandoned` do not describe an HTTP response.
+  A completed tool hook is not reclassified as abandonment after cancellation,
+  even if its event was suppressed. Process termination, failed logging and
+  forced termination cannot guarantee a final event.
 - `suppressed`: safe saturating count of suppressed events carried into the next
   window. It is emitted only when new traffic or a late completion next checks
   the limiter; there is no timer or background logging queue.
@@ -47,8 +58,9 @@ keys, record dates/values, raw errors or raw bodies are logged. Events explicitl
 exclude contextual parent spans, so inherited span fields cannot leak into the
 new events. Counts and type checks are metadata, not record contents.
 
-Shape fields describe the exact final tool result immediately before conversion
-to the JSON response. `content_blocks` counts content, `text_blocks` counts text
+Shape fields on `tool_result_prepared` describe the exact final tool result
+immediately before conversion to the JSON response. `content_blocks` counts
+content, `text_blocks` counts text
 blocks only when there are at most16 blocks, and `structured` records whether
 structuredContent exists. `collection_count` uses only the known foods, items or
 entries collection for search, daily log or weight history respectively.
@@ -67,17 +79,31 @@ fit that traversal budget before equality is checked;16KiB is the parser's
 allocation/work input bound, not a promise of at most512 allocated parser nodes.
 Larger values are not cloned or scanned without limits for diagnostics. The
 existing response serialization still performs its original full response work.
-Requests suppressed at arrival perform no shape inspection.
+Inspection begins only after the final-result hook obtains its class permit.
+A denied terminal performs no shape inspection, parse or comparison. The permit,
+borrowed inspection and event emission happen synchronously, with no await,
+retained payload or permit carried to a later completion.
 
 ## Volume and retention
 
 One fixed-size process-wide limiter permits at most20 events in each60-second
-monotonic window, including arrival, late completion, safe-error classifications
-and suppression summaries. It limits logging, never request execution. There
-are no per-user maps or unbounded reservations. A terminal can be suppressed even
-after its arrival was recorded; paired events are not guaranteed under pressure.
-Unauthenticated traffic can consume this shared diagnostic budget. Restarting
-the process resets the volatile budget and counters.
+monotonic window. Within that same budget, background events have a separate
+ceiling of8: every arrival, handshake/protocol completion, HTTP rejection, unknown
+method/tool, abandonment and suppression summary. Only a final result from
+`tools/call` with a statically known tool label receives priority; known-tool
+success and error results can use the remaining global capacity. This protects12
+slots from startup/rejection noise, not from other valid tool results. It is not
+an unconditional observation guarantee under saturation.
+
+Every event checks the current window, including late completions. A carried
+suppression summary consumes one global and one background slot before other
+admissions. No old permit/reservation bypasses either limit. One fixed-size safe
+context lives with each request while the target is enabled, even when arrival
+logging is denied; explicit filter-off retains the no-context fast path. The
+global limiter stores no per-user maps, payloads, queues or request reservations.
+It limits logging, never request execution. Either a terminal or an arrival can
+be absent under pressure; do not require pairs to interpret a tool result.
+Restarting the process resets the volatile budget and counters.
 
 The formatter test forces ANSI on and includes maximum source/run lengths,
 integer/count widths and label lengths, requiring each emitted line plus newline
@@ -99,18 +125,26 @@ systemd-analyze cat-config systemd/journald.conf | rg 'SystemMaxUse|RuntimeMaxUs
 ```
 
 These journal commands can read inherited service messages before local
-filtering; do not paste or persist their raw output. A report should copy only
+filtering; do not paste or persist their raw output. A bounded reader should use
+at most200 entries and a window no longer than10 minutes, decode JSON `MESSAGE`
+byte arrays locally when ANSI causes the journal to represent text as bytes,
+strip ANSI, and select the exact static target plus expected compiled source/run.
+Output only allowlisted static labels, server UUIDs, counts and type/equality
+flags. Never export arbitrary fields, headers, arguments or message bodies.
+Its event allowlist must include `tool_result_prepared`; do not reject it because
+it lacks HTTP status or a matching arrival. A report should copy only
 the reviewed safe fields from actual new observation events. Confirm the
 effective filter's presence/absence without printing the complete environment.
 Confirm the exact compiled source/run against the immutable delivery receipt.
-Ask for one fresh MCP call through the existing authenticated client, then inspect
-the matching arrival/result in that short window. If suppression is reported,
-repeat in a quiet window. Never log the authenticated request or returned values.
+For an operator-reported call, inspect its existing short window. Missing or
+suppressed evidence does not justify automatically asking the operator to repeat
+the same validation. Never log the authenticated request or returned values.
 
 Absence of an event is inconclusive: filters, shared budget, cancellation,
 rotation, process restarts and upstream rejection can all remove evidence. A
-positive `response_prepared` plus matching typed JSON narrows the server/client
-boundary; it still does not prove what Spark consumed.
+positive `tool_result_prepared` plus matching typed JSON proves server-side Value
+preparation and narrows the server/client boundary. It proves neither emitted
+HTTP bytes nor what Spark received, parsed or displayed.
 
 ## Build identity and delivery
 

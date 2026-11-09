@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 const TARGET: &str = "balance_mcp_observation";
 const EVENTS_PER_WINDOW: u16 = 20;
+const BACKGROUND_EVENTS_PER_WINDOW: u16 = 8;
 const WINDOW: Duration = Duration::from_secs(60);
 const MAX_TEXT_BYTES: usize = 16_384;
 const MAX_NODES: usize = 512;
@@ -58,6 +59,12 @@ struct Observer {
     budget: Mutex<EmissionBudget>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Priority {
+    Background,
+    KnownToolResult,
+}
+
 impl Observer {
     fn new() -> Self {
         Self {
@@ -65,7 +72,7 @@ impl Observer {
         }
     }
 
-    fn permit(&self) -> bool {
+    fn permit(&self, priority: Priority) -> bool {
         if !tracing::enabled!(target: TARGET, tracing::Level::INFO) {
             return false;
         }
@@ -73,7 +80,7 @@ impl Observer {
             .budget
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .permit(Instant::now());
+            .permit(Instant::now(), priority);
         if let Some(suppressed) = suppressed {
             let build = server::build_identity::compiled_identity();
             tracing::info!(target: TARGET, parent: None,
@@ -87,6 +94,7 @@ impl Observer {
 struct EmissionBudget {
     started: Instant,
     emitted: u16,
+    background_emitted: u16,
     suppressed: u64,
 }
 
@@ -95,24 +103,33 @@ impl EmissionBudget {
         Self {
             started: now,
             emitted: 0,
+            background_emitted: 0,
             suppressed: 0,
         }
     }
 
     /// Both the carried suppression summary and this event consume the current
     /// window. Late completions have no reservation that can bypass this check.
-    fn permit(&mut self, now: Instant) -> (bool, Option<u64>) {
+    fn permit(&mut self, now: Instant, priority: Priority) -> (bool, Option<u64>) {
         let mut summary = None;
         if now.saturating_duration_since(self.started) >= WINDOW {
             self.started = now;
             self.emitted = 0;
+            self.background_emitted = 0;
             if self.suppressed > 0 {
                 summary = Some(std::mem::take(&mut self.suppressed));
                 self.emitted = 1;
+                self.background_emitted = 1;
             }
         }
-        if self.emitted < EVENTS_PER_WINDOW {
+        if self.emitted < EVENTS_PER_WINDOW
+            && (priority == Priority::KnownToolResult
+                || self.background_emitted < BACKGROUND_EVENTS_PER_WINDOW)
+        {
             self.emitted += 1;
+            if priority == Priority::Background {
+                self.background_emitted += 1;
+            }
             (true, summary)
         } else {
             self.suppressed = self.suppressed.saturating_add(1);
@@ -122,7 +139,14 @@ impl EmissionBudget {
 }
 
 #[derive(Clone)]
-pub(super) struct Observation(Arc<Mutex<Details>>);
+pub(super) struct Observation(Arc<RequestContext>);
+
+struct RequestContext {
+    observer: Arc<Observer>,
+    correlation: Uuid,
+    started: Instant,
+    details: Mutex<Details>,
+}
 
 #[derive(Clone, Copy)]
 struct Details {
@@ -130,7 +154,7 @@ struct Details {
     tool: &'static str,
     outcome: &'static str,
     error_class: &'static str,
-    shape: Shape,
+    terminal_attempted: bool,
 }
 
 impl Default for Details {
@@ -140,14 +164,27 @@ impl Default for Details {
             tool: "not_applicable",
             outcome: "http_rejected",
             error_class: "none",
-            shape: Shape::default(),
+            terminal_attempted: false,
         }
     }
 }
 
 impl Observation {
+    fn new(observer: Arc<Observer>) -> Self {
+        Self(Arc::new(RequestContext {
+            observer,
+            correlation: Uuid::new_v4(),
+            started: Instant::now(),
+            details: Mutex::new(Details::default()),
+        }))
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.0.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
     pub(super) fn request(&self, method: &str, tool: Option<&str>) {
-        let mut details = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut details = self.0.details.lock().unwrap_or_else(|e| e.into_inner());
         details.method = match method {
             "initialize" => "initialize",
             "notifications/initialized" => "initialized",
@@ -156,58 +193,92 @@ impl Observation {
             "tools/call" => "tools_call",
             _ => "unknown",
         };
-        details.tool = match tool {
-            None => "not_applicable",
-            Some("search_foods") => "search_foods",
-            Some("get_daily_log") => "get_daily_log",
-            Some("create_food") => "create_food",
-            Some("log_food") => "log_food",
-            Some("update_food_log") => "update_food_log",
-            Some("delete_food_log") => "delete_food_log",
-            Some("get_weight_history") => "get_weight_history",
-            Some("set_weight") => "set_weight",
-            Some("delete_weight_log") => "delete_weight_log",
-            Some(_) => "unknown",
-        };
+        details.tool = tool.map_or("not_applicable", |tool| {
+            known_tool(tool).unwrap_or("unknown")
+        });
         details.outcome = "protocol_success";
     }
 
     pub(super) fn outcome(&self, outcome: &'static str) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).outcome = outcome;
+        self.0
+            .details
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .outcome = outcome;
     }
 
     pub(super) fn result(&self, result: &Value, error_class: &'static str) {
-        let mut details = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
-        details.outcome = if is_error {
-            "tool_error"
-        } else {
-            "tool_success"
-        };
-        details.error_class = error_class;
-        details.shape = Shape::inspect(result, details.tool);
+        self.with_result_inspector(result, error_class, Shape::inspect);
     }
-}
 
-struct Completion {
-    observer: Arc<Observer>,
-    observation: Observation,
-    correlation: Uuid,
-    started: Instant,
-    completed: bool,
-}
-
-impl Completion {
-    fn emit(&self, event: &'static str, status: u16) {
-        if !self.observer.permit() {
+    fn with_result_inspector(
+        &self,
+        result: &Value,
+        error_class: &'static str,
+        inspect: impl FnOnce(&Value, &str) -> Shape,
+    ) {
+        // This clock ends at the prepared Value, before inspection or Json
+        // conversion. No permit or result reference can escape this sync hook.
+        let duration_ms = self.elapsed_ms();
+        let details = {
+            let mut details = self.0.details.lock().unwrap_or_else(|e| e.into_inner());
+            if details.terminal_attempted {
+                return;
+            }
+            details.terminal_attempted = true;
+            details.outcome = if result.get("isError").and_then(Value::as_bool) == Some(true) {
+                "tool_error"
+            } else {
+                "tool_success"
+            };
+            details.error_class = error_class;
+            *details
+        };
+        let priority = if details.method == "tools_call" && known_tool(details.tool).is_some() {
+            Priority::KnownToolResult
+        } else {
+            Priority::Background
+        };
+        if !self.0.observer.permit(priority) {
             return;
         }
-        let details = *self.observation.0.lock().unwrap_or_else(|e| e.into_inner());
-        let shape = details.shape;
+        let shape = inspect(result, details.tool);
+        self.write_event("tool_result_prepared", None, details, shape, duration_ms);
+    }
+
+    fn background(&self, event: &'static str, status: u16) {
+        let details = {
+            let mut details = self.0.details.lock().unwrap_or_else(|e| e.into_inner());
+            if details.terminal_attempted {
+                return;
+            }
+            if event == "abandoned" {
+                details.outcome = "abandoned";
+            }
+            *details
+        };
+        if self.0.observer.permit(Priority::Background) {
+            self.write_event(
+                event,
+                Some(status),
+                details,
+                Shape::default(),
+                self.elapsed_ms(),
+            );
+        }
+    }
+
+    fn write_event(
+        &self,
+        event: &'static str,
+        status: Option<u16>,
+        details: Details,
+        shape: Shape,
+        duration_ms: u64,
+    ) {
         let build = server::build_identity::compiled_identity();
-        let duration_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         tracing::info!(target: TARGET, parent: None,
-            event, correlation = %self.correlation,
+            event, correlation = %self.0.correlation,
             source_sha = build.source_sha, build_run = build.build_run,
             duration_ms, http_status = status, method = details.method, tool = details.tool,
             outcome = details.outcome, error_class = details.error_class,
@@ -219,11 +290,30 @@ impl Completion {
     }
 }
 
+fn known_tool(tool: &str) -> Option<&'static str> {
+    match tool {
+        "search_foods" => Some("search_foods"),
+        "get_daily_log" => Some("get_daily_log"),
+        "create_food" => Some("create_food"),
+        "log_food" => Some("log_food"),
+        "update_food_log" => Some("update_food_log"),
+        "delete_food_log" => Some("delete_food_log"),
+        "get_weight_history" => Some("get_weight_history"),
+        "set_weight" => Some("set_weight"),
+        "delete_weight_log" => Some("delete_weight_log"),
+        _ => None,
+    }
+}
+
+struct Completion {
+    observation: Observation,
+    completed: bool,
+}
+
 impl Drop for Completion {
     fn drop(&mut self) {
         if !self.completed {
-            self.observation.outcome("abandoned");
-            self.emit("abandoned", 0);
+            self.observation.background("abandoned", 0);
         }
     }
 }
@@ -245,6 +335,7 @@ mod tests {
         Extension, Json,
         body::{Body, to_bytes},
         http::{Request as HttpRequest, StatusCode},
+        response::IntoResponse,
         routing::post,
     };
     use serde_json::json;
@@ -304,6 +395,156 @@ mod tests {
             .layer(Extension(lazy_database()))
             .layer(Extension(SyncHub::default()))
             .layer(Extension(CurrentUser { id: 987654321 }))
+    }
+
+    // Protocol paths use the real handler; only the query result is supplied by
+    // a synthetic fixture, then passed through the real final-result helper.
+    async fn history_fixture_handler(
+        db: Extension<Arc<Database>>,
+        hub: Extension<SyncHub>,
+        user: Extension<CurrentUser>,
+        observation: Option<Extension<Observation>>,
+        Json(payload): Json<super::super::JsonRpcRequest>,
+    ) -> Response {
+        if payload.method == "tools/call"
+            && payload
+                .params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(Value::as_str)
+                == Some("get_weight_history")
+        {
+            let observation = observation.as_ref().map(|Extension(value)| value);
+            if let Some(observation) = observation {
+                observation.request("tools/call", Some("get_weight_history"));
+            }
+            return super::super::tool_success(
+                payload.id.unwrap_or(Value::Null),
+                "RESULT_SECRET",
+                json!({"entries":[
+                    {"date":"2099-01-01","weightKg":123.4},
+                    {"date":"2099-01-02","weightKg":234.5},
+                    {"date":"2099-01-03","weightKg":345.6}
+                ]}),
+                observation,
+            );
+        }
+        super::super::mcp_post_handler(db, hub, user, observation, Json(payload))
+            .await
+            .into_response()
+    }
+
+    fn history_fixture_router() -> Router {
+        Router::new()
+            .route("/mcp", post(history_fixture_handler))
+            .layer(Extension(lazy_database()))
+            .layer(Extension(SyncHub::default()))
+            .layer(Extension(CurrentUser { id: 987654321 }))
+    }
+
+    #[tokio::test]
+    async fn startup_burst_cannot_hide_known_weight_result_when_arrival_is_suppressed() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        async {
+            let observer = Arc::new(Observer::new());
+            let observed = observe_with(history_fixture_router(), observer);
+            for (http_method, method) in [
+                ("POST", "initialize"),
+                ("GET", ""),
+                ("POST", "notifications/initialized"),
+                ("POST", "initialize"),
+                ("GET", ""),
+                ("POST", "notifications/initialized"),
+                ("POST", "tools/list"),
+                ("POST", "initialize"),
+                ("GET", ""),
+                ("POST", "notifications/initialized"),
+                ("POST", "tools/call"),
+            ] {
+                let raw = json!({"jsonrpc":"2.0","id":"RPC_SECRET","method":method,
+                    "params":{"name":"get_weight_history","arguments":{"private":"ARG_SECRET"}}})
+                .to_string();
+                let make_request = || {
+                    let mut req = request(&raw);
+                    *req.method_mut() = http_method.parse().unwrap();
+                    req
+                };
+                let baseline = history_fixture_router()
+                    .oneshot(make_request())
+                    .await
+                    .unwrap();
+                let response = observed.clone().oneshot(make_request()).await.unwrap();
+                assert_eq!(response.status(), baseline.status());
+                assert_eq!(
+                    to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+                    to_bytes(baseline.into_body(), usize::MAX).await.unwrap()
+                );
+            }
+        }
+        .with_subscriber(subscriber)
+        .await;
+        let output = capture.text();
+        // Accept the old and new labels: RED must prove actual loss of the
+        // known-tool result after the burst, not simply an event rename.
+        let terminals: Vec<_> = output
+            .lines()
+            .filter(|line| {
+                (line.contains("event=\"response_prepared\"")
+                    || line.contains("event=\"tool_result_prepared\""))
+                    && line.contains("method=\"tools_call\"")
+                    && line.contains("tool=\"get_weight_history\"")
+            })
+            .collect();
+        assert_eq!(
+            terminals.len(),
+            1,
+            "known weight result was hidden after the startup burst"
+        );
+        let terminal = terminals[0];
+        for expected in [
+            "content_blocks=2",
+            "text_blocks=2",
+            "structured=true",
+            "collection_count=3",
+            "checked_entries=3",
+            "checked_date_strings=\"all\"",
+            "checked_weight_numbers=\"all\"",
+            "first_text_json=\"matches\"",
+        ] {
+            assert!(terminal.contains(expected), "missing safe field {expected}");
+        }
+        let correlation = terminal
+            .split("correlation=")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        assert!(
+            !output
+                .lines()
+                .any(|line| line.contains("event=\"arrived\"") && line.contains(correlation)),
+            "result must remain observable without an admitted arrival"
+        );
+        assert!(output.lines().count() <= 20);
+        for secret in [
+            "RESULT_SECRET",
+            "RPC_SECRET",
+            "ARG_SECRET",
+            "TOKEN_SECRET",
+            "URI_SECRET",
+            "2099-01-",
+            "123.4",
+            "234.5",
+            "345.6",
+        ] {
+            assert!(!output.contains(secret), "private fixture leaked");
+        }
     }
 
     #[tokio::test]
@@ -572,7 +813,12 @@ mod tests {
                 let budget = budget.clone();
                 let allowed = &allowed;
                 scope.spawn(move || {
-                    if budget.lock().unwrap().permit(start).0 {
+                    if budget
+                        .lock()
+                        .unwrap()
+                        .permit(start, Priority::KnownToolResult)
+                        .0
+                    {
                         allowed.fetch_add(1, Ordering::Relaxed);
                     }
                 });
@@ -583,27 +829,293 @@ mod tests {
             usize::from(EVENTS_PER_WINDOW)
         );
         let mut budget = budget.lock().unwrap();
-        let (admitted, summary) = budget.permit(start + WINDOW);
+        let (admitted, summary) = budget.permit(start + WINDOW, Priority::KnownToolResult);
         assert!(admitted);
         assert_eq!(summary, Some(20));
         let mut emissions = 2; // summary and the first late/current event
         for _ in 0..40 {
-            if budget.permit(start + WINDOW).0 {
+            if budget.permit(start + WINDOW, Priority::KnownToolResult).0 {
                 emissions += 1;
             }
         }
         assert_eq!(emissions, EVENTS_PER_WINDOW);
         budget.suppressed = u64::MAX;
-        assert!(!budget.permit(start + WINDOW).0);
+        assert!(!budget.permit(start + WINDOW, Priority::KnownToolResult).0);
         assert_eq!(budget.suppressed, u64::MAX);
     }
 
-    #[tokio::test]
-    async fn suppressed_requests_still_execute_without_context_and_abandonment_is_truthful() {
-        async fn endpoint(observation: Option<Extension<Observation>>) -> StatusCode {
-            if let Some(Extension(observation)) = observation {
-                observation.request("ping", None);
+    #[test]
+    fn mixed_emissions_and_rollover_summary_share_the_eight_twenty_limits() {
+        let start = Instant::now();
+        let budget = Arc::new(Mutex::new(EmissionBudget::new(start)));
+        let total = AtomicUsize::new(0);
+        let background = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for index in 0..24 {
+                let budget = budget.clone();
+                let total = &total;
+                let background = &background;
+                scope.spawn(move || {
+                    let priority = if index % 2 == 0 {
+                        Priority::Background
+                    } else {
+                        Priority::KnownToolResult
+                    };
+                    if budget.lock().unwrap().permit(start, priority).0 {
+                        total.fetch_add(1, Ordering::Relaxed);
+                        if priority == Priority::Background {
+                            background.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
             }
+        });
+        assert_eq!(total.load(Ordering::Relaxed), 20);
+        assert_eq!(background.load(Ordering::Relaxed), 8);
+        let mut budget = budget.lock().unwrap();
+        let (admitted, summary) = budget.permit(start + WINDOW, Priority::Background);
+        assert!(admitted);
+        assert_eq!(summary, Some(4));
+        assert_eq!((budget.emitted, budget.background_emitted), (2, 2));
+        for _ in 0..6 {
+            assert!(budget.permit(start + WINDOW, Priority::Background).0);
+        }
+        assert!(!budget.permit(start + WINDOW, Priority::Background).0);
+        for _ in 0..12 {
+            assert!(budget.permit(start + WINDOW, Priority::KnownToolResult).0);
+        }
+        assert!(!budget.permit(start + WINDOW, Priority::KnownToolResult).0);
+        assert_eq!((budget.emitted, budget.background_emitted), (20, 8));
+        let (admitted, summary) = budget.permit(start + WINDOW + WINDOW, Priority::KnownToolResult);
+        assert!(admitted);
+        assert_eq!(summary, Some(2));
+        assert_eq!((budget.emitted, budget.background_emitted), (2, 1));
+    }
+
+    #[test]
+    fn known_error_priority_and_unknown_labels_use_handler_classification() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+            for _ in 0..BACKGROUND_EVENTS_PER_WINDOW {
+                assert!(observer.permit(Priority::Background));
+            }
+            let known = Observation::new(observer.clone());
+            known.request("tools/call", Some("get_weight_history"));
+            let response = super::super::tool_failure(
+                Value::Null,
+                crate::shared::error::AppError::Internal("ERROR_SECRET".into()),
+                Some(&known),
+            );
+            assert_eq!(response.status(), StatusCode::OK);
+            for (method, tool) in [
+                ("tools/call", "UNKNOWN_SECRET"),
+                ("ping", "get_weight_history"),
+            ] {
+                let observation = Observation::new(observer.clone());
+                observation.request(method, Some(tool));
+                observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
+                    panic!("background result must not be inspected after its quota is exhausted")
+                });
+            }
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!((budget.emitted, budget.background_emitted), (9, 8));
+            assert_eq!(budget.suppressed, 2);
+        });
+        let output = capture.text();
+        assert_eq!(output.lines().count(), 1);
+        assert!(output.contains("event=\"tool_result_prepared\""));
+        assert!(output.contains("outcome=\"tool_error\""));
+        assert!(output.contains("error_class=\"internal_error\""));
+        assert!(!output.contains("http_status="));
+        assert!(!output.contains("ERROR_SECRET"));
+        assert!(!output.contains("UNKNOWN_SECRET"));
+    }
+
+    #[test]
+    fn denied_tool_result_never_inspects_or_emits_later_as_abandonment() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+            observer.budget.lock().unwrap().emitted = EVENTS_PER_WINDOW;
+            let observation = Observation::new(observer.clone());
+            observation.request("tools/call", Some("get_weight_history"));
+            let completion = Completion {
+                observation: observation.clone(),
+                completed: false,
+            };
+            observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
+                panic!("denied terminal performed shape work")
+            });
+            assert!(observation.0.details.lock().unwrap().terminal_attempted);
+            assert_eq!(observer.budget.lock().unwrap().suppressed, 1);
+            // A repeated helper hook or late Drop must not acquire a fresh
+            // window's permit after the original terminal attempt was denied.
+            observer.budget.lock().unwrap().started -= WINDOW;
+            observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
+                panic!("duplicate inspection")
+            });
+            drop(completion);
+            assert_eq!(observer.budget.lock().unwrap().emitted, EVENTS_PER_WINDOW);
+        });
+        assert!(capture.text().is_empty());
+    }
+
+    #[test]
+    fn late_known_result_acquires_only_current_window_and_marks_its_stage() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+            let observation = Observation::new(observer.clone());
+            observation.request("tools/call", Some("get_weight_history"));
+            {
+                let mut budget = observer.budget.lock().unwrap();
+                budget.emitted = EVENTS_PER_WINDOW;
+                budget.background_emitted = BACKGROUND_EVENTS_PER_WINDOW;
+                budget.suppressed = 5;
+                budget.started -= WINDOW;
+            }
+            let before = observation.elapsed_ms();
+            let response = super::super::tool_success(
+                Value::Null,
+                "RESULT_SECRET",
+                json!({"entries":[]}),
+                Some(&observation),
+            );
+            let after = observation.elapsed_ms();
+            assert_eq!(response.status(), StatusCode::OK);
+            let output = capture.text();
+            let terminal = output
+                .lines()
+                .find(|line| line.contains("event=\"tool_result_prepared\""))
+                .unwrap();
+            let duration = terminal
+                .split("duration_ms=")
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+            assert!((before..=after).contains(&duration));
+            assert!(!terminal.contains("http_status="));
+            // The event already exists at the sync helper boundary. The outer
+            // response completion and cancellation cannot replace its clock.
+            observation.background("response_prepared", 200);
+            drop(Completion {
+                observation: observation.clone(),
+                completed: false,
+            });
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!((budget.emitted, budget.background_emitted), (2, 1));
+            assert_eq!(capture.text().lines().count(), 2); // one summary + one terminal
+        });
+        let output = capture.text();
+        assert!(output.contains("event=\"suppressed\""));
+        assert!(output.contains("suppressed_events=5"));
+        assert!(!output.contains("event=\"response_prepared\""));
+        assert!(!output.contains("event=\"abandoned\""));
+        assert!(!output.contains("RESULT_SECRET"));
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_real_result_hook_does_not_emit_a_second_terminal() {
+        async fn pending_after_result(observation: Option<Extension<Observation>>) -> Response {
+            let Extension(observation) = observation.unwrap();
+            observation.request("tools/call", Some("get_weight_history"));
+            let _prepared = super::super::tool_success(
+                Value::Null,
+                "RESULT_SECRET",
+                json!({"entries":[]}),
+                Some(&observation),
+            );
+            std::future::pending().await
+        }
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        async {
+            let mut future = Box::pin(
+                observe_with(
+                    Router::new().route("/mcp", post(pending_after_result)),
+                    Arc::new(Observer::new()),
+                )
+                .oneshot(request("{}")),
+            );
+            std::future::poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            drop(future);
+        }
+        .with_subscriber(subscriber)
+        .await;
+        let output = capture.text();
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.contains("event=\"tool_result_prepared\""))
+                .count(),
+            1
+        );
+        assert!(!output.contains("event=\"response_prepared\""));
+        assert!(!output.contains("event=\"abandoned\""));
+    }
+
+    #[tokio::test]
+    async fn explicit_disabled_target_keeps_the_no_context_fast_path() {
+        async fn endpoint(observation: Option<Extension<Observation>>) -> StatusCode {
+            assert!(observation.is_none());
+            StatusCode::ACCEPTED
+        }
+        let capture = Capture::default();
+        let observer = Arc::new(Observer::new());
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(Some(OsStr::new("off"))))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        async {
+            let response = observe_with(
+                Router::new().route("/mcp", post(endpoint)),
+                observer.clone(),
+            )
+            .oneshot(request("{}"))
+            .await
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+        }
+        .with_subscriber(subscriber)
+        .await;
+        assert_eq!(observer.budget.lock().unwrap().emitted, 0);
+        assert!(capture.text().is_empty());
+    }
+
+    #[tokio::test]
+    async fn suppressed_arrivals_keep_context_and_abandonment_is_truthful() {
+        async fn endpoint(observation: Option<Extension<Observation>>) -> StatusCode {
+            let Extension(observation) = observation.expect("context survives arrival suppression");
+            observation.request("ping", None);
             StatusCode::ACCEPTED
         }
         let capture = Capture::default();
@@ -653,7 +1165,7 @@ mod tests {
         .await;
         let output = capture.text();
         assert!(output.contains("event=\"suppressed\""));
-        assert!(output.contains("suppressed_events=1"));
+        assert!(output.contains("suppressed_events=2"));
         assert!(output.contains("event=\"abandoned\""));
         assert!(output.contains("outcome=\"abandoned\""));
     }
@@ -717,42 +1229,42 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         tracing::subscriber::with_default(subscriber, || {
-            let observation = Observation(Arc::new(Mutex::new(Details {
-                method: "tools_call",
-                tool: "delete_weight_log",
+            let observation = Observation::new(Arc::new(Observer::new()));
+            let details = Details {
+                method: "not_observed",
+                tool: "get_weight_history",
                 outcome: "notification_accepted",
                 error_class: "invalid_arguments",
-                shape: Shape {
-                    content_blocks: Some(usize::MAX),
-                    text_blocks: Some(usize::MAX),
-                    structured: true,
-                    collection_count: Some(usize::MAX),
-                    checked_entries: MAX_ENTRIES,
-                    entry_inspection: "not_applicable",
-                    date_strings: "not_applicable",
-                    weight_numbers: "not_applicable",
-                    first_text_json: "not_checked",
-                },
-            })));
-            let mut completion = Completion {
-                observer: Arc::new(Observer::new()),
-                observation,
-                correlation: Uuid::new_v4(),
-                started: Instant::now(),
-                completed: false,
+                terminal_attempted: true,
+            };
+            let shape = Shape {
+                content_blocks: Some(usize::MAX),
+                text_blocks: Some(usize::MAX),
+                structured: true,
+                collection_count: Some(usize::MAX),
+                checked_entries: MAX_ENTRIES,
+                entry_inspection: "not_applicable",
+                date_strings: "not_applicable",
+                weight_numbers: "not_applicable",
+                first_text_json: "not_applicable",
             };
             let span =
                 tracing::info_span!(target: TARGET, "private_parent", private = "SPAN_SECRET");
             let _entered = span.enter();
-            completion.emit("response_prepared", 599);
-            completion.completed = true;
+            for (event, status, priority) in [
+                ("tool_result_prepared", None, Priority::KnownToolResult),
+                ("response_prepared", Some(599), Priority::Background),
+            ] {
+                assert!(observation.0.observer.permit(priority));
+                observation.write_event(event, status, details, shape, u64::MAX);
+            }
         });
         let identity = server::build_identity::compiled_identity();
-        // Include the maximum valid SHA/run, u64 duration (20 digits), longest
-        // tool label and comparison label even in an unknown local build.
-        let margin = 40 - identity.source_sha.len() + 20 - identity.build_run.len() + 22;
+        // Duration, count widths and all labels already use conservative maxima;
+        // account for full compile identity lengths in an unknown local build.
+        let margin = 40 - identity.source_sha.len() + 20 - identity.build_run.len();
         let output = capture.text();
-        assert_eq!(output.lines().count(), 1);
+        assert_eq!(output.lines().count(), 2);
         assert!(!output.contains("SPAN_SECRET"));
         assert!(!output.contains("private_parent"));
         for line in output.lines() {
@@ -774,24 +1286,26 @@ async fn observe_request(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !observer.permit() {
+    if !tracing::enabled!(target: TARGET, tracing::Level::INFO) {
         return next.run(request).await;
     }
-    let correlation = Uuid::new_v4();
-    let build = server::build_identity::compiled_identity();
-    tracing::info!(target: TARGET, parent: None, event = "arrived", correlation = %correlation,
-        source_sha = build.source_sha, build_run = build.build_run);
-    let observation = Observation(Arc::new(Mutex::new(Details::default())));
+    // Context survives arrival suppression; only the authenticated handler can
+    // classify a known tool result for the reserved global headroom.
+    let observation = Observation::new(observer.clone());
+    if observer.permit(Priority::Background) {
+        let build = server::build_identity::compiled_identity();
+        tracing::info!(target: TARGET, parent: None, event = "arrived", correlation = %observation.0.correlation,
+            source_sha = build.source_sha, build_run = build.build_run);
+    }
     request.extensions_mut().insert(observation.clone());
     let mut completion = Completion {
-        observer,
         observation,
-        correlation,
-        started: Instant::now(),
         completed: false,
     };
     let response = next.run(request).await;
-    completion.emit("response_prepared", response.status().as_u16());
+    completion
+        .observation
+        .background("response_prepared", response.status().as_u16());
     completion.completed = true;
     response
 }
