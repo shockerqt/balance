@@ -5,7 +5,7 @@ import { useIsFocused } from 'expo-router/react-navigation';
 import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useAuth } from '../../hooks/use-auth';
 import { useMealDay } from '../../hooks/use-meal-store';
-import { logsDateStore, useLogsSelectedDate } from '../../hooks/use-logs-date';
+import { logsDateStore, useLogsDateRevision, useLogsSelectedDate } from '../../hooks/use-logs-date';
 import { dateIdToEpochDay } from '../../lib/dates';
 import { createPagerDiagnostics } from '../../dev/pager-diagnostics';
 import { Button, Screen, Text } from '../ui';
@@ -27,6 +27,7 @@ function AccountSpike() {
   const router = useRouter();
   const active = useIsFocused();
   const [date, setDate] = useLogsSelectedDate();
+  const revision = useLogsDateRevision();
   const [engine, setEngine] = useState<RecyclingListEngine>('legend');
   const [pagerEngine, setPagerEngine] = useState<'native' | 'custom'>('native');
   const [report, setReport] = useState<string | null>(null);
@@ -109,7 +110,7 @@ function AccountSpike() {
       </View>
       <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
       {report ? <ScrollView style={{ maxHeight: 220 }}><Text selectable variant="caption">{report}</Text></ScrollView> : null}
-      <DayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision} position={position}
+      <DayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision} position={position}
         interaction={interaction} active={active} onSettle={settle} renderDay={renderDay} />
     </Screen>
   </Profiler>;

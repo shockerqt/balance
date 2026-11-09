@@ -107,3 +107,15 @@ include account IDs, date strings or food records. Per-frame scroll handling is
 unchanged and adds no JS trace calls. The trace stays in memory and is shared
 only when the operator presses Compartir diagnóstico in the native share sheet.
 It creates no server telemetry, persistence or parallel date authority.
+
+## Production compiler and revision subscriptions
+
+The pager's revision prop must use `useLogsDateRevision`, which subscribes to the
+existing date authority through `useSyncExternalStore`. Reading `getRevision()`
+imperatively during render lets Expo's React Compiler cache the mount revision.
+After a calendar jump or an initial swipe, that frozen prop can reject every
+subsequent native acknowledgement while the UI-thread underline still moves.
+Imperative reads inside event handlers remain appropriate for live validation.
+Regression tests execute the actual production Expo preset/React Compiler and
+date hooks, covering consecutive settles, Sunday6→Monday7 after a calendar jump,
+and away-and-back commands whose final date is unchanged but revision advances.
