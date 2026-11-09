@@ -15,3 +15,13 @@ export function useLogsSelectedDate(): [string, (dateId: string) => void] {
   );
   return [dateId, logsDateStore.set];
 }
+
+// Revision is external reactive state too. An imperative read during render
+// can be memoized forever by the production React Compiler.
+export function useLogsDateRevision(): number {
+  return useSyncExternalStore(
+    logsDateStore.subscribe,
+    logsDateStore.getRevision,
+    logsDateStore.getRevision
+  );
+}

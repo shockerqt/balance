@@ -9,7 +9,7 @@ import { useMealActions, useMealDay, type LoggedFoodItem } from '@/hooks/use-mea
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
-import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
+import { logsDateStore, useLogsDateRevision, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { currentTimeString, dateIdToEpochDay, todayId } from '@/lib/dates';
 import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
@@ -20,6 +20,7 @@ import type { HourRailFeedHandle } from './hour-rail-feed';
 export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const active = useIsFocused();
   const [date, setDate] = useLogsSelectedDate();
+  const revision = useLogsDateRevision();
   const [lockedDate, setLockedDate] = useState<string | null>(null);
   const position = useSharedValue(dateIdToEpochDay(date));
   const interaction = useSharedValue(0);
@@ -35,7 +36,7 @@ export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} />, [selectionChanged, today]);
   return <View style={{ flex: 1 }}>
     <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
-    <NativeDayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision}
+    <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
   </View>;
 }

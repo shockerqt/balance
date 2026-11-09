@@ -45,6 +45,7 @@ const { NativeDayWindow } = compile(path.join(root, 'src/components/meal/native-
   react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native': native,
   'react-native-pager-view': { __esModule: true, default: PagerView },
   'react-native-reanimated': reanimated, '../../lib/dates': dates,
+  '../../dev/native-pager-status': local('./src/dev/native-pager-status.ts'),
 });
 
 test('installed PagerView callback forwarding keeps visible day, header/week and authority synchronized without JS scroll-frame handlers', async () => {
