@@ -25,6 +25,7 @@ test('RN shell has four destinations, central registration uses the measurement 
     '@/hooks/use-auth': { useAuth: () => ({ user: { id: 1, name: 'Cuenta' }, isGuest: false }) },
     '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true }) },
     '@/hooks/use-weight-store': { useWeightStore: () => ({ weightsByDate: {}, syncError: null }) },
+    '@/hooks/use-today-id': { useTodayId: () => date },
     '@/hooks/use-logs-date': { logsDateStore: nav, useLogsSelectedDate: () => [React.useSyncExternalStore(nav.subscribe, nav.get, nav.get)] },
     '@/lib/dates': { ...dates, todayId: () => date, currentTimeString: () => '13:00' },
     '@/theme': { useTheme: () => ({ colors, gradients: {} }) }, '@/theme/gradient': { gradientBackground: () => ({}) },
@@ -73,4 +74,24 @@ test('calendar jumps directly to another year without commanding intermediate da
     await renderer.act(async () => touch('2099-01-15, con registro').props.onPress()); assert.deepEqual(selected, ['2099-01-15']);
     await renderer.act(async () => button('Hoy').props.onPress()); assert.equal(selected.at(-1), date);
   } finally { await renderer.act(async () => tree.unmount()); }
+});
+
+test('the visible Chilean day refreshes at midnight and on foreground return, then releases its timer/listener', async () => {
+  let current = date, interval, foreground, removed = false, cleared = false, observed;
+  const originalSet = global.setInterval, originalClear = global.clearInterval;
+  global.setInterval = (callback, ms) => { assert.equal(ms, 60000); interval = callback; return 123; };
+  global.clearInterval = value => { assert.equal(value, 123); cleared = true; };
+  const { useTodayId } = compile('src/hooks/use-today-id.ts', {
+    react: React,
+    'react-native': { AppState: { addEventListener: (_, cb) => { foreground = cb; return { remove() { removed = true; } }; } } },
+    '@/lib/dates': { todayId: () => current },
+  });
+  function Host() { observed = useTodayId(); return null; }
+  let tree;
+  try {
+    await renderer.act(async () => { tree = renderer.create(React.createElement(Host)); }); assert.equal(observed, date);
+    current = '2026-10-19'; await renderer.act(async () => interval()); assert.equal(observed, current);
+    current = '2026-10-21'; await renderer.act(async () => foreground('active')); assert.equal(observed, current);
+    await renderer.act(async () => tree.unmount()); assert.equal(removed, true); assert.equal(cleared, true);
+  } finally { global.setInterval = originalSet; global.clearInterval = originalClear; if (tree) await renderer.act(async () => tree.unmount()); }
 });

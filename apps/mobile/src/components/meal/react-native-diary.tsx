@@ -17,7 +17,7 @@ import { NativeDayWindow } from './native-day-window';
 import { RecyclingHourRailFeed } from './recycling-hour-rail-feed';
 import type { HourRailFeedHandle } from './hour-rail-feed';
 
-export function ReactNativeDiary() {
+export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const active = useIsFocused();
   const [date, setDate] = useLogsSelectedDate();
   const [lockedDate, setLockedDate] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export function ReactNativeDiary() {
   const selectionChanged = useCallback((day: string, selected: boolean) => {
     if (logsDateStore.get() === day) setLockedDate(selected ? day : null);
   }, []);
-  const renderDay = useCallback((day: string) => <DiaryDay date={day} onSelection={selectionChanged} />, [selectionChanged]);
+  const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} />, [selectionChanged, today]);
   return <View style={{ flex: 1 }}>
     <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
     <NativeDayWindow dateId={date} revision={logsDateStore.getRevision()} readRevision={logsDateStore.getRevision}
@@ -40,7 +40,7 @@ export function ReactNativeDiary() {
   </View>;
 }
 
-const DiaryDay = React.memo(function DiaryDay({ date, onSelection }: { date: string; onSelection: (date: string, selected: boolean) => void }) {
+const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection }: { date: string; today: string; onSelection: (date: string, selected: boolean) => void }) {
   const router = useRouter();
   const log = useMealDay(date);
   const currentLog = useRef(log);
@@ -94,7 +94,7 @@ const DiaryDay = React.memo(function DiaryDay({ date, onSelection }: { date: str
     ]);
   };
   return <View style={{ flex: 1 }}>
-    {preference.preferencesReady && preference.weightTrackingEnabled ? <DailyWeightRow measurement={weight.weightsByDate[date]} disabled={date > todayId()}
+    {preference.preferencesReady && preference.weightTrackingEnabled ? <DailyWeightRow measurement={weight.weightsByDate[date]} disabled={date > today}
       onPress={() => { if (live()) router.push({ pathname: '/weight-entry', params: { dateId: date } }); }} /> : null}
     {weight.syncError ? <Text selectable tone="danger">{weight.syncError.message}</Text> : null}
     <StickyMacroHeader {...log} foods={log.foods} />

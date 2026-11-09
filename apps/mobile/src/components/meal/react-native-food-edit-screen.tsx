@@ -23,8 +23,9 @@ function EditSession() {
   const meals = useMealStore();
   const liveDocuments = useRef(meals.mealDocuments);
   const active = useRef(false);
+  const generation = useRef(0);
   useLayoutEffect(() => { liveDocuments.current = meals.mealDocuments; }, [meals.mealDocuments]);
-  useFocusEffect(useCallback(() => { active.current = true; return () => { active.current = false; }; }, []));
+  useFocusEffect(useCallback(() => { active.current = true; generation.current++; return () => { active.current = false; generation.current++; }; }, []));
   const [source] = useState(() => meals.mealDocuments.find(doc => doc.id === params.foodId && !doc._deleted));
   const date = params.dateId ?? '';
   const [quantity, setQuantity] = useState(() => source ? String(source.entry.enteredQuantity) : '');
@@ -52,8 +53,9 @@ function EditSession() {
   };
   const remove = () => {
     if (receipt.saving || receipt.saved) return;
+    const expectedGeneration = generation.current;
     Alert.alert('Eliminar registro', source.nameSnapshot, [{ text: 'Cancelar', style: 'cancel' }, { text: 'Eliminar', style: 'destructive', onPress: () => {
-      if (!active.current) return;
+      if (!active.current || generation.current !== expectedGeneration) return;
       try { current(); meals.deleteFood(date, source.id); router.back(); } catch { Alert.alert('El registro cambió', 'Vuelve al diario antes de eliminarlo.'); }
     } }]);
   };

@@ -184,6 +184,8 @@ test('queued RN callbacks check current documents and delete confirmation cannot
     const confirm = edit.alerts[0][2].find(button => button.text === 'Eliminar').onPress;
     await edit.blur(); await renderer.act(async () => { confirm(); });
     assert.equal(edit.removals.length, 0); assert.equal(edit.backs.length, 0);
+    await edit.refocus(); await renderer.act(async () => { confirm(); });
+    assert.equal(edit.removals.length, 0, 'returning to the same screen cannot revive the old delete confirmation');
   } finally { await edit.close(); }
 });
 

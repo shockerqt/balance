@@ -5,6 +5,7 @@ import { Screen, Button, Card, Icon, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
+import { useTodayId } from '@/hooks/use-today-id';
 import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { currentTimeString, displayDateFor, todayId } from '@/lib/dates';
 import { useTheme } from '@/theme';
@@ -33,6 +34,7 @@ function InterfaceSession() {
   const [date] = useLogsSelectedDate();
   const [measurementDate, setMeasurementDate] = useState(date);
   const preference = usePreferencesStore();
+  const today = useTodayId();
   useEffect(() => { setMeasurementDate(date); }, [date]);
   const target = destination === 1 ? measurementDate : date;
   const active = useRef(false);
@@ -53,7 +55,7 @@ function InterfaceSession() {
   };
   return <Screen edges={['top', 'bottom']}>
     <View style={{ flex: 1 }}>
-      {destination === 0 ? <Diary /> : destination === 1 ? <Measurements date={measurementDate} onDate={setMeasurementDate} /> : destination === 2 ?
+      {destination === 0 ? <Diary today={today} /> : destination === 1 ? <Measurements date={measurementDate} today={today} onDate={setMeasurementDate} /> : destination === 2 ?
         <ReactNativeSummary onOpen={(selected, body) => { logsDateStore.set(selected); setMeasurementDate(selected); setDestination(body ? 1 : 0); }} /> : <Profile />}
     </View>
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 10, backgroundColor: theme.colors.surface }}>
@@ -73,7 +75,7 @@ function InterfaceSession() {
   </Screen>;
 }
 
-function Measurements({ date, onDate }: { date: string; onDate: (date: string) => void }) {
+function Measurements({ date, today, onDate }: { date: string; today: string; onDate: (date: string) => void }) {
   const preference = usePreferencesStore();
   const weight = useWeightStore();
   const router = useRouter();
@@ -83,7 +85,7 @@ function Measurements({ date, onDate }: { date: string; onDate: (date: string) =
       {!preference.preferencesReady ? <Text>Cargando preferencias…</Text> : !preference.weightTrackingEnabled ? <Text tone="secondary">El seguimiento de peso está desactivado. Puedes activarlo en Perfil.</Text> : <>
         <CalendarMonth value={date} onChange={onDate} marked={weight.weightsByDate} />
         <Text variant="heading">{displayDateFor(date)}</Text>
-        {date <= todayId() ? <WeightTrendCard dateId={date} weightsByDate={weight.weightsByDate}
+        {date <= today ? <WeightTrendCard dateId={date} weightsByDate={weight.weightsByDate}
           onPress={() => router.push({ pathname: '/weight-entry', params: { dateId: date } })} /> : <Text tone="secondary">Elige hoy o una fecha anterior para registrar peso.</Text>}
         {weight.syncError ? <Text selectable tone="danger">{weight.syncError.message}</Text> : null}
       </>}
