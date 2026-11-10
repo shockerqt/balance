@@ -1,0 +1,231 @@
+const path = require('node:path'), Module = require('node:module');
+const assert = require('node:assert/strict'), test = require('node:test');
+const root = path.resolve(__dirname, '..'), local = Module.createRequire(path.join(root, 'package.json'));
+const React = local('react'), renderer = local('react-test-renderer'), babel = local('@babel/core'), ts = local('typescript');
+const dates = local('./src/lib/dates.ts'), { createLogNavigation } = local('./src/lib/log-navigation.ts');
+global.IS_REACT_ACT_ENVIRONMENT = true;
+const compiledFiles = new Map();
+function compile(file, stubs) {
+  const filename = path.join(root, 'src/components/meal', file);
+  const compiled = compiledFiles.get(file) ?? babel.transformFileSync(filename, { babelrc: false, configFile: false, compact: false,
+    presets: [['babel-preset-expo', {}]], caller: { name: 'metro', platform: 'android', isDev: false, isServer: false,
+      bundler: 'metro', supportsStaticESM: true, supportsReactCompiler: true } }).code;
+  compiledFiles.set(file, compiled);
+  if (file.endsWith('.tsx')) assert.match(compiled, /react\/compiler-runtime/);
+  const m = new Module(filename, module); m.filename = filename;
+  m.require = name => { if (name in stubs) return stubs[name]; if (name.startsWith('@babel/runtime/') || name === 'react/compiler-runtime') return local(name); throw Error('Unexpected '+name); };
+  m._compile(ts.transpileModule(compiled, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, filename);
+  return m.exports;
+}
+function shared(initial) {
+  let current = initial;
+  return { pending: null, get value() { return current; }, set value(next) {
+    if (next?.animation) { this.pending = next; next.owner = this; }
+    else { current = next; this.pending = null; }
+  } };
+}
+const flatten = value => Array.isArray(value) ? value.flatMap(flatten) : value ? [value] : [];
+const style = node => Object.assign({}, ...flatten(node.props.style).map(s => s.read ? s.read() : s));
+async function harness(initial = '2026-12-06', staticMode = false) {
+  const nav = createLogNavigation(initial), position = shared(dates.dateIdToEpochDay(initial)), interaction = shared(0);
+  let tree, commits = 0, active = true, queued = [], animations = [], gestures = [], routes = [], reactions = [];
+  const theme = { colors: { primary: '#00aa00', border: '#888888', surface: '#ffffff', background: '#fafafa', text: '#111111', textSecondary: '#444444', textMuted: '#666666', onPrimary: '#ffffff' } };
+  const hooks = { logsDateStore: nav, useLogsDateRevision: () => React.useSyncExternalStore(nav.subscribe, nav.getRevision, nav.getRevision) };
+  const reanimated = { __esModule: true, default: { View: 'AnimatedView' },
+    useSharedValue: initial => { const ref = React.useRef(null); return ref.current ??= shared(initial); },
+    useAnimatedStyle: read => ({ read }), useDerivedValue: read => ({ get value() { return read(); } }),
+    useAnimatedReaction: (read, react) => {
+      const latest = React.useRef({ read, react }); latest.current = { read, react };
+      React.useLayoutEffect(() => {
+        const run = () => latest.current.react(latest.current.read()); reactions.push(run); run();
+        return () => { reactions = reactions.filter(fn => fn !== run); };
+      }, []);
+    },
+    interpolateColor: (value, input, output) => value === 0 ? output[0] : value === 1 ? output[1] : `blend:${value}`,
+    cancelAnimation: value => { const p = value.pending; value.pending = null; p?.callback(false); },
+    withTiming: (target, config, callback) => { const a = { animation: true, target, config, callback }; animations.push(a); return a; },
+    runOnUI: fn => (...args) => fn(...args), runOnJS: fn => (...args) => queued.push(() => fn(...args)),
+  };
+  const gesturesModule = { GestureDetector: 'GestureDetector', Gesture: { Pan() {
+    const g = { handlers: {} };
+    for (const key of ['enabled', 'maxPointers', 'activeOffsetX', 'failOffsetY']) g[key] = () => g;
+    for (const key of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) g[key] = fn => { g.handlers[key] = fn; return g; };
+    gestures.push(g); return g;
+  } } };
+  const common = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native-reanimated': reanimated,
+    'react-native-gesture-handler': gesturesModule, '@/hooks/use-logs-date': hooks, '@/lib/dates': { ...dates, todayId: () => '2026-11-10' } };
+  const swipe = compile('use-week-strip-swipe.ts', common);
+  const { DateStripHeader } = compile('date-strip-header.tsx', { ...common,
+    'react-native': { View: 'View', Text: 'Text', TouchableOpacity: 'Button', StyleSheet: { create: x => x } },
+    'expo-router': { useRouter: () => ({ push: route => routes.push(route) }) }, '@/theme': { useTheme: () => theme },
+    '@/components/ui': { Icon: 'Icon' }, './use-week-strip-swipe': swipe, './date-swipe': { DateSwipe: 'DateSwipe' },
+  });
+  function Host() {
+    const date = React.useSyncExternalStore(nav.subscribe, nav.get, nav.get);
+    React.useLayoutEffect(() => { position.value = dates.dateIdToEpochDay(date); }, [date]);
+    return React.createElement(React.Profiler, { id: 'header', onRender: () => commits++ }, React.createElement(DateStripHeader, {
+      selectedDateId: date, onSelectDate: nav.set, onShiftDate: nav.shift, active,
+      ...(staticMode ? {} : { pagerPosition: position, pagerInteraction: interaction }),
+    }));
+  }
+  await renderer.act(async () => { tree = renderer.create(React.createElement(Host)); });
+  const viewport = () => tree.root.findAllByType('View').find(n => n.props.onLayout);
+  const resize = async width => renderer.act(async () => viewport().props.onLayout({ nativeEvent: { layout: { width } } }));
+  if (!staticMode) await resize(400);
+  const buttons = () => tree.root.findAllByType('Button');
+  const day = date => buttons().find(b => b.props.accessibilityLabel?.endsWith(' '+date));
+  const pill = date => day(date).findAllByType('AnimatedView')[0];
+  const marker = date => day(date).findAllByType('AnimatedView')[1];
+  const heading = text => tree.root.findAllByType('AnimatedView').find(n => n.props.pointerEvents === 'none' && n.findAllByType('Text').some(t => t.props.children === text));
+  const weeks = () => tree.root.findAllByType('AnimatedView').filter(n => typeof n.props.accessibilityElementsHidden === 'boolean' && n.props.pointerEvents !== 'none');
+  return { tree, nav, position, interaction, theme, routes, day, pill, marker, heading, weeks, style, resize,
+    commits: () => commits,
+    gesture: () => gestures.at(-1).handlers,
+    async frames(values) { await renderer.act(async () => { for (const value of values) position.value = dates.dateIdToEpochDay(initial)+value; }); },
+    async moveContent(value) { await renderer.act(async () => { interaction.value = value; for (const run of reactions) run(); }); },
+    async begin() { await renderer.act(async () => { const g = gestures.at(-1).handlers; g.onBegin(); g.onStart(); }); },
+    async drag(x) { await renderer.act(async () => gestures.at(-1).handlers.onUpdate({ translationX: x })); },
+    async end(x, velocity = 0, success = true) { await renderer.act(async () => gestures.at(-1).handlers.onEnd({ translationX: x, velocityX: velocity }, success)); },
+    async finish() { await renderer.act(async () => { const a = animations.at(-1); a.owner.value = a.target; a.callback(true); }); },
+    async flush() { await renderer.act(async () => { for (const f of queued.splice(0)) f(); }); },
+    async jump(date) { await renderer.act(async () => nav.set(date)); },
+    async blur() { active = false; await renderer.act(async () => tree.update(React.createElement(Host))); },
+    async focus() { active = true; await renderer.act(async () => tree.update(React.createElement(Host))); },
+    async close() { await renderer.act(async () => tree.unmount()); },
+  };
+}
+
+test('compiled header shares fractional title, border and underline progress without React commits or date writes', async () => {
+  const h = await harness('2026-12-02');
+  try {
+    const baseline = h.commits();
+    await h.frames([0.1, 0.2, 0.5]);
+    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 0.5);
+    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0.5);
+    assert.equal(h.style(h.marker('2026-12-02')).opacity, 0.5);
+    assert.equal(h.style(h.pill('2026-12-02')).borderColor, 'blend:0.5');
+    assert.equal(h.style(h.pill('2026-12-03')).borderColor, 'blend:0.5');
+    assert.equal(h.commits(), baseline); assert.equal(h.nav.get(), '2026-12-02');
+    assert.equal(h.day('2026-12-02').props.accessibilityState.selected, true);
+    await h.frames([0]);
+    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 1);
+    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0);
+  } finally { await h.close(); }
+});
+
+test('Sunday to Monday and reverse reveal the actual adjacent weeks continuously, with no rebase jump', async () => {
+  const h = await harness();
+  try {
+    assert.ok(h.day('2026-11-30')); assert.ok(h.day('2026-12-07'));
+    const baseline = h.commits();
+    await h.frames([0.5]);
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, -200);
+    assert.equal(h.style(h.weeks()[2]).transform[0].translateX, 200);
+    assert.equal(h.style(h.heading('Domingo 6')).opacity, 0.5);
+    assert.equal(h.style(h.heading('Lunes 7')).opacity, 0.5);
+    assert.equal(h.commits(), baseline);
+    await h.jump('2026-12-07');
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, 0);
+    await h.frames([0.5]);
+    assert.equal(h.style(h.weeks()[0]).transform[0].translateX, -200);
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, 200);
+    assert.equal(h.nav.get(), '2026-12-07');
+  } finally { await h.close(); }
+});
+
+test('week dragging follows the finger, previews the same weekday and commits only one seven-day command on completion', async () => {
+  const h = await harness('2026-12-02');
+  try {
+    const baseline = h.commits(), original = h.position.value;
+    await h.begin(); await h.drag(-200);
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, -200);
+    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 0.5);
+    assert.equal(h.style(h.heading('Miércoles 9')).opacity, 0.5);
+    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0);
+    assert.equal(h.style(h.marker('2026-12-09')).opacity, 0.5);
+    assert.equal(h.commits(), baseline); assert.equal(h.nav.getRevision(), 0);
+    assert.equal(h.position.value, original, 'week preview never writes the content pager position');
+    await h.end(-200); assert.equal(h.nav.getRevision(), 0);
+    await h.finish(); assert.equal(h.nav.getRevision(), 0, 'UI completion queues the guarded command');
+    await h.flush(); assert.equal(h.nav.get(), '2026-12-09'); assert.equal(h.nav.getRevision(), 1);
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, 0);
+  } finally { await h.close(); }
+});
+
+test('short and cancelled week drags return; reversing selects the previous week', async () => {
+  const h = await harness('2026-12-02');
+  try {
+    await h.begin(); await h.drag(-20); await h.end(-20); await h.finish(); await h.flush();
+    assert.equal(h.nav.getRevision(), 0);
+    await h.begin(); await h.drag(-240);
+    await renderer.act(async () => h.gesture().onFinalize());
+    await h.finish(); await h.flush(); assert.equal(h.nav.getRevision(), 0);
+    await h.begin(); await h.drag(-200); await h.drag(200); await h.end(200); await h.finish(); await h.flush();
+    assert.equal(h.nav.get(), '2026-11-25');
+  } finally { await h.close(); }
+});
+
+test('calendar commands, away/back revisions, resize, blur and new gestures invalidate queued weekly completions', async () => {
+  for (const invalidation of ['calendar', 'away-back', 'resize', 'blur', 'new-gesture', 'content-gesture', 'unmount']) {
+    const h = await harness('2026-12-02'); let closed = false;
+    try {
+      await h.begin(); await h.drag(-220); await h.end(-220); await h.finish();
+      if (invalidation === 'calendar') await h.jump('2040-01-01');
+      if (invalidation === 'away-back') { await h.jump('2040-01-01'); await h.jump('2026-12-02'); }
+      if (invalidation === 'resize') await h.resize(500);
+      if (invalidation === 'blur') { await h.blur(); await h.focus(); }
+      if (invalidation === 'new-gesture') await h.begin();
+      if (invalidation === 'content-gesture') { await h.moveContent(1); await h.moveContent(0); }
+      if (invalidation === 'unmount') { await h.close(); closed = true; }
+      const expected = h.nav.get(), revision = h.nav.getRevision();
+      await h.flush(); assert.equal(h.nav.get(), expected, invalidation); assert.equal(h.nav.getRevision(), revision, invalidation);
+    } finally { if (!closed) await h.close(); }
+  }
+});
+
+test('week gestures cannot override a moving content pager; taps, arrows and calendar remain direct commands', async () => {
+  const h = await harness('2026-12-02');
+  try {
+    h.interaction.value = 1;
+    await h.begin(); await h.drag(-220); await h.end(-220); await h.flush();
+    assert.equal(h.nav.getRevision(), 0);
+    h.interaction.value = 0;
+    await renderer.act(async () => h.day('2026-12-05').props.onPress());
+    assert.equal(h.nav.get(), '2026-12-05');
+    const buttons = h.tree.root.findAllByType('Button');
+    await renderer.act(async () => buttons.find(b => b.props.accessibilityLabel === 'Ir al día siguiente').props.onPress());
+    assert.equal(h.nav.get(), '2026-12-06');
+    await renderer.act(async () => h.tree.root.findAllByType('Button').find(b => b.props.accessibilityLabel?.startsWith('Elegir fecha:')).props.onPress());
+    assert.deepEqual(h.routes, ['/date-picker']);
+    assert.equal(h.tree.root.findAllByType('AnimatedView').filter(n => n.props.pointerEvents === 'none').length, 15);
+    assert.equal(h.weeks().length, 3);
+    assert.equal(h.weeks().filter(w => !w.props.accessibilityElementsHidden).length, 1);
+  } finally { await h.close(); }
+});
+
+
+test('a new week drag interrupts the pending animation from its current progress and invalidates its old completion', async () => {
+  const h = await harness('2026-12-02');
+  try {
+    await h.begin(); await h.drag(-200); await h.end(-200);
+    const baseline = h.commits();
+    await h.begin();
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, -200);
+    await h.drag(400);
+    assert.equal(h.style(h.weeks()[1]).transform[0].translateX, 200);
+    assert.equal(h.commits(), baseline);
+    await h.end(400); await h.finish(); await h.flush();
+    assert.equal(h.nav.get(), '2026-11-25'); assert.equal(h.nav.getRevision(), 1);
+  } finally { await h.close(); }
+});
+
+test('consumers without a pager retain a selected pill and discrete weekly navigation', async () => {
+  const h = await harness('2026-12-02', true);
+  try {
+    assert.equal(h.tree.root.findByType('DateSwipe').props.days, 7);
+    assert.equal(h.tree.root.findAllByType('AnimatedView').length, 0);
+    assert.equal(h.day('2026-12-02').props.accessibilityState.selected, true);
+    await renderer.act(async () => h.day('2026-12-04').props.onPress());
+    assert.equal(h.nav.get(), '2026-12-04');
+  } finally { await h.close(); }
+});

@@ -108,7 +108,7 @@ function AccountSpike() {
           <Button size="md" style={{ paddingHorizontal: 12 }} title={capturing ? 'Detener' : 'Medir'} onPress={capturing ? stop : start} />
         </View>
       </View>
-      <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
+      <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
       {report ? <ScrollView style={{ maxHeight: 220 }}><Text selectable variant="caption">{report}</Text></ScrollView> : null}
       <DayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision} position={position}
         interaction={interaction} active={active} onSettle={settle} renderDay={renderDay} />

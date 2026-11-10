@@ -35,7 +35,7 @@ export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   }, []);
   const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} />, [selectionChanged, today]);
   return <View style={{ flex: 1 }}>
-    <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} />
+    <DateStripHeader selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
     <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
   </View>;
