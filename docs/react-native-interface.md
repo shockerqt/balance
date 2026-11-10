@@ -119,3 +119,26 @@ Imperative reads inside event handlers remain appropriate for live validation.
 Regression tests execute the actual production Expo preset/React Compiler and
 date hooks, covering consecutive settles, Sunday6→Monday7 after a calendar jump,
 and away-and-back commands whose final date is unchanged but revision advances.
+
+## Continuous heading and week strip
+
+The diary heading crossfades/translates between preformatted adjacent dates.
+Each day outline interpolates its Organic border color with the same fractional
+weight as its underline. All three use the existing UI-thread pager position;
+no render or date-store write occurs during content drag frames. Three bounded
+week rows reveal the adjacent week over the Sunday/Monday interval, including
+reverse and cancelled swipes. Labels and rows retain their identities at settle.
+
+Dragging the week strip itself also follows the finger. It previews the same
+weekday in the adjacent week, then issues exactly one existing seven-day date
+command after an accepted release settles. Short/cancelled drags return; the
+preview never writes the native content pager position. Calendar/revision
+changes, resize, focus loss, unmount, another strip gesture or a content gesture
+invalidate pending completions. No parallel date authority is introduced.
+
+The heading and accessible selected day describe the confirmed date until
+settle; visual-only stacked labels and off-week accessibility trees are hidden.
+Taps, date arrows and calendar jumps remain direct commands. Production-compiled
+renderer regressions check fractional heading/color/underline styles, real
+adjacent week dates, zero frame commits, cancel/reverse behavior and stale
+completion rejection. These software checks do not establish physical smoothness.
