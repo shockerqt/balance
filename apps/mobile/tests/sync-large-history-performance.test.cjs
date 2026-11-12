@@ -432,3 +432,94 @@ test('12k history advances 240 unique pages with actual owners and a retained na
     } finally { await restarted.close(); }
   } finally { await app.close(); }
 });
+
+test('cold start from a 12k durable cache: hydration, first day and one local mutation', { timeout: 180000 }, async t => {
+  const history = representativeHistory();
+  const physical = disk();
+  const setup = launch(physical);
+  try {
+    await setup.mount();
+    await setup.storage.setItem(setup.owner.collectionStorageKey(namespace, 'mealLogs'), JSON.stringify(history));
+  } finally {
+    await setup.close();
+  }
+
+  const writes = [];
+  physical.controls.beforeWrite = async (uri, value) => {
+    writes.push(Buffer.byteLength(value));
+  };
+
+  const app = launch(physical);
+  try {
+    const hydrateStart = performance.now();
+    await app.mount();
+    let hydrateIterations = 0;
+    while (app.stores.meals.mealDocuments.length !== 12000) {
+      if (++hydrateIterations > 200) {
+        assert.fail(`Hydration did not complete within 200 iterations (documents: ${app.stores.meals.mealDocuments.length})`);
+      }
+      await app.runDeferred();
+    }
+    const hydrateMs = performance.now() - hydrateStart;
+    assert.equal(app.stores.meals.mealDocuments.length, 12000);
+
+    const dates = app.load(path.join(root, 'src/lib/dates.ts'));
+    const mostRecentDoc = history.reduce((latest, doc) => (doc.consumedAt > latest.consumedAt ? doc : latest), history[0]);
+    const targetDate = dates.toDateId(new Date(mostRecentDoc.consumedAt));
+
+    // The provider projects inside render, so hydrateMs already includes it.
+    // Time the complete first projection separately with a fresh projector.
+    const store = app.load(path.join(root, 'src/hooks/use-meal-store.tsx'));
+    const projectionStart = performance.now();
+    const projected = store.createMealDayProjector()(app.stores.meals.mealDocuments);
+    const projectionMs = performance.now() - projectionStart;
+    const day = projected[targetDate];
+    assert.ok(day && day.foods && day.foods.length > 0, 'Most recent day has foods');
+
+    writes.length = 0;
+    const mutationStart = performance.now();
+    await act(() => {
+      app.stores.meals.addFood(targetDate, {
+        name: 'Synthetic add',
+        portion: '100g',
+        calories: 100,
+        protein: 2,
+        carbs: 20,
+        fat: 1,
+        time: '12:30',
+      });
+    });
+    let mutationIterations = 0;
+    while (writes.length === 0) {
+      if (++mutationIterations > 50) {
+        assert.fail('Cache write did not happen within 50 iterations');
+      }
+      await app.runDeferred();
+    }
+    const mutationMs = performance.now() - mutationStart;
+    const mutationWriteBytes = writes.reduce((sum, bytes) => sum + bytes, 0);
+
+    assert.equal(app.stores.meals.mealDocuments.length, 12001);
+    assert.ok(mutationWriteBytes > 0, 'Mutation must write bytes to storage');
+    assert.ok(hydrateMs < 60000, `Node/ARM hydration ${hydrateMs.toFixed(1)}ms exceeds 60s budget`);
+    assert.ok(mutationMs < 30000, `Node/ARM mutation ${mutationMs.toFixed(1)}ms exceeds 30s budget`);
+
+    const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+    const cacheVal = await app.storage.getItem(cacheKey);
+    const cacheBytes = Buffer.byteLength(cacheVal ?? '');
+
+    t.diagnostic(JSON.stringify({
+      runtime: process.version,
+      arch: process.arch,
+      documents: 12000,
+      hydrateMs,
+      projectionMs,
+      mutationMs,
+      mutationWriteBytes,
+      cacheBytes,
+      limits: 'Node React renderer; simulated native FS; no Hermes or device timing',
+    }));
+  } finally {
+    await app.close();
+  }
+});
