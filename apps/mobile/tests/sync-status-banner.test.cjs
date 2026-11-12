@@ -60,7 +60,23 @@ function setup({ reducedMotion = false, motionQuery, topInset = 47 } = {}) {
       loop() { return { start() { calls.starts++; }, stop() { calls.stops++; } }; },
     },
   };
-  const common = { react: React, 'react/jsx-runtime': local('react/jsx-runtime') };
+  const renderSnapshots = [];
+  let getToastSnapshot = null;
+  let holdSubscribe = false;
+  const react = {
+    ...React,
+    useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
+      getToastSnapshot = getSnapshot;
+      const value = React.useSyncExternalStore(
+        holdSubscribe ? () => () => {} : subscribe,
+        getSnapshot,
+        getServerSnapshot,
+      );
+      if (!holdSubscribe) renderSnapshots.push(value);
+      return value;
+    },
+  };
+  const common = { react, 'react/jsx-runtime': local('react/jsx-runtime') };
   const tokens = compile('src/theme/tokens.ts', {});
   const theme = compile('src/theme/palettes.ts', { './tokens': tokens }).makeBalanceTheme('dark');
   const owner = { syncClient };
@@ -82,7 +98,17 @@ function setup({ reducedMotion = false, motionQuery, topInset = 47 } = {}) {
     '@/components/sync/sync-status-banner': banner,
   });
   return {
-    ...banner, ...screen, calls, listeners, motionListeners, owner,
+    ...banner, ...screen, calls, listeners, motionListeners, owner, renderSnapshots,
+    async captureUnsubscribedGetSnapshot() {
+      holdSubscribe = true;
+      try {
+        const probe = await mount(banner.SyncStatusBanner);
+        await unmount(probe);
+        return getToastSnapshot;
+      } finally {
+        holdSubscribe = false;
+      }
+    },
     setRetry(callback) { retry = callback; },
     setStatus(next) { snapshot = Object.freeze({ ...snapshot, ...next }); for (const listener of listeners) listener(); },
     setMotion(value) { for (const listener of motionListeners) listener(value); },
@@ -411,4 +437,92 @@ test('SSR snapshot is stable and inactive even when the process owner has accoun
   assert.equal(snap.status.phase, 'inactive');
   assert.equal(bannerServerSnapshot(), snap);
   assert.ok(Object.isFrozen(snap));
+});
+
+test('getSnapshot is pure while unsubscribed and leaves module state unaffected', async () => {
+  const h = setup();
+  const getSnapshot = await h.captureUnsubscribedGetSnapshot();
+  assert.equal(h.calls.subscribes, 0);
+
+  h.setStatus({ phase: 'offline', pendingChanges: 1 });
+  const first = getSnapshot();
+  const second = getSnapshot();
+  assert.equal(second, first);
+  assert.ok(Object.isFrozen(first));
+  assert.equal(first.visible, false);
+  assert.equal(first.attention, null);
+  assert.equal(first.key, null);
+  assert.equal(first.status.phase, 'inactive');
+
+  const view = await mount(h.SyncStatusBanner);
+  assert.equal(h.calls.subscribes, 1);
+  assert.match(text(view), /Sin conexión/);
+
+  await renderer.act(async () => byLabel(view, 'Ocultar estado de sincronización').props.onPress());
+  assert.equal(view.toJSON(), null);
+  await unmount(view);
+  assert.equal(h.listeners.size, 0);
+
+  h.setStatus({ phase: 'synced', pendingChanges: 0 });
+  const afterDismiss = getSnapshot();
+  assert.equal(getSnapshot(), afterDismiss);
+  assert.ok(Object.isFrozen(afterDismiss));
+  assert.equal(afterDismiss.visible, false);
+
+  // Returning to the same episode without subscribing while synced leaves dismissal intact.
+  h.setStatus({ phase: 'offline', pendingChanges: 1 });
+  const remounted = await mount(h.SyncStatusBanner);
+  assert.equal(remounted.toJSON(), null);
+  await unmount(remounted);
+});
+
+test('unmount-all then remount with pending changes preserves original pendingSince and keeps visible toast steady', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const h = setup();
+  h.setStatus({ phase: 'pending', pendingChanges: 1 });
+
+  const first = await mount(h.SyncStatusBanner);
+  assert.equal(first.toJSON(), null);
+  await renderer.act(async () => t.mock.timers.tick(40_000));
+  await unmount(first);
+  assert.equal(h.listeners.size, 0);
+
+  await renderer.act(async () => t.mock.timers.tick(30_000));
+  const second = await mount(h.SyncStatusBanner);
+  assert.equal(second.toJSON(), null);
+  assert.equal(h.listeners.size, 1);
+
+  await renderer.act(async () => t.mock.timers.tick(h.STALE_PENDING_MS - 70_000 - 1));
+  assert.equal(second.toJSON(), null, 'still hidden 1ms before original deadline');
+  await renderer.act(async () => t.mock.timers.tick(1));
+  assert.match(text(second), /Sincronización pendiente/);
+
+  // Unmounting and remounting while stale toast is visible must not flash hidden.
+  await unmount(second);
+  h.renderSnapshots.length = 0;
+  const third = await mount(h.SyncStatusBanner);
+  assert.match(text(third), /Sincronización pendiente/);
+  assert.ok(h.renderSnapshots.length > 0);
+  assert.ok(h.renderSnapshots.every(snap => snap.visible === true));
+  await unmount(third);
+
+  // Deadline passing while unmounted shows stale immediately on remount.
+  const late = setup();
+  late.setStatus({ phase: 'syncing', pendingChanges: 2 });
+  const a = await mount(late.SyncStatusBanner);
+  assert.equal(a.toJSON(), null);
+  await renderer.act(async () => t.mock.timers.tick(50_000));
+  await unmount(a);
+  assert.equal(late.listeners.size, 0);
+
+  await renderer.act(async () => t.mock.timers.tick(late.STALE_PENDING_MS));
+  const b = await mount(late.SyncStatusBanner);
+  assert.match(text(b), /Sincronizando/);
+  assert.match(text(b), /2 cambios pendientes/);
+  await unmount(b);
+
+  late.setStatus({ phase: 'synced', pendingChanges: 0 });
+  const c = await mount(late.SyncStatusBanner);
+  assert.equal(c.toJSON(), null);
+  await unmount(c);
 });

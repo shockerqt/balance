@@ -91,9 +91,14 @@ function reconcile(notify: boolean) {
       stale = false;
       clearStaleTimer();
       staleTimer = setTimeout(onStaleTimeout, STALE_PENDING_MS);
-    } else if (!stale && Date.now() - pendingSince >= STALE_PENDING_MS) {
-      stale = true;
-      clearStaleTimer();
+    } else if (!stale) {
+      const elapsed = Date.now() - pendingSince;
+      if (elapsed >= STALE_PENDING_MS) {
+        stale = true;
+        clearStaleTimer();
+      } else if (staleTimer === null) {
+        staleTimer = setTimeout(onStaleTimeout, STALE_PENDING_MS - Math.max(0, elapsed));
+      }
     }
   } else {
     clearStaleTimer();
@@ -141,24 +146,11 @@ function subscribeToast(listener: () => void): () => void {
       ownerUnsubscribe?.();
       ownerUnsubscribe = null;
       clearStaleTimer();
-      pendingSince = null;
-      stale = false;
-      currentSnapshot = serverSnapshot;
     }
   };
 }
 
 function getToastSnapshot(): ToastSnapshot {
-  if (ownerUnsubscribe === null) {
-    const nextStatus = syncClient.getStatusSnapshot();
-    if (!sameStatus(currentSnapshot.status, nextStatus)) {
-      const attention = syncAttention(nextStatus, false);
-      const key = attentionKey(nextStatus, attention);
-      if (key === null) dismissedKey = null;
-      const visible = key !== null && key !== dismissedKey;
-      currentSnapshot = Object.freeze({ status: nextStatus, attention, key, visible });
-    }
-  }
   return currentSnapshot;
 }
 
