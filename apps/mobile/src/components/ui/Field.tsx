@@ -19,7 +19,7 @@ export const Field: React.FC<FieldProps> = ({ label, hint, children, style, ...r
 
   return (
     <View style={[styles.field, style]} {...rest}>
-      <Text variant="body" tone="secondary">
+      <Text variant="caption" tone="secondary">
         {label}
       </Text>
       {children}

@@ -1,18 +1,16 @@
 import React from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { makeStyles, useTheme } from '@/theme';
-import { gradientBackground } from '@/theme/gradient';
+import { makeStyles } from '@/theme';
 import { Icon } from './Icon';
 import { Text } from './Text';
 
 /* ============================================================
    Hoja del router.
 
-   Abre con una regla gruesa, que es el recurso del lenguaje para
-   iniciar un panel, y sobre `surface` en vez de `background`. Antes
-   la hoja y la pantalla de atras compartian color, asi que no habia
-   nada que separara una de otra al abrirse.
+   Cabecera sobre el fondo: boton de volver (44, superficie con
+   borde, radio 14), titulo 22 y subtitulo 13, y una accion opcional a
+   la derecha. El pie es una barra de superficie con borde superior.
    ============================================================ */
 
 export interface SheetProps {
@@ -20,7 +18,7 @@ export interface SheetProps {
   subtitle?: string;
   /** Hace el subtitulo tocable: sirve para abrir un selector. */
   onSubtitlePress?: () => void;
-  /** Accion a la derecha del titulo. Por defecto, cerrar. */
+  /** Accion a la derecha del titulo. */
   action?: React.ReactNode;
   onClose?: () => void;
   closeLabel?: string;
@@ -40,7 +38,6 @@ export const Sheet: React.FC<SheetProps> = ({
   children,
 }) => {
   const styles = useStyles();
-  const theme = useTheme();
   const router = useRouter();
   const close = onClose ?? (() => router.back());
 
@@ -52,14 +49,12 @@ export const Sheet: React.FC<SheetProps> = ({
 
   return (
     <View style={styles.sheet}>
-      <View style={styles.openingRule} />
-
-      <View style={[styles.header, gradientBackground(theme.gradients.header)]}>
-        <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel={closeLabel} style={{ minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name="arrow-left" size={20} />
+      <View style={styles.header}>
+        <TouchableOpacity onPress={close} accessibilityRole="button" accessibilityLabel={closeLabel} style={styles.back}>
+          <Icon name="chevron-left" size={20} tone="primary" />
         </TouchableOpacity>
         <View style={styles.titleBlock}>
-          <Text variant="title" style={{ fontSize: 21, fontWeight: '500' }}>{title}</Text>
+          <Text variant="title" numberOfLines={1}>{title}</Text>
           {onSubtitlePress ? (
             <TouchableOpacity accessibilityRole="button" onPress={onSubtitlePress} hitSlop={8}>
               {subtitleNode}
@@ -68,7 +63,6 @@ export const Sheet: React.FC<SheetProps> = ({
             subtitleNode
           )}
         </View>
-
         {action}
       </View>
 
@@ -81,27 +75,32 @@ export const Sheet: React.FC<SheetProps> = ({
 
 const useStyles = makeStyles((t) => ({
   sheet: { flex: 1, backgroundColor: t.colors.background },
-  /** La regla que abre el panel. */
-  openingRule: { height: 0, backgroundColor: t.colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: t.space.md,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 64,
-    borderBottomWidth: 0,
-    borderBottomColor: t.colors.border,
+    paddingHorizontal: t.space.xl,
+    paddingTop: t.space.lg,
+    paddingBottom: t.space.md,
   },
-  titleBlock: { flex: 1, gap: 2 },
+  back: {
+    width: 44,
+    height: 44,
+    borderRadius: t.radius.md,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  titleBlock: { flex: 1, minWidth: 0 },
   body: { flex: 1 },
   footer: {
     paddingHorizontal: t.space.xl,
     paddingTop: t.space.md,
-    paddingBottom: t.space.xl,
-    borderTopWidth: 0,
-    borderTopColor: t.colors.text,
+    paddingBottom: 18,
+    borderTopWidth: t.border.hairline,
+    borderTopColor: t.colors.border,
     backgroundColor: t.colors.surface,
   },
 }));

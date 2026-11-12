@@ -2,11 +2,10 @@ import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { SyncStatusBanner } from '@/components/sync/sync-status-banner';
-import { gradientBackground } from '@/theme/gradient';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { FoodLibraryFilter, FoodLibraryList } from '@/components/food-library/food-library-list';
 import { Icon, Input, Screen, Text } from '@/components/ui';
-import { makeStyles, useTheme } from '@/theme';
+import { font, makeStyles, useTheme } from '@/theme';
 
 const FILTERS: { value: FoodLibraryFilter; label: string }[] = [
   { value: 'all', label: 'Todas' },
@@ -28,8 +27,8 @@ export default function LibraryScreen() {
 
   return (
     <Screen edges={[]}>
-      <Stack.Screen options={{ headerTitleStyle: { fontFamily: 'Outfit', fontSize: 21, fontWeight: '500' }, headerRight: () => (
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Crear alimento personal" onPress={() => openFood()} style={[{ width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, gradientBackground(theme.gradients.action)]}>
+      <Stack.Screen options={{ headerTitleStyle: { fontFamily: font.titleSheet, fontSize: 22 }, headerRight: () => (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Crear alimento personal" onPress={() => openFood()} style={{ width: 44, height: 44, borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.primary }}>
           <Icon name="plus" size={22} tone="onPrimary" />
         </TouchableOpacity>
       ) }} />
@@ -52,7 +51,7 @@ export default function LibraryScreen() {
         ) : null}
 
         <Input
-          style={{ borderRadius: 18, minHeight: 52, backgroundColor: theme.colors.surface }}
+          style={{ borderColor: theme.colors.text }}
           value={query}
           onChangeText={setQuery}
           placeholder="Buscar un alimento"

@@ -4,8 +4,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Button, Icon, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { reactNativeSpikeEnabled } from '@/dev/react-native-spike-gate';
-import { paletteNames } from '@/theme/organic-palettes';
-import type { Appearance, ColorSource } from '@/theme/organic-palettes';
+import type { Appearance } from '@/theme';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { makeStyles, useTheme, useThemeControls } from '@/theme';
 import { UpdateInformation } from '@/components/updates/update-information';
@@ -72,13 +71,6 @@ export default function SettingsScreen() {
             disabled={!ready}
             onSelect={(appearance) => setPreference({ ...preference, appearance })}
           />
-          <SettingsSelect
-            label="Colores"
-            value={preference.colorSource}
-            options={colorOptions}
-            disabled={!ready}
-            onSelect={(colorSource) => setPreference({ ...preference, colorSource })}
-          />
         </View>
 
         <View style={styles.section}>
@@ -122,7 +114,6 @@ export default function SettingsScreen() {
 const appearanceOptions: [Appearance, string][] = [
   ['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Oscuro'],
 ];
-const colorOptions = Object.entries(paletteNames) as [ColorSource, string][];
 
 function SettingsSelect<T extends string>({ label, value, options, disabled, onSelect }: {
   label: string;
@@ -190,6 +181,8 @@ const useStyles = makeStyles((t) => ({
   content: { padding: t.space.xl, gap: t.space.xl },
   section: {
     backgroundColor: t.colors.surface,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.border,
     borderRadius: t.radius.xl,
     padding: t.space.xl,
     gap: t.space.lg,
@@ -207,7 +200,9 @@ const useStyles = makeStyles((t) => ({
     borderRadius: t.radius.md + 2,
     paddingHorizontal: t.space.md + 2,
     paddingVertical: t.space.md,
-    backgroundColor: t.colors.surfaceRaised,
+    backgroundColor: t.colors.surface,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.lineStrong,
     flexDirection: 'row',
     alignItems: 'center',
     gap: t.space.sm,

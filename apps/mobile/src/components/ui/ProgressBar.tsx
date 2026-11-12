@@ -2,8 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { useTheme } from '@/theme';
 
-/* La barra de progreso estaba repetida cinco veces solo en el
-   Resumen, cada una con su propio par de reglas de estilo. */
+/* Medidor: pista suave y relleno en tinta o en el color del macro. */
 
 export interface ProgressBarProps {
   /** 0..1. Se recorta a 1 para que la barra no se desborde. */
@@ -29,7 +28,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
         height,
         borderRadius: height / 2,
         overflow: 'hidden',
-        backgroundColor: theme.colors.border,
+        backgroundColor: theme.colors.track,
       }}>
       <View
         style={{

@@ -72,7 +72,7 @@ function DailyLogSession({ copyEnabled }: { copyEnabled: boolean }) {
     // Retain the complete payload while hidden; refresh theme and data on focus.
     if (!focused && retainedData.current) return retainedData.current;
     const serialized = JSON.stringify({
-    session, today, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: theme.gradients?.header, actionGradient: theme.gradients?.action },
+    session, today, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: [theme.colors.background, theme.colors.background], actionGradient: [theme.colors.primary, theme.colors.primary] },
     profile: { name: user?.name ?? (isGuest ? 'Invitado' : 'Cuenta'), guest: isGuest },
     preferencesError: preferences.syncError,
     showWeight: preferences.preferencesReady && preferences.weightTrackingEnabled,

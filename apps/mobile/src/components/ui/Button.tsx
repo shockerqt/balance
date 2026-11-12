@@ -1,11 +1,11 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, TouchableOpacity, TouchableOpacityProps } from 'react-native';
-import { useTheme } from '@/theme';
-import { gradientBackground } from '@/theme/gradient';
+import { font, useTheme } from '@/theme';
 import { Text } from './Text';
 
-/* Botones del sistema. Los tres estilos que las pantallas venian
-   redibujando a mano. */
+/* Botones del sistema.
+   primary: tinta con texto invertido. secondary: superficie con borde
+   de control. ghost: enlace. danger: rojo de estado. */
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'md' | 'lg';
@@ -29,21 +29,10 @@ export const Button: React.FC<ButtonProps> = ({
   ...rest
 }) => {
   const theme = useTheme();
+  const c = theme.colors;
 
-  const surface = {
-    primary: theme.colors.primary,
-    secondary: theme.colors.surfaceRaised,
-    ghost: 'transparent',
-    danger: theme.colors.danger,
-  }[variant];
-
-  const label = {
-    primary: 'onPrimary',
-    secondary: 'primary',
-    ghost: 'accent',
-    danger: 'onPrimary',
-  }[variant] as 'onPrimary' | 'primary' | 'accent';
-
+  const surface = { primary: c.primary, secondary: c.surface, ghost: 'transparent', danger: c.danger }[variant];
+  const ink = { primary: c.onPrimary, secondary: c.text, ghost: c.link, danger: c.onPrimary }[variant];
   const isDisabled = disabled || loading;
 
   return (
@@ -57,24 +46,32 @@ export const Button: React.FC<ButtonProps> = ({
         styles.base,
         {
           backgroundColor: surface,
-          borderRadius: theme.radius.lg,
-          paddingVertical: size === 'lg' ? theme.space.lg : theme.space.md,
-          paddingHorizontal: theme.space.xl,
+          borderRadius: size === 'lg' ? theme.radius.lg : theme.radius.md,
+          minHeight: size === 'lg' ? 52 : 44,
+          paddingHorizontal: variant === 'ghost' ? 0 : size === 'lg' ? 28 : theme.space.lg,
           gap: theme.space.sm,
-          borderWidth: 0,
-          borderColor: theme.colors.border,
-          opacity: isDisabled ? 0.5 : 1,
+          borderWidth: variant === 'secondary' ? theme.border.hairline : 0,
+          borderColor: c.lineStrong,
+          opacity: isDisabled ? 0.45 : 1,
+          alignSelf: variant === 'ghost' ? 'flex-start' : undefined,
         },
-        variant === 'primary' && gradientBackground(theme.gradients.action, 135),
         style,
       ]}
       {...rest}>
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? theme.colors.onPrimary : theme.colors.primary} />
+        <ActivityIndicator color={ink} />
       ) : (
         <>
           {icon}
-          <Text variant="heading" tone={label} style={{ flexShrink: 1 }}>
+          <Text
+            variant="heading"
+            tone="inherit"
+            style={{
+              color: ink,
+              flexShrink: 1,
+              fontFamily: variant === 'ghost' ? font.medium : font.semibold,
+              fontSize: size === 'lg' && variant !== 'ghost' ? 16 : variant === 'ghost' ? 15 : 14,
+            }}>
             {title}
           </Text>
         </>

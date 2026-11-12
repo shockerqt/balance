@@ -28,7 +28,7 @@ test('RN shell has four destinations, central registration uses the measurement 
     '@/hooks/use-today-id': { useTodayId: () => date },
     '@/hooks/use-logs-date': { logsDateStore: nav, useLogsSelectedDate: () => [React.useSyncExternalStore(nav.subscribe, nav.get, nav.get)] },
     '@/lib/dates': { ...dates, todayId: () => date, currentTimeString: () => '13:00' },
-    '@/theme': { useTheme: () => ({ colors, gradients: {} }) }, '@/theme/gradient': { gradientBackground: () => ({}) },
+    '@/theme': { useTheme: () => ({ colors, border: { hairline: 1 } }), font: { medium: 'InterMedium', semibold: 'InterSemiBold' } },
     '@/components/weight/weight-trend-card': { WeightTrendCard: host('Weight') },
     './calendar-month': { CalendarMonth: host('Calendar') }, './react-native-diary': { ReactNativeDiary: host('Diary') },
     './react-native-summary': { ReactNativeSummary: host('Summary') }, './page-header': { PageHeader: host('PageHeader') },
