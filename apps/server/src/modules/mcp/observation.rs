@@ -507,8 +507,8 @@ mod tests {
         );
         let terminal = terminals[0];
         for expected in [
-            "content_blocks=2",
-            "text_blocks=2",
+            "content_blocks=1",
+            "text_blocks=1",
             "structured=true",
             "collection_count=3",
             "checked_entries=3",
@@ -711,8 +711,8 @@ mod tests {
             assert!(!output.contains(secret), "leaked {secret}");
         }
         for expected in [
-            "content_blocks=2",
-            "text_blocks=2",
+            "content_blocks=1",
+            "text_blocks=1",
             "collection_count=1",
             "checked_entries=1",
             "checked_date_strings=\"all\"",
@@ -737,6 +737,24 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 3);
         assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn shape_reads_json_embedded_after_the_summary_in_a_single_text_block() {
+        let structured = json!({"entries":[{"date":"2026-11-10","weightKg":78.4,"updatedAt":1}]});
+        let text = super::super::readable_tool_text("Hay 1 registro de peso.", &structured);
+        let result =
+            json!({"content":[{"type":"text","text":text}],"structuredContent":structured});
+        let shape = Shape::inspect(&result, "get_weight_history");
+        assert_eq!(shape.text_blocks, Some(1));
+        assert_eq!(shape.first_text_json, "matches");
+        assert_eq!(shape.date_strings, "all");
+        assert_eq!(shape.weight_numbers, "all");
+        let summary_only = json!({"content":[{"type":"text","text":"Hay 1 registro de peso."}],"structuredContent":structured});
+        assert_eq!(
+            Shape::inspect(&summary_only, "get_weight_history").first_text_json,
+            "invalid_json"
+        );
     }
 
     #[test]
@@ -1403,7 +1421,8 @@ impl Shape {
         ) && text.len() <= MAX_TEXT_BYTES
             && within_budget(structured)
         {
-            shape.first_text_json = match serde_json::from_str::<Value>(text) {
+            shape.first_text_json = match serde_json::from_str::<Value>(super::embedded_json(text))
+            {
                 Ok(parsed) if within_budget(&parsed) => {
                     if parsed == *structured {
                         "matches"

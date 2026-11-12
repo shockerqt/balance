@@ -724,6 +724,20 @@ fn weight_output(row: &WeightLogRow) -> Value {
     })
 }
 
+/// Single text block for clients that forward only one text block to their
+/// model (observed with Spark: it kept only the last block). The compact JSON
+/// payload follows the summary on its own final line; serde escapes newlines
+/// inside strings, so the payload never contains a raw newline.
+pub(crate) fn readable_tool_text(summary: &str, structured: &Value) -> String {
+    format!("{summary}\n\n{structured}")
+}
+
+/// The JSON payload embedded in a text block produced by `readable_tool_text`,
+/// or the whole text when it has no newline (a bare JSON block).
+pub(crate) fn embedded_json(text: &str) -> &str {
+    text.rsplit_once('\n').map_or(text, |(_, json)| json)
+}
+
 fn tool_success(
     id: Value,
     summary: &str,
@@ -733,10 +747,7 @@ fn tool_success(
     let envelope = json!({
         "jsonrpc": "2.0", "id": id,
         "result": {
-            "content": [
-                { "type": "text", "text": structured.to_string() },
-                { "type": "text", "text": summary }
-            ],
+            "content": [{ "type": "text", "text": readable_tool_text(summary, &structured) }],
             "structuredContent": structured,
             "isError": false
         }
@@ -1565,13 +1576,12 @@ mod tests {
         assert_eq!(val["jsonrpc"], "2.0");
         assert_eq!(val["id"], "req-1");
         assert_eq!(val["result"]["isError"], false);
+        assert_eq!(val["result"]["content"].as_array().unwrap().len(), 1);
         assert_eq!(val["result"]["content"][0]["type"], "text");
-        let text_payload: Value =
-            serde_json::from_str(val["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        let text = val["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with("Exito\n\n"));
+        let text_payload: Value = serde_json::from_str(embedded_json(text)).unwrap();
         assert_eq!(text_payload, val["result"]["structuredContent"]);
-        assert_eq!(val["result"]["content"].as_array().unwrap().len(), 2);
-        assert_eq!(val["result"]["content"][1]["type"], "text");
-        assert_eq!(val["result"]["content"][1]["text"], "Exito");
         assert_eq!(
             val["result"]["structuredContent"],
             json!({ "status": "ok" })
@@ -1594,10 +1604,13 @@ mod tests {
             payload.clone(),
             None,
         ));
-        let text_payload: Value =
-            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
-                .unwrap();
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        let text_payload: Value = serde_json::from_str(embedded_json(text)).unwrap();
 
+        assert_eq!(response["result"]["content"].as_array().unwrap().len(), 1);
+        assert!(text.starts_with("Found 1 weight entries.\n\n"));
+        assert!(text.contains("\"date\":\"2026-01-02\""));
+        assert!(text.contains("\"weightKg\":72.3"));
         assert_eq!(text_payload, payload);
         assert_eq!(text_payload, response["result"]["structuredContent"]);
         assert_eq!(text_payload["entries"][0]["date"], "2026-01-02");
@@ -1607,10 +1620,6 @@ mod tests {
             Some(1_767_398_400_000)
         );
         assert_eq!(response["id"], 42);
-        assert_eq!(
-            response["result"]["content"][1]["text"],
-            "Found 1 weight entries."
-        );
     }
 
     #[test]
@@ -1627,13 +1636,13 @@ mod tests {
         ] {
             let response =
                 extract_json_response(tool_success(Value::Null, summary, payload.clone(), None));
-            let text_payload: Value =
-                serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
-                    .unwrap();
+            let text = response["result"]["content"][0]["text"].as_str().unwrap();
+            let text_payload: Value = serde_json::from_str(embedded_json(text)).unwrap();
 
             assert_eq!(text_payload, payload);
             assert_eq!(text_payload, response["result"]["structuredContent"]);
-            assert_eq!(response["result"]["content"][1]["text"], summary);
+            assert!(text.starts_with(&format!("{summary}\n\n")));
+            assert_eq!(response["result"]["content"].as_array().unwrap().len(), 1);
             assert_eq!(response["id"], Value::Null);
             assert_eq!(response["result"]["isError"], false);
         }
