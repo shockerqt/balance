@@ -64,3 +64,33 @@ Before delivery, manually verify scrolling to the bottom of a dense day and
 switching to an empty day, individual/group selection, editing, hour entry,
 rapid arrows, and competing horizontal/vertical gestures. A release-mode native
 trace or input-to-pixel recording is still needed to establish perceived latency.
+
+## Large-history baseline (BAL-051)
+
+Measured 2026-11-12 on main `9d6dc6b`, before any of the BAL-052..056 changes.
+Run both cases with:
+
+```bash
+npm --prefix apps/mobile run bench:history
+```
+
+The harness runs the real storage adapter, sync client and providers under Node
+with a simulated file system and socket, on the oci2 ARM host (Node v24.16.0).
+These are relative measurements for comparing changes. They are not Hermes or
+device latency and do not include native paint.
+
+| Measurement (12,000 synthetic documents, ~707 days) | Value |
+| :--- | ---: |
+| Full pull lifecycle, 242 pages | 26,430 ms |
+| Cache file size after the pull | 20,520,352 bytes |
+| Cache writes during the pull | whole file rewritten after every page |
+| Local save receipt | 4.1 ms |
+| Cold hydration from an existing cache (`hydrateMs`) | 1,931 ms |
+| Full first projection of all days (`projectionMs`) | 354 ms |
+| One local food add until its cache write (`mutationMs`) | 305 ms |
+| Bytes written for that single add (`mutationWriteBytes`) | 22,248,894 |
+
+The dominant cost is the single-file collection cache: one added food rewrites
+about 22 MB, and a first sync writes a growing copy of the file once per page.
+Per-document `Intl` formatting costs about 84 ms for 24,000 calls in Node, which
+is small next to the storage cost.

@@ -47,6 +47,7 @@
   },
   "scripts": {
     "start": "APP_VARIANT=development expo start --dev-client --host localhost --port 8081",
+    "bench:history": "tsx --test --test-name-pattern=\"12k\" tests/sync-large-history-performance.test.cjs",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
