@@ -34,10 +34,12 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
       useFocusEffect(cb) { React.useEffect(() => { const entry = { cb, cleanup: cb() }; focusEntries.set(cb, entry); return () => { entry.cleanup?.(); focusEntries.delete(cb); }; }, [cb]); } },
     'expo-router/react-navigation': { usePreventRemove(value, handler) { guard = value; guardHandler = handler; } },
     'expo-crypto': { randomUUID: crypto.randomUUID },
-    'react-native': { View: host('View'), ScrollView: host('ScrollView'), KeyboardAvoidingView: host('KeyboardAvoidingView'),
+    'react-native': { View: host('View'), ScrollView: host('ScrollView'), KeyboardAvoidingView: host('KeyboardAvoidingView'), TouchableOpacity: host('Touch'), TextInput: host('TextInput'),
       Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) },
       FlatList: props => React.createElement('FlatList', props, props.data.map((item, index) => React.createElement(React.Fragment, { key: item.id }, props.renderItem({ item, index })))) },
-    '@/components/ui': Object.fromEntries(['Button', 'Card', 'Field', 'Input', 'Screen', 'Sheet', 'Text'].map(name => [name, host(name)])),
+    '@/components/ui': Object.fromEntries(['Button', 'Card', 'Field', 'Icon', 'Input', 'Screen', 'Sheet', 'Text'].map(name => [name, host(name)])),
+    '@/theme': { font: {}, makeStyles: () => () => new Proxy({}, { get: () => ({}) }), useTheme: () => ({ colors: {} }) },
+    '@/lib/food-recents': local('./src/lib/food-recents.ts'), '@/lib/nutrition': local('./src/lib/nutrition.ts'),
     '@/hooks/use-auth': { useAuth: () => ({ user, isGuest: false }) },
     '@/hooks/use-meal-store': { useMealActions: () => actions, useMealStore: () => meals },
     './use-meal-store': { useMealActions: () => actions },
@@ -68,7 +70,10 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
   const button = title => view.root.findAllByType('Button').find(node => node.props.title === title);
   const field = label => view.root.findAllByType('Input').find(node => node.props.accessibilityLabel === label);
   const click = async title => { assert.ok(button(title), `missing ${title}`); await renderer.act(async () => { await button(title).props.onPress(); }); };
-  return { writes, backs, selections, removals, alerts, button, field,
+  const labelled = (label, prop) => view.root.findAll(node => node.props.accessibilityLabel === label && typeof node.props[prop] === 'function')[0];
+  const press = async label => { assert.ok(labelled(label, 'onPress'), `missing ${label}`); await renderer.act(async () => { await labelled(label, 'onPress').props.onPress(); }); };
+  return { writes, backs, selections, removals, alerts, button, field, press, labelled,
+    async type(label, value) { assert.ok(labelled(label, 'onChangeText'), `missing input ${label}`); await renderer.act(async () => { labelled(label, 'onChangeText').props.onChangeText(value); }); },
     get guard() { return guard; },
     async fill(label, value) { assert.ok(field(label), `missing field ${label}`); await renderer.act(async () => { field(label).props.onChangeText(value); }); },
     click,
@@ -87,13 +92,41 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
 test('RN library registration preserves portions and waits for a durable receipt; double presses write once', async () => {
   const gate = deferred(), h = await harness('react-native-food-entry-screen', { commit: () => gate.promise });
   try {
-    await h.click('Avena'); await h.click('taza'); await h.fill('Cantidad consumida', '1,5');
-    const { pending } = await h.begin('Registrar alimento');
+    await h.press('Agregar Avena'); await h.type('Cantidad de Avena', '1,5');
+    const { pending } = await h.begin('Guardar');
     assert.equal(h.guard, true); assert.equal(h.writes.length, 1); assert.equal(h.backs.length, 0);
     assert.equal(h.writes[0][0].canonicalQuantity, 120); assert.equal(h.writes[0][0].entry.portionSnapshot.name, 'taza');
     assert.equal(h.writes[0][0].nutritionSnapshot.nutritionPer100.fiber, null);
-    await h.click('Registrar alimento'); assert.equal(h.writes.length, 1);
+    await h.click('Guardar'); assert.equal(h.writes.length, 1);
     await h.settle(gate, pending); assert.deepEqual(h.selections, [date]); assert.equal(h.backs.length, 1); assert.equal(h.guard, false);
+  } finally { await h.close(); }
+});
+
+test('RN multi-add records every selected food once, with stable ids across a failed receipt', async () => {
+  let fail = true;
+  const pan = { ...template, id: uuid(3), name: 'Pan', updatedAt: 5, details: { ...template.details, portions: [] } };
+  const h = await harness('react-native-food-entry-screen', { commit: async () => { if (fail) throw Error('disk'); } });
+  try {
+    await h.changeTemplates([template, pan]);
+    await h.press('Agregar Avena'); await h.press('Mis alimentos'); assert.ok(h.labelled('Quitar Avena', 'onPress'), 'selected foods stay listed'); await h.press('Agregar Pan'); await h.press('Más Pan');
+    assert.equal(h.labelled('Cantidad de Pan', 'onChangeText').props.value, '110');
+    await h.click('Guardar'); assert.equal(h.backs.length, 0);
+    const first = h.writes[0];
+    assert.equal(first.length, 2); assert.notEqual(first[0].id, first[1].id);
+    assert.deepEqual(first.map(d => d.templateId), [uuid(2), uuid(3)]);
+    assert.equal(first[1].canonicalQuantity, 110);
+    fail = false; await h.click('Guardar');
+    assert.deepEqual(h.writes[1].map(d => d.id), first.map(d => d.id)); assert.equal(h.backs.length, 1);
+  } finally { await h.close(); }
+});
+
+test('RN switching a selected food to grams resets its quantity and records grams', async () => {
+  const h = await harness('react-native-food-entry-screen');
+  try {
+    await h.press('Agregar Avena'); await h.press('gramos');
+    assert.equal(h.labelled('Cantidad de Avena', 'onChangeText').props.value, '100');
+    await h.click('Guardar');
+    assert.equal(h.writes[0][0].canonicalQuantity, 100); assert.equal(h.writes[0][0].entry.portionSnapshot, undefined);
   } finally { await h.close(); }
 });
 
@@ -101,8 +134,8 @@ test('RN registration retries the exact document after a failed local receipt', 
   let fail = true;
   const h = await harness('react-native-food-entry-screen', { commit: async () => { if (fail) throw Error('disk'); } });
   try {
-    await h.click('Avena'); await h.click('Registrar alimento'); assert.equal(h.backs.length, 0);
-    fail = false; await h.click('Registrar alimento');
+    await h.press('Agregar Avena'); await h.click('Guardar'); assert.equal(h.backs.length, 0);
+    fail = false; await h.click('Guardar');
     assert.equal(h.writes.length, 2); assert.strictEqual(h.writes[0], h.writes[1]); assert.equal(h.backs.length, 1);
   } finally { await h.close(); }
 });
@@ -110,7 +143,7 @@ test('RN registration retries the exact document after a failed local receipt', 
 test('RN late receipt cannot navigate while blurred and finishes only when that draft is focused', async () => {
   const gate = deferred(), h = await harness('react-native-food-entry-screen', { commit: () => gate.promise });
   try {
-    await h.click('Avena'); const { pending } = await h.begin('Registrar alimento');
+    await h.press('Agregar Avena'); const { pending } = await h.begin('Guardar');
     await h.blur(); await h.settle(gate, pending); assert.equal(h.backs.length, 0); assert.deepEqual(h.selections, []);
     await h.refocus(); assert.equal(h.backs.length, 1); assert.deepEqual(h.selections, [date]);
   } finally { await h.close(); }
@@ -119,22 +152,22 @@ test('RN late receipt cannot navigate while blurred and finishes only when that 
 test('RN account replacement discards a draft and ignores its late save receipt', async () => {
   const gate = deferred(), h = await harness('react-native-food-entry-screen', { commit: () => gate.promise });
   try {
-    await h.click('Avena'); const { pending } = await h.begin('Registrar alimento');
+    await h.press('Agregar Avena'); const { pending } = await h.begin('Guardar');
     await h.account(2); await h.settle(gate, pending);
-    assert.equal(h.backs.length, 0); assert.deepEqual(h.selections, []); assert.ok(h.button('Avena'));
+    assert.equal(h.backs.length, 0); assert.deepEqual(h.selections, []); assert.ok(h.labelled('Agregar Avena', 'onPress'));
   } finally { await h.close(); }
 });
 
 test('RN stale library revision is rejected before writing', async () => {
   const h = await harness('react-native-food-entry-screen');
-  try { await h.click('Avena'); await h.changeTemplates([{ ...template, updatedAt: 11 }]); await h.click('Registrar alimento'); assert.equal(h.writes.length, 0); }
+  try { await h.press('Agregar Avena'); await h.changeTemplates([{ ...template, updatedAt: 11 }]); await h.click('Guardar'); assert.equal(h.writes.length, 0); }
   finally { await h.close(); }
 });
 
 test('RN custom form keeps unknowns, explicit zero, portion normalization and extended nutrients', async () => {
   const h = await harness('react-native-food-entry-screen');
   try {
-    await h.click('Alimento personalizado'); await h.fill('Nombre del alimento', 'Café'); await h.click('Mililitros (ml)'); await h.fill('Cantidad consumida', '200');
+    await h.click('Crear alimento nuevo'); await h.fill('Nombre del alimento', 'Café'); await h.click('Mililitros (ml)'); await h.fill('Cantidad consumida', '200');
     await h.click('Etiqueta por porción'); await h.fill('Tamaño de la porción de la etiqueta', '50');
     for (const [label, value] of [['Energía', '10'], ['Proteínas', '0'], ['Carbohidratos', '2'], ['Grasas', '0'], ['Sodio', '0']]) await h.fill(label, value);
     await h.click('Otros nutrientes'); await h.fill('Cafeína', '20'); await h.click('Registrar alimento');
