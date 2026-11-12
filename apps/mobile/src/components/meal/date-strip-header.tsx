@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, TouchableOpacity } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
-import { useTheme } from '@/theme';
-import { Icon } from '@/components/ui';
+import { font, useTheme } from '@/theme';
+import { useMealDay } from '@/hooks/use-meal-store';
+import { Icon, Text } from '@/components/ui';
 import Animated, { interpolateColor, useAnimatedStyle, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { DateSwipe } from './date-swipe';
 import { useWeekStripSwipe } from './use-week-strip-swipe';
@@ -20,10 +21,13 @@ interface DateStripHeaderProps {
 type Day = ReturnType<typeof buildWeekGroup>['days'][number];
 type Presentation = { position: SharedValue<number>; weekOffset: SharedValue<number>; weekPhase: SharedValue<number>; selectedDay: number };
 
+const WEEK_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 function dateLabel(dateId: string, today: string) {
   const date = parseDateId(dateId);
-  return { title: dateId === today ? 'Hoy' : `${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()}`,
-    subtitle: `${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()]} · ${date.getUTCFullYear()}` };
+  const weekday = DAY_NAMES[date.getUTCDay()];
+  const title = dateId === today ? 'Hoy' : dateId === shiftDateId(today, -1) ? 'Ayer' : dateId === shiftDateId(today, 1) ? 'Mañana' : weekday;
+  const year = date.getUTCFullYear() !== parseDateId(today).getUTCFullYear() ? ` de ${date.getUTCFullYear()}` : '';
+  return { title, subtitle: `${weekday.toLocaleLowerCase('es')} ${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()].toLocaleLowerCase('es')}${year}` };
 }
 /** The title, outline and underline share a weight without rendering React. */
 function distanceFromDay(day: number, position: number, weekOffset: number, weekPhase: number, selectedDay: number) {
@@ -59,56 +63,54 @@ function HeaderContent({ selectedDateId, onSelectDate, onShiftDate, presentation
     return { dateId, day: dateIdToEpochDay(dateId), ...dateLabel(dateId, today) };
   }), [selectedDateId, today]);
   const label = dateLabel(selectedDateId, today);
-  const row = <View style={styles.daysRow}>{week.days.map(item => <DayPill key={item.dateId} item={item}
+  const row = <View style={styles.daysRow}>{week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today}
     selected={item.dateId === selectedDateId} onSelectDate={onSelectDate} />)}</View>;
-  return <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+  return <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
     <View style={styles.topHeaderRow}>
-      <View style={styles.fixedDateNavBox}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ir al día anterior"
-          style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]} onPress={() => onShiftDate(-1)}>
-          <Icon name="chevron-left" size={20} tone="accent" />
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Elegir fecha: ${label.title}, ${label.subtitle}`}
-          style={styles.dateTitleBox} onPress={() => router.push('/date-picker')}>
-          {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Ir al día siguiente"
-          style={[styles.navArrowBtn, { backgroundColor: theme.colors.surface }]} onPress={() => onShiftDate(1)}>
-          <Icon name="chevron-right" size={20} tone="accent" />
-        </TouchableOpacity>
+      {/* Swiping is the visual way to change day; assistive tech gets the same commands as actions. */}
+      <View accessible accessibilityRole="adjustable" accessibilityLabel={`${label.title}, ${label.subtitle}`}
+        accessibilityHint="Desliza hacia arriba o abajo para cambiar de día"
+        accessibilityActions={[{ name: 'increment', label: 'Día siguiente' }, { name: 'decrement', label: 'Día anterior' },
+          ...(selectedDateId !== today ? [{ name: 'activate', label: 'Volver a hoy' }] : [])]}
+        onAccessibilityAction={event => {
+          const action = event.nativeEvent.actionName;
+          if (action === 'increment') onShiftDate(1);
+          else if (action === 'decrement') onShiftDate(-1);
+          else if (action === 'activate' && selectedDateId !== today) onSelectDate(today);
+        }} style={styles.dateTitleBox}>
+        {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
       </View>
-      {selectedDateId !== today && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Volver a hoy"
-        style={[styles.todayPillBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.primary }]} onPress={() => onSelectDate(today)}>
-        <Text style={[styles.todayPillText, { color: theme.colors.primary }]}>Hoy</Text>
-      </TouchableOpacity>}
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Elegir fecha"
+        style={[styles.calendarBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => router.push('/date-picker')}>
+        <Icon name="calendar" size={20} tone="primary" />
+      </TouchableOpacity>
     </View>
     {presentation && weekGesture && width ? <GestureDetector gesture={weekGesture}>
       <View collapsable={false} style={styles.weekViewport} onLayout={event => onWidth?.(event.nativeEvent.layout.width)}>
-        {weeks.map((item, index) => <ProgressWeek key={item.startDateId} week={item} offset={index - 1}
+        {weeks.map((item, index) => <ProgressWeek key={item.startDateId} week={item} offset={index - 1} today={today}
           monday={dateIdToEpochDay(monday)} width={width} presentation={presentation} selectedDateId={selectedDateId} onSelectDate={onSelectDate} />)}
       </View>
     </GestureDetector> : <DateSwipe days={7}>{row}</DateSwipe>}
   </View>;
 }
 function DateLabel({ title, subtitle }: { title: string; subtitle: string }) {
-  const theme = useTheme();
   return <>
-    <Text numberOfLines={1} style={[styles.headlineTitle, { color: theme.colors.text }]}>{title}</Text>
-    <Text numberOfLines={1} style={[styles.subtitleContext, { color: theme.colors.textSecondary }]}>{subtitle}</Text>
+    <Text variant="display" numberOfLines={1}>{title}</Text>
+    <Text tone="secondary" numberOfLines={1} style={styles.subtitleContext}>{subtitle}</Text>
   </>;
 }
 function ProgressDateLabel({ day, title, subtitle, presentation }: { day: number; title: string; subtitle: string; presentation: Presentation }) {
   const { position, weekOffset, weekPhase, selectedDay } = presentation;
   const animated = useAnimatedStyle(() => {
     const distance = distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay);
-    return { opacity: Math.max(0, 1 - Math.abs(distance)), transform: [{ translateX: Math.max(-1, Math.min(1, distance)) * 24 }] };
+    return { opacity: Math.max(0, 1 - Math.abs(distance)), transform: [{ translateX: Math.max(-1, Math.min(1, distance)) * -16 }] };
   });
   return <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
     style={[styles.titleLayer, animated]}><DateLabel title={title} subtitle={subtitle} /></Animated.View>;
 }
-function ProgressWeek({ week, offset, monday, width, presentation, selectedDateId, onSelectDate }: {
+function ProgressWeek({ week, offset, monday, width, presentation, selectedDateId, today, onSelectDate }: {
   week: ReturnType<typeof buildWeekGroup>; offset: number; monday: number; width: SharedValue<number>; presentation: Presentation;
-  selectedDateId: string; onSelectDate: (date: string) => void;
+  selectedDateId: string; today: string; onSelectDate: (date: string) => void;
 }) {
   const { position, weekOffset, weekPhase } = presentation;
   const animated = useAnimatedStyle(() => {
@@ -120,123 +122,61 @@ function ProgressWeek({ week, offset, monday, width, presentation, selectedDateI
   });
   return <Animated.View accessibilityElementsHidden={offset !== 0} importantForAccessibility={offset === 0 ? 'auto' : 'no-hide-descendants'}
     style={[styles.daysRow, styles.weekLayer, animated]}>
-    {week.days.map(item => <DayPill key={item.dateId} item={item} selected={item.dateId === selectedDateId}
+    {week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today} selected={item.dateId === selectedDateId}
       presentation={presentation} onSelectDate={onSelectDate} />)}
   </Animated.View>;
 }
-function DayPill({ item, selected, presentation, onSelectDate }: { item: Day; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void }) {
+/** One face of a day cell: the resting look or the selected (ink) look. */
+function DayFace({ item, letter, logged, future, inverted }: { item: Day; letter: string; logged: boolean; future: boolean; inverted: boolean }) {
   const theme = useTheme();
-  const content = <>
-    <Text style={[styles.dayNameText, { color: selected && !presentation ? theme.colors.onPrimary : theme.colors.textMuted }]}>{item.dayName}</Text>
-    <Text style={[styles.dayNumberText, { color: selected && !presentation ? theme.colors.onPrimary : theme.colors.text }]}>{item.dayNumber}</Text>
+  const c = theme.colors;
+  const ink = inverted ? c.onPrimary : future ? c.textSecondary : c.text;
+  return <>
+    <Text style={[theme.type.label, { color: ink }]}>{letter}</Text>
+    <Text style={[styles.dayNumberText, { color: ink }]}>{item.dayNumber}</Text>
+    <View style={[styles.mark, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty }]} />
   </>;
-  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${DAY_NAMES[parseDateId(item.dateId).getUTCDay()]} ${item.dateId}`}
-    accessibilityState={{ selected }} onPress={() => onSelectDate(item.dateId)} style={{ flex: 1, height: 54 }}>
-    {presentation ? <ProgressDayPill day={dateIdToEpochDay(item.dateId)} isToday={item.isToday} presentation={presentation}>{content}</ProgressDayPill>
-      : <View style={[styles.dayPill, { backgroundColor: selected ? theme.colors.primary : theme.colors.surface,
-        borderColor: selected || item.isToday ? theme.colors.primary : theme.colors.border }]}>{content}</View>}
+}
+function DayPill({ item, letter, today, selected, presentation, onSelectDate }: { item: Day; letter: string; today: string; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void }) {
+  const theme = useTheme();
+  const logged = useMealDay(item.dateId).foods.length > 0;
+  const future = item.dateId > today;
+  const date = parseDateId(item.dateId);
+  return <TouchableOpacity accessibilityRole="button"
+    accessibilityLabel={`${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()].toLocaleLowerCase('es')}${logged ? ', con registros' : ''}`}
+    accessibilityState={{ selected }} testID={`day-${item.dateId}`} onPress={() => onSelectDate(item.dateId)} style={styles.dayTouch}>
+    {presentation ? <ProgressDayPill day={dateIdToEpochDay(item.dateId)} presentation={presentation}
+      rest={<DayFace item={item} letter={letter} logged={logged} future={future} inverted={false} />}
+      active={<DayFace item={item} letter={letter} logged={logged} future={future} inverted />} />
+      : <View style={[styles.dayPill, { backgroundColor: selected ? theme.colors.primary : 'transparent', borderColor: selected ? theme.colors.primary : theme.colors.border }]}>
+        <DayFace item={item} letter={letter} logged={logged} future={future} inverted={selected} />
+      </View>}
   </TouchableOpacity>;
 }
-function ProgressDayPill({ day, isToday, presentation, children }: { day: number; isToday: boolean; presentation: Presentation; children: React.ReactNode }) {
+function ProgressDayPill({ day, presentation, rest, active }: { day: number; presentation: Presentation; rest: React.ReactNode; active: React.ReactNode }) {
   const theme = useTheme();
-  const primary = theme.colors.primary, border = theme.colors.border;
   const { position, weekOffset, weekPhase, selectedDay } = presentation;
   const weight = useDerivedValue(() => Math.max(0, 1 - Math.abs(distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay))));
-  const outline = useAnimatedStyle(() => ({ borderColor: interpolateColor(isToday ? 1 : weight.value, [0, 1], [border, primary]) }));
-  const marker = useAnimatedStyle(() => ({ opacity: weight.value }));
-  return <Animated.View style={[styles.dayPill, { backgroundColor: theme.colors.surface }, outline]}>
-    <Animated.View style={[styles.marker, { backgroundColor: primary }, marker]} />{children}
-  </Animated.View>;
+  const fill = useAnimatedStyle(() => ({ opacity: weight.value }));
+  return <View style={[styles.dayPill, { borderColor: theme.colors.border }]}>
+    {rest}
+    <Animated.View style={[styles.dayActive, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, fill]}>{active}</Animated.View>
+  </View>;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    paddingTop: 8,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-  },
-  weekViewport: { height: 54, overflow: 'hidden' },
-  weekLayer: { position: 'absolute', top: 0, left: 0, right: 0, height: 54 },
-  titleLayer: { position: 'absolute', left: 8, right: 8, alignItems: 'center' },
-  marker: { position: 'absolute', bottom: 2, height: 3, width: 24, borderRadius: 2 },
-  topHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    marginBottom: 12,
-    position: 'relative',
-    height: 48,
-  },
-  fixedDateNavBox: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  navArrowBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateTitleBox: {
-    flex: 1,
-    minHeight: 44,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  headlineTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  subtitleContext: {
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
-    marginTop: 1,
-  },
-  todayPillBtn: {
-    marginLeft: 8,
-    paddingHorizontal: 10,
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  todayPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  daysRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    gap: 4,
-  },
-  dayPill: {
-    flex: 1,
-    height: 54,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-  },
-  dayNameText: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  dayNumberText: {
-    fontSize: 15,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
+  container: { paddingBottom: 12 },
+  weekViewport: { height: 60, overflow: 'hidden' },
+  weekLayer: { position: 'absolute', top: 0, left: 0, right: 0, height: 60 },
+  titleLayer: { position: 'absolute', left: 0, right: 0, top: 0 },
+  topHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 16, paddingHorizontal: 20, paddingBottom: 16 },
+  dateTitleBox: { flex: 1, height: 54, overflow: 'hidden', justifyContent: 'flex-start' },
+  subtitleContext: { fontSize: 14, marginTop: 2 },
+  calendarBtn: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  daysRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 6 },
+  dayTouch: { flex: 1, height: 60 },
+  dayPill: { flex: 1, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: 2, overflow: 'hidden' },
+  dayActive: { position: 'absolute', top: -1, bottom: -1, left: -1, right: -1, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  dayNumberText: { fontFamily: font.displaySmall, fontSize: 17, lineHeight: 20, fontVariant: ['tabular-nums'] },
+  mark: { width: 18, height: 4, borderRadius: 2 },
 });

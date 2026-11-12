@@ -29,7 +29,7 @@ const style = node => Object.assign({}, ...flatten(node.props.style).map(s => s.
 async function harness(initial = '2026-12-06', staticMode = false) {
   const nav = createLogNavigation(initial), position = shared(dates.dateIdToEpochDay(initial)), interaction = shared(0);
   let tree, commits = 0, active = true, queued = [], animations = [], gestures = [], routes = [], reactions = [];
-  const theme = { colors: { primary: '#00aa00', border: '#888888', surface: '#ffffff', background: '#fafafa', text: '#111111', textSecondary: '#444444', textMuted: '#666666', onPrimary: '#ffffff' } };
+  const theme = { colors: { primary: '#00aa00', border: '#888888', surface: '#ffffff', background: '#fafafa', text: '#111111', textSecondary: '#444444', textMuted: '#666666', onPrimary: '#ffffff', barEmpty: '#dddddd' }, type: { label: {} } };
   const hooks = { logsDateStore: nav, useLogsDateRevision: () => React.useSyncExternalStore(nav.subscribe, nav.getRevision, nav.getRevision) };
   const reanimated = { __esModule: true, default: { View: 'AnimatedView' },
     useSharedValue: initial => { const ref = React.useRef(null); return ref.current ??= shared(initial); },
@@ -57,8 +57,8 @@ async function harness(initial = '2026-12-06', staticMode = false) {
   const swipe = compile('use-week-strip-swipe.ts', common);
   const { DateStripHeader } = compile('date-strip-header.tsx', { ...common,
     'react-native': { View: 'View', Text: 'Text', TouchableOpacity: 'Button', StyleSheet: { create: x => x } },
-    'expo-router': { useRouter: () => ({ push: route => routes.push(route) }) }, '@/theme': { useTheme: () => theme },
-    '@/components/ui': { Icon: 'Icon' }, './use-week-strip-swipe': swipe, './date-swipe': { DateSwipe: 'DateSwipe' },
+    'expo-router': { useRouter: () => ({ push: route => routes.push(route) }) }, '@/theme': { useTheme: () => theme, font: { displaySmall: 'Display' } },
+    '@/components/ui': { Icon: 'Icon', Text: 'Text' }, '@/hooks/use-meal-store': { useMealDay: () => ({ foods: [] }) }, './use-week-strip-swipe': swipe, './date-swipe': { DateSwipe: 'DateSwipe' },
   });
   function Host() {
     const date = React.useSyncExternalStore(nav.subscribe, nav.get, nav.get);
@@ -73,10 +73,10 @@ async function harness(initial = '2026-12-06', staticMode = false) {
   const resize = async width => renderer.act(async () => viewport().props.onLayout({ nativeEvent: { layout: { width } } }));
   if (!staticMode) await resize(400);
   const buttons = () => tree.root.findAllByType('Button');
-  const day = date => buttons().find(b => b.props.accessibilityLabel?.endsWith(' '+date));
+  const day = date => buttons().find(b => b.props.testID === 'day-'+date);
   const pill = date => day(date).findAllByType('AnimatedView')[0];
-  const marker = date => day(date).findAllByType('AnimatedView')[1];
-  const heading = text => tree.root.findAllByType('AnimatedView').find(n => n.props.pointerEvents === 'none' && n.findAllByType('Text').some(t => t.props.children === text));
+  const marker = pill;
+  const heading = text => tree.root.findAllByType('AnimatedView').find(n => n.props.pointerEvents === 'none' && n.findAllByType('Text').some(t => [t.props.children].flat().join('') === text));
   const weeks = () => tree.root.findAllByType('AnimatedView').filter(n => typeof n.props.accessibilityElementsHidden === 'boolean' && n.props.pointerEvents !== 'none');
   return { tree, nav, position, interaction, theme, routes, day, pill, marker, heading, weeks, style, resize,
     commits: () => commits,
@@ -100,16 +100,16 @@ test('compiled header shares fractional title, border and underline progress wit
   try {
     const baseline = h.commits();
     await h.frames([0.1, 0.2, 0.5]);
-    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 0.5);
-    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0.5);
+    assert.equal(h.style(h.heading('miércoles 2 de diciembre')).opacity, 0.5);
+    assert.equal(h.style(h.heading('jueves 3 de diciembre')).opacity, 0.5);
     assert.equal(h.style(h.marker('2026-12-02')).opacity, 0.5);
-    assert.equal(h.style(h.pill('2026-12-02')).borderColor, 'blend:0.5');
-    assert.equal(h.style(h.pill('2026-12-03')).borderColor, 'blend:0.5');
+    assert.equal(h.style(h.pill('2026-12-02')).opacity, 0.5);
+    assert.equal(h.style(h.pill('2026-12-03')).opacity, 0.5);
     assert.equal(h.commits(), baseline); assert.equal(h.nav.get(), '2026-12-02');
     assert.equal(h.day('2026-12-02').props.accessibilityState.selected, true);
     await h.frames([0]);
-    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 1);
-    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0);
+    assert.equal(h.style(h.heading('miércoles 2 de diciembre')).opacity, 1);
+    assert.equal(h.style(h.heading('jueves 3 de diciembre')).opacity, 0);
   } finally { await h.close(); }
 });
 
@@ -121,8 +121,8 @@ test('Sunday to Monday and reverse reveal the actual adjacent weeks continuously
     await h.frames([0.5]);
     assert.equal(h.style(h.weeks()[1]).transform[0].translateX, -200);
     assert.equal(h.style(h.weeks()[2]).transform[0].translateX, 200);
-    assert.equal(h.style(h.heading('Domingo 6')).opacity, 0.5);
-    assert.equal(h.style(h.heading('Lunes 7')).opacity, 0.5);
+    assert.equal(h.style(h.heading('domingo 6 de diciembre')).opacity, 0.5);
+    assert.equal(h.style(h.heading('lunes 7 de diciembre')).opacity, 0.5);
     assert.equal(h.commits(), baseline);
     await h.jump('2026-12-07');
     assert.equal(h.style(h.weeks()[1]).transform[0].translateX, 0);
@@ -139,9 +139,9 @@ test('week dragging follows the finger, previews the same weekday and commits on
     const baseline = h.commits(), original = h.position.value;
     await h.begin(); await h.drag(-200);
     assert.equal(h.style(h.weeks()[1]).transform[0].translateX, -200);
-    assert.equal(h.style(h.heading('Miércoles 2')).opacity, 0.5);
-    assert.equal(h.style(h.heading('Miércoles 9')).opacity, 0.5);
-    assert.equal(h.style(h.heading('Jueves 3')).opacity, 0);
+    assert.equal(h.style(h.heading('miércoles 2 de diciembre')).opacity, 0.5);
+    assert.equal(h.style(h.heading('miércoles 9 de diciembre')).opacity, 0.5);
+    assert.equal(h.style(h.heading('jueves 3 de diciembre')).opacity, 0);
     assert.equal(h.style(h.marker('2026-12-09')).opacity, 0.5);
     assert.equal(h.commits(), baseline); assert.equal(h.nav.getRevision(), 0);
     assert.equal(h.position.value, original, 'week preview never writes the content pager position');
@@ -192,10 +192,14 @@ test('week gestures cannot override a moving content pager; taps, arrows and cal
     h.interaction.value = 0;
     await renderer.act(async () => h.day('2026-12-05').props.onPress());
     assert.equal(h.nav.get(), '2026-12-05');
-    const buttons = h.tree.root.findAllByType('Button');
-    await renderer.act(async () => buttons.find(b => b.props.accessibilityLabel === 'Ir al día siguiente').props.onPress());
+    const title = h.tree.root.findAll(n => n.props.accessibilityRole === 'adjustable')[0];
+    await renderer.act(async () => title.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } }));
     assert.equal(h.nav.get(), '2026-12-06');
-    await renderer.act(async () => h.tree.root.findAllByType('Button').find(b => b.props.accessibilityLabel?.startsWith('Elegir fecha:')).props.onPress());
+    await renderer.act(async () => title.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }));
+    assert.equal(h.nav.get(), '2026-11-10');
+    await renderer.act(async () => h.nav.set('2026-12-06'));
+    const buttons = h.tree.root.findAllByType('Button');
+    await renderer.act(async () => h.tree.root.findAllByType('Button').find(b => b.props.accessibilityLabel === 'Elegir fecha').props.onPress());
     assert.deepEqual(h.routes, ['/date-picker']);
     assert.equal(h.tree.root.findAllByType('AnimatedView').filter(n => n.props.pointerEvents === 'none').length, 15);
     assert.equal(h.weeks().length, 3);
