@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useIsFocused } from 'expo-router/react-navigation';
 import { useSharedValue } from 'react-native-reanimated';
-import { Button, Text } from '@/components/ui';
+import { Button, Card, Text } from '@/components/ui';
 import { DailyWeightRow } from '@/components/weight/daily-weight-row';
 import { useMealActions, useMealDay, type LoggedFoodItem } from '@/hooks/use-meal-store';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -14,7 +14,7 @@ import { currentTimeString, dateIdToEpochDay, todayId } from '@/lib/dates';
 import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
 import { NativeDayWindow } from './native-day-window';
-import { RecyclingHourRailFeed } from './recycling-hour-rail-feed';
+import { MealGroupFeed } from './meal-group-feed';
 import type { HourRailFeedHandle } from './hour-rail-feed';
 
 export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
@@ -94,20 +94,25 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection }: { da
       } },
     ]);
   };
+  const future = date > today;
+  // The feed keeps its own stable event adapters; a stable empty state lets it skip work when only the parent re-renders.
+  const empty = useMemo(() => <Card padding="none" style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 28, paddingHorizontal: 18, alignItems: 'center', gap: 8 }}>
+    <Text variant="heading">{future ? 'Este día todavía no llega' : 'Sin registros este día'}</Text>
+    <Text tone="secondary" style={{ fontSize: 14, textAlign: 'center' }}>{future ? 'Puedes planificar comidas con el botón +.' : 'Agrega lo que comiste con el botón +.'}</Text>
+  </Card>, [future]);
   return <View style={{ flex: 1 }}>
     {preference.preferencesReady && preference.weightTrackingEnabled ? <DailyWeightRow measurement={weight.weightsByDate[date]} disabled={date > today}
       onPress={() => { if (live()) router.push({ pathname: '/weight-entry', params: { dateId: date } }); }} /> : null}
     {weight.syncError ? <Text selectable tone="danger">{weight.syncError.message}</Text> : null}
-    <StickyMacroHeader {...log} foods={log.foods} />
-    <Button title={log.foods.length ? 'Detalle nutricional' : 'Sin alimentos registrados'} variant="ghost" size="md"
-      onPress={() => { if (live()) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
-    <RecyclingHourRailFeed ref={feed} foods={log.foods} engine="legend"
+    <StickyMacroHeader {...log} foods={log.foods}
+      onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
+    <MealGroupFeed ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}
       onLongPressFood={food => { if (live()) selection.startFromFood(food); }}
       onLongPressGroup={ids => { if (live()) selection.startFromGroup(ids); }}
       onToggleSelectFood={id => { if (live()) selection.toggleFood(id); }}
       onToggleSelectGroup={ids => { if (live()) selection.toggleGroup(ids); }} />
-    {selection.isSelectionMode ? <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, gap: 8 }}>
+    {selection.isSelectionMode ? <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingVertical: 12, gap: 8 }}>
       <Button title={`${selection.selectedCount} seleccionados · Cancelar`} variant="secondary" size="md" onPress={selection.clear} />
       <View style={{ flexDirection: 'row', gap: 6 }}>
         <Button title="Mover" size="md" style={{ flex: 1, paddingHorizontal: 6 }} onPress={() => openBatch('/batch-move')} />

@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
+import { ProgressBar, Text } from '@/components/ui';
 import { useTheme } from '@/theme';
 import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
 
@@ -11,117 +12,75 @@ interface StickyMacroHeaderProps {
   targetCarbs?: number;
   targetFat?: number;
   targetFiber?: number;
-
+  /** Abre el detalle nutricional del dia. */
+  onPress?: () => void;
 }
 
+/* Resumen del dia: calorias contra la meta, lo que queda y un medidor
+   por macro. Tocarlo abre el detalle (fibra y micronutrientes). */
 export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   foods,
   targetCalories = 2200,
   targetProtein = 150,
   targetCarbs = 220,
   targetFat = 65,
-  targetFiber = 30,
+  onPress,
 }) => {
   const theme = useTheme();
+  const c = theme.colors;
   const totals = sumNutrition(foods);
-  const knownFiber = foods.filter(food => typeof food.fiber === 'number');
-  const fiber = knownFiber.length ? `${formatMacroGrams(totals.fiber)}g${knownFiber.length < foods.length ? '*' : ''}` : '—';
-
-  const calPercent = Math.min(Math.round((totals.calories / targetCalories) * 100), 100);
-  const isOverCal = totals.calories > targetCalories;
+  const left = targetCalories - totals.calories;
+  const over = left < 0;
+  const percent = targetCalories > 0 ? Math.round((totals.calories / targetCalories) * 100) : 0;
+  const macros = [
+    { name: 'Proteína', value: totals.protein, target: targetProtein, color: c.macroProtein },
+    { name: 'Carbohidratos', value: totals.carbs, target: targetCarbs, color: c.macroCarbs },
+    { name: 'Grasa', value: totals.fat, target: targetFat, color: c.macroFat },
+  ];
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}>
-      {/* Primary Metrics Row */}
-      <View style={styles.topRow}>
-        <View style={styles.calBox}>
-          <Text style={[styles.calMain, { color: theme.colors.text }, isOverCal && { color: theme.colors.danger }]}>
-            {formatCalories(totals.calories)} <Text style={[styles.calTarget, { color: theme.colors.textSecondary }]}>/ {formatCalories(targetCalories)} kcal</Text>
-          </Text>
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={`Resumen del día: ${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías, ${formatCalories(Math.abs(left))} ${over ? 'sobre la meta' : 'restantes'}. ${macros.map(m => `${m.name} ${formatMacroGrams(m.value)} de ${formatMacroGrams(m.target)} gramos`).join(', ')}`}
+      accessibilityHint="Abre el detalle nutricional"
+      activeOpacity={0.8}
+      disabled={!onPress}
+      onPress={onPress}
+      style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+      <View style={styles.kcalRow}>
+        <View>
+          <Text variant="numberLarge" style={over ? { color: c.danger } : null}>{formatCalories(totals.calories)}</Text>
+          <Text variant="caption" tone="secondary" style={styles.goal}>de {formatCalories(targetCalories)} kcal</Text>
         </View>
-
-        <View style={styles.macrosRow}>
-          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            P <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.protein)}g</Text>
-          </Text>
-          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            C <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.carbs)}g</Text>
-          </Text>
-          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            G <Text style={[styles.macroVal, { color: theme.colors.text }]}>{formatMacroGrams(totals.fat)}g</Text>
-          </Text>
-          <Text style={[styles.dot, { color: theme.colors.textMuted }]}>·</Text>
-          <Text style={[styles.macroText, { color: theme.colors.textSecondary }]}>
-            F <Text accessibilityLabel={knownFiber.length < foods.length ? 'Fibra parcial o sin datos; ver detalle nutricional' : 'Fibra'} style={[styles.macroVal, { color: theme.colors.text }]}>{fiber}</Text>
-          </Text>
+        <View style={styles.right}>
+          <Text variant="number" style={styles.left}>{formatCalories(Math.abs(left))}</Text>
+          <Text variant="caption" tone={over ? 'danger' : 'secondary'}>{over ? 'sobre la meta' : 'te quedan'}</Text>
         </View>
       </View>
-
-      {/* Thin progress bar */}
-      <View style={[styles.barBg, { backgroundColor: theme.colors.border }]}>
-        <View
-          style={[
-            styles.barFill,
-            { width: `${calPercent}%`, backgroundColor: theme.colors.primary },
-            isOverCal && { backgroundColor: theme.colors.danger },
-          ]}
-        />
+      <View accessibilityLabel={`${percent} por ciento de la meta de calorías`}>
+        <ProgressBar value={targetCalories > 0 ? totals.calories / targetCalories : 0} height={10} over={over} color={c.primary} />
       </View>
-    </View>
+      <View style={styles.macros}>
+        {macros.map(m => (
+          <View key={m.name} style={styles.macro}>
+            <Text variant="label" tone="secondary" numberOfLines={1}>{m.name}</Text>
+            <Text variant="number" numberOfLines={1}>
+              {formatMacroGrams(m.value)} <Text variant="caption" tone="secondary">/ {formatMacroGrams(m.target)} g</Text>
+            </Text>
+            <ProgressBar value={m.target > 0 ? m.value / m.target : 0} height={6} color={m.color} />
+          </View>
+        ))}
+      </View>
+    </TouchableOpacity>
   );
 });
 
 const styles = StyleSheet.create({
-  container: {
-    borderBottomWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  calBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  calMain: {
-    fontSize: 15,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  calTarget: {
-    fontSize: 12,
-    fontWeight: '400',
-  },
-  macrosRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  macroText: {
-    fontSize: 12,
-    fontWeight: '400',
-  },
-  macroVal: {
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  dot: {
-    fontSize: 12,
-  },
-  barBg: {
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
+  card: { marginHorizontal: 20, padding: 18, gap: 14, borderRadius: 20, borderWidth: 1 },
+  kcalRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
+  goal: { marginTop: 4 },
+  right: { alignItems: 'flex-end' },
+  left: { fontSize: 17, lineHeight: 22 },
+  macros: { flexDirection: 'row', gap: 14 },
+  macro: { flex: 1, minWidth: 0, gap: 6 },
 });

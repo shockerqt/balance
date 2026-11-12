@@ -27,9 +27,7 @@ export const DailyWeightRow: React.FC<DailyWeightRowProps> = ({
       onPress={onPress}
     >
       <View style={styles.labelBlock}>
-        <Text variant="label" tone="muted">
-          PESO DEL DÍA
-        </Text>
+        <Text variant="heading">Peso del día</Text>
         <Text variant="caption" tone="secondary">
           {disabled
             ? 'No se registra en fechas futuras'
@@ -55,11 +53,14 @@ const useStyles = makeStyles((t) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: t.space.lg,
-    paddingHorizontal: t.space.xl,
-    paddingVertical: t.space.md,
+    marginHorizontal: t.space.xl,
+    marginBottom: t.space.md,
+    paddingHorizontal: 14,
+    minHeight: 56,
     backgroundColor: t.colors.surface,
-    borderBottomWidth: t.border.hairline,
-    borderBottomColor: t.colors.border,
+    borderWidth: t.border.hairline,
+    borderColor: t.colors.border,
+    borderRadius: t.radius.lg,
   },
-  labelBlock: { gap: t.space.xs },
+  labelBlock: { gap: 2 },
 }));
