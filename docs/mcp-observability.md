@@ -71,7 +71,11 @@ actually inspected. `checked_date_strings` and `checked_weight_numbers` describe
 only that checked prefix (`all` or `not_all`). Empty/absent entries are
 `not_applicable`, never proof that dates or numeric weights were present.
 
-`first_text_json` is `matches`, `differs`, `invalid_json`, `not_checked` or
+Successful tool results carry one text block: the human summary, a blank line
+and the compact JSON payload on the final line (BAL-049: Spark forwards only the
+last text block to its model). `first_text_json` compares the JSON on the final
+line of the first text block (the whole text when it has no newline) with
+`structuredContent`. It is `matches`, `differs`, `invalid_json`, `not_checked` or
 `not_applicable`. Parsing accepts at most16KiB of first-text bytes. The structured
 value is checked before parsing, and traversal/comparison are limited to512
 nodes, depth32 and a conservative16KiB string/key budget. Parsed text must also
