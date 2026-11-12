@@ -25,11 +25,16 @@ export interface PullResult {
 }
 
 export interface CollectionHandlers {
-  onDocuments: (documents: SyncDocument[], result: PullResult) => void | Promise<void>;
+  onDocuments: (
+    documents: SyncDocument[],
+    result: PullResult,
+    options?: { deferPersistence: boolean },
+  ) => void | Promise<void>;
   onPushConflicts?: (documents: SyncDocument[]) => void | Promise<void>;
   onPushRejected?: (rejections: RejectedDocument[]) => void | Promise<void>;
   /** True only after valid canonical cache was hydrated from durable storage. */
   canResume?: () => boolean;
+  flush?: () => Promise<void>;
 }
 
 export interface RejectedDocument {
@@ -143,6 +148,7 @@ export class SyncClient {
   private resyncAgain = new Set<SyncCollection>();
   private completedCollections = new Set<SyncCollection>();
   private connectionEpoch = 0;
+  private checkpointEpochs = new Map<SyncCollection, number>();
   private receivedDocuments = 0;
   private lastSyncedAt: number | null = null;
   private activeEnqueues = new Map<string, Map<string, number>>();
@@ -675,6 +681,7 @@ export class SyncClient {
   };
 
   async resetCollection(collection: SyncCollection): Promise<void> {
+    this.checkpointEpochs.set(collection, (this.checkpointEpochs.get(collection) ?? 0) + 1);
     const namespace = this.namespace;
     const generation = this.namespaceGeneration;
     try { await this.invalidateCollectionCheckpoint(collection, namespace); } catch { return; }
@@ -684,6 +691,7 @@ export class SyncClient {
   private async performResync(collection: SyncCollection, namespace: string, generation: number, epoch: number): Promise<boolean> {
     const handlers = this.handlers.get(collection);
     let localOperation = true;
+    let unflushedPages = 0;
     try {
       await this.collectionReadiness.get(collection);
       if (!handlers || this.handlers.get(collection) !== handlers || !this.operationIsCurrent(namespace, generation, epoch) ||
@@ -708,27 +716,87 @@ export class SyncClient {
         await this.invalidateCollectionCheckpoint(collection, namespace);
         if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
       }
+      const checkpointEpoch = this.checkpointEpochs.get(collection) ?? 0;
+      let pendingCheckpoint: SyncCheckpoint | undefined;
       while (this.operationIsCurrent(namespace, generation, epoch) && this.isReady() && !this.disabledCollections.has(collection)) {
         localOperation = false;
         const result = await this.pull(collection, checkpoint, 50, { namespace, generation });
         if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
         localOperation = true;
-        await handlers.onDocuments(result.documents, result);
-        if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
-        this.receivedDocuments += result.documents.length;
-        this.publishStatus();
-        if (result.checkpoint) {
-          checkpoint = result.checkpoint;
-          await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify({ ...checkpoint, cacheVersion: 1 }));
-          if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
-        }
-        this.publishStatus();
-        if (!result.hasMoreDocuments) {
-          this.statusErrors.delete(`pull:${collection}`);
-          return true;
+        if (handlers.flush) {
+          await handlers.onDocuments(result.documents, result, { deferPersistence: true });
+          if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+          this.receivedDocuments += result.documents.length;
+          this.publishStatus();
+          if (result.checkpoint) {
+            checkpoint = result.checkpoint;
+            pendingCheckpoint = result.checkpoint;
+          }
+          if (result.documents.length > 0) {
+            unflushedPages += 1;
+          }
+          const shouldFlush = unflushedPages >= 50 || (!result.hasMoreDocuments && (unflushedPages > 0 || pendingCheckpoint !== undefined));
+          if (shouldFlush) {
+            await handlers.flush();
+            if (
+              !this.operationIsCurrent(namespace, generation, epoch) ||
+              this.handlers.get(collection) !== handlers ||
+              this.disabledCollections.has(collection) ||
+              (this.checkpointEpochs.get(collection) ?? 0) !== checkpointEpoch
+            ) {
+              return false;
+            }
+            if (pendingCheckpoint !== undefined) {
+              await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify({ ...pendingCheckpoint, cacheVersion: 1 }));
+              if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
+            }
+            unflushedPages = 0;
+            pendingCheckpoint = undefined;
+          }
+          this.publishStatus();
+          if (!result.hasMoreDocuments) {
+            this.statusErrors.delete(`pull:${collection}`);
+            return true;
+          }
+        } else {
+          await handlers.onDocuments(result.documents, result);
+          if (!this.operationIsCurrent(namespace, generation, epoch) || this.handlers.get(collection) !== handlers) return false;
+          this.receivedDocuments += result.documents.length;
+          this.publishStatus();
+          if (result.checkpoint) {
+            checkpoint = result.checkpoint;
+            if (
+              !this.operationIsCurrent(namespace, generation, epoch) ||
+              this.handlers.get(collection) !== handlers ||
+              this.disabledCollections.has(collection) ||
+              (this.checkpointEpochs.get(collection) ?? 0) !== checkpointEpoch
+            ) {
+              return false;
+            }
+            await storage.setItem(checkpointStorageKey(namespace, collection), JSON.stringify({ ...checkpoint, cacheVersion: 1 }));
+            if (!this.operationIsCurrent(namespace, generation, epoch)) return false;
+          }
+          this.publishStatus();
+          if (!result.hasMoreDocuments) {
+            this.statusErrors.delete(`pull:${collection}`);
+            return true;
+          }
         }
       }
     } catch {
+      if (
+        unflushedPages > 0 &&
+        handlers?.flush &&
+        this.operationIsCurrent(namespace, generation, epoch) &&
+        this.handlers.get(collection) === handlers &&
+        !this.disabledCollections.has(collection)
+      ) {
+        try {
+          await handlers.flush();
+        } catch {
+          // Best-effort flush; ignore error.
+        }
+      }
       if (this.operationIsCurrent(namespace, generation, epoch) && this.isReady()) {
         this.statusErrors.set(`pull:${collection}`, localOperation ? 'local' : 'download');
         this.publishStatus();

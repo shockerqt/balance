@@ -74,6 +74,12 @@ function launch(physical, serverMeals = []) {
       task.callback(...task.args);
     }
   };
+  const runAllTimers = () => {
+    for (const [id, task] of [...timers]) {
+      if (!timers.delete(id)) continue;
+      task.callback(...task.args);
+    }
+  };
   let user = { id: 1 }, focused = true, dailyFocused = true, view, stores = {}, backs = 0;
   const metrics = { nativeSerializations: 0, formatterConstructions: 0, displayCalculations: 0 };
   const countedIntl = Object.create(Intl);
@@ -148,9 +154,9 @@ function launch(physical, serverMeals = []) {
     client.setNamespace(namespace);
     await renderer.act(async () => { view = renderer.create(tree()); await tick(); });
   }
-  async function connect() {
+  async function connect(token = 'synthetic-token', ns = identity.authDataNamespace(api, user.id)) {
     await renderer.act(async () => {
-      client.connect('synthetic-token', namespace);
+      client.connect(token, ns);
       const socket = sockets.at(-1); socket.readyState = 1; socket.onopen?.(); socket.receive({ event: 'authenticated' }); await tick();
     });
   }
@@ -161,6 +167,10 @@ function launch(physical, serverMeals = []) {
         const socket = sockets.at(-1);
         for (const frame of socket?.frames ?? []) {
           if (!['pull', 'push'].includes(frame.event) || socket.answered.has(frame.requestId)) continue;
+          if (frame.event === 'pull' && physical.controls.onPull) {
+            const handled = await physical.controls.onPull(frame, socket);
+            if (handled) continue;
+          }
           socket.answered.add(frame.requestId);
           if (frame.event === 'push') {
             const values = new Map(server[frame.collection].map(doc => [doc.id, doc]));
@@ -196,6 +206,9 @@ function launch(physical, serverMeals = []) {
       await tick();
     });
   }
+  async function runDeferredAll() {
+    await renderer.act(async () => { runAllTimers(); await tick(); });
+  }
   async function setFocus(next) {
     focused = next;
     await renderer.act(async () => { view.update(tree()); await tick(); });
@@ -214,7 +227,7 @@ function launch(physical, serverMeals = []) {
     session: data().session, sequence, action: 'save', input: JSON.stringify(input), ...overrides,
   } });
   return {
-    storage, client, owner, server, sockets, mount, connect, pump, close, runDeferred, runDeferredOne, setFocus, setUser, setDailyFocus, dailyProps, metrics, load,
+    storage, client, owner, server, sockets, mount, connect, pump, close, runDeferred, runDeferredOne, runDeferredAll, setFocus, setUser, setDailyFocus, dailyProps, metrics, load,
     props, data, status, event, save: sequence => props().onAction(event(sequence)),
     get stores() { return stores; }, get backs() { return backs; },
   };
@@ -519,6 +532,176 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
       cacheBytes,
       limits: 'Node React renderer; simulated native FS; no Hermes or device timing',
     }));
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-1: a full 12k pull writes the meal log cache at most 6 times', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+  const targetUri = filePath(cacheKey);
+  let cacheWrites = 0;
+  physical.controls.beforeWrite = async (uri) => {
+    if (uri.startsWith(targetUri)) cacheWrites++;
+  };
+  try {
+    await app.mount();
+    await app.connect();
+    await app.pump();
+    assert.equal(app.stores.meals.mealDocuments.length, 12000);
+    assert.equal(app.client.getStatusSnapshot().phase, 'synced');
+    assert.ok(cacheWrites <= 6, `cache writes (${cacheWrites}) exceeded 6`);
+    assert.ok(cacheWrites > 0, `cache writes (${cacheWrites}) should be > 0`);
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-2: stop pumping once receivedDocuments >= 3000, close, relaunch on same physical: 12000 documents, none lost', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  try {
+    await app.mount();
+    await app.connect();
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 3000);
+    assert.ok(app.client.getStatusSnapshot().receivedDocuments >= 3000);
+  } finally {
+    await app.close();
+  }
+  const restarted = launch(physical, history);
+  try {
+    await restarted.mount();
+    await restarted.connect();
+    await restarted.pump();
+    assert.equal(restarted.stores.meals.mealDocuments.length, 12000);
+    assert.equal(restarted.client.getStatusSnapshot().phase, 'synced');
+  } finally {
+    await restarted.close();
+  }
+});
+
+test('AC-3: during 12k pull without local saves, count React publications of mealDocuments identity changes: at most 6 distinct arrays after hydration', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  try {
+    await app.mount();
+    const observed = new Set([app.stores.meals.mealDocuments]);
+    await app.connect();
+    await app.pump(() => {
+      observed.add(app.stores.meals.mealDocuments);
+      return app.client.getStatusSnapshot().phase === 'synced';
+    });
+    assert.equal(app.stores.meals.mealDocuments.length, 12000);
+    assert.ok(observed.size <= 6, `observed ${observed.size} distinct array identities, expected at most 6`);
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-6: after one flush window, call resetCollection mid-window; assert checkpoint for that window is not written and collection ends synced with 12000 documents', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  const checkpointKey = `@balance_sync_checkpoint_v2:${namespace}:mealLogs`;
+  try {
+    await app.mount();
+    await app.connect();
+    // Pump past one flush window (50 pages = 2500 documents)
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 2500);
+    const window1Checkpoint = await app.storage.getItem(checkpointKey);
+    assert.ok(window1Checkpoint, 'checkpoint was written after window 1');
+
+    // Pump a few pages into window 2 (mid-window, e.g. 2600 documents)
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 2600);
+
+    // Call resetCollection mid-window without blocking pump
+    const resetPromise = app.client.resetCollection('mealLogs');
+    await act(async () => { await tick(); });
+
+    // Immediately after resetCollection, checkpoint must be removed
+    assert.equal(await app.storage.getItem(checkpointKey), null);
+
+    // Let window 2 finish (reaches 5000 docs).
+    // Because epoch was bumped, it must NOT write window 2's checkpoint.
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 5000);
+    assert.equal(await app.storage.getItem(checkpointKey), null, 'checkpoint for window 2 was not written');
+
+    // Resync restarted from invalidated frontier and syncs all 12000 documents
+    await app.pump();
+    await resetPromise;
+    assert.equal(app.stores.meals.mealDocuments.length, 12000);
+    assert.equal(app.client.getStatusSnapshot().phase, 'synced');
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-7: switch user mid-window; assert user 1 cache and checkpoint are unchanged by later events and user 2 has no user 1 documents', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  const user1Namespace = namespace;
+  const user1CacheKey = app.owner.collectionStorageKey(user1Namespace, 'mealLogs');
+  const user1CheckpointKey = `@balance_sync_checkpoint_v2:${user1Namespace}:mealLogs`;
+  try {
+    await app.mount();
+    await app.connect();
+    // Pump past window 1 (50 pages = 2500 documents)
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 2500);
+    const user1CacheSnapshot = await app.storage.getItem(user1CacheKey);
+    const user1CheckpointSnapshot = await app.storage.getItem(user1CheckpointKey);
+    assert.ok(user1CacheSnapshot);
+    assert.ok(user1CheckpointSnapshot);
+
+    // Pump into window 2 mid-window (2600 documents)
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 2600);
+
+    // Clear server meals for user 2 so user 2 has a fresh empty history
+    app.server.mealLogs = [];
+    // Switch to user 2
+    await app.setUser(2);
+    await app.connect();
+    await app.pump();
+
+    // Assert user 1 cache and checkpoint are unchanged by later events
+    assert.equal(await app.storage.getItem(user1CacheKey), user1CacheSnapshot);
+    assert.equal(await app.storage.getItem(user1CheckpointKey), user1CheckpointSnapshot);
+
+    // Assert user 2 has no user 1 documents
+    assert.equal(app.stores.meals.mealDocuments.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-8: make a pull fail mid-window, stop answering and let request time out; assert downloaded documents visible and persisted, no checkpoint written for partial window', { timeout: 180000 }, async () => {
+  const physical = disk(), history = representativeHistory(), app = launch(physical, history);
+  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+  const checkpointKey = `@balance_sync_checkpoint_v2:${namespace}:mealLogs`;
+  let mealPulls = 0;
+  physical.controls.onPull = (frame) => {
+    if (frame.collection === 'mealLogs') {
+      mealPulls++;
+      if (mealPulls > 2) {
+        // Stop answering on page 3 mid-window
+        return true;
+      }
+    }
+    return false;
+  };
+  try {
+    await app.mount();
+    await app.connect();
+    // Pump until 2 pages of mealLogs (100 documents) plus 1 userPreferences document have been received
+    await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 101);
+    assert.equal(app.client.getStatusSnapshot().receivedDocuments, 101);
+
+    // Now request 3 is in flight and socket stops answering it. Run timers to trigger SYNC_TIMEOUT.
+    await app.runDeferredAll();
+
+    // Assert the downloaded documents are visible in mealDocuments and persisted in cache
+    assert.equal(app.stores.meals.mealDocuments.length, 100);
+    const persisted = JSON.parse(await app.storage.getItem(cacheKey) || '[]');
+    assert.equal(persisted.length, 100);
+
+    // Assert no checkpoint was written for that partial window
+    assert.equal(await app.storage.getItem(checkpointKey), null);
+    assert.equal(app.client.getStatusSnapshot().error, 'download');
   } finally {
     await app.close();
   }

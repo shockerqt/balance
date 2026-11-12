@@ -170,10 +170,21 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
       canResume: () => !cancelled && cacheValid.current && storage.isDurableItem(collectionStorageKey(namespace, 'mealLogs')),
-      onDocuments: async (documents) => {
-        if (cancelled) return;
+      onDocuments: async (documents, _result, options) => {
+        if (cancelled || currentNamespace.current !== namespace) return;
+        if (options?.deferPersistence) {
+          logsRef.current = mergeLogs(logsRef.current, documents);
+          return;
+        }
         await updateLogs(previous => mergeLogs(previous, documents));
-        if (!cancelled) cacheValid.current = true;
+        if (!cancelled && currentNamespace.current === namespace) cacheValid.current = true;
+      },
+      flush: async () => {
+        if (cancelled || currentNamespace.current !== namespace) return;
+        await updateLogs(previous => previous);
+        if (!cancelled && currentNamespace.current === namespace) {
+          cacheValid.current = true;
+        }
       },
       onPushConflicts: async (documents) => {
         // Even a conflict-free ACK must consolidate outbox-only saves before

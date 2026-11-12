@@ -211,7 +211,10 @@ test('restart during orphan-cursor recovery cannot resume beyond the durable par
   };
   await first.mount(); await first.connect();
   await first.pump(() => first.client.getStatusSnapshot().phase === 'error');
-  assert.equal(first.stores.meals.mealDocuments.length, 50);
+  // BAL-054: meal log cursors are written once per flush window (50 pages or the
+  // last page), so the first cursor write happens after all 101 documents are
+  // applied and durably cached. The invariant is unchanged: no cursor survives.
+  assert.equal(first.stores.meals.mealDocuments.length, 101);
   assert.equal(await first.storage.getItem(cursorKey), null);
   await first.close();
   physical.controls.beforeWrite = undefined;
