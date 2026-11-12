@@ -134,7 +134,7 @@ function DayFace({ item, letter, logged, future, inverted }: { item: Day; letter
   return <>
     <Text style={[theme.type.label, { color: ink }]}>{letter}</Text>
     <Text style={[styles.dayNumberText, { color: ink }]}>{item.dayNumber}</Text>
-    <View style={[styles.mark, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty }]} />
+    <View style={[styles.mark, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty, opacity: inverted && !logged ? 0.35 : 1 }]} />
   </>;
 }
 function DayPill({ item, letter, today, selected, presentation, onSelectDate }: { item: Day; letter: string; today: string; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void }) {

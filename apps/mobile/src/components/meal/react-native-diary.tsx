@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useIsFocused } from 'expo-router/react-navigation';
@@ -94,17 +94,19 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection }: { da
       } },
     ]);
   };
+  const future = date > today;
+  // The feed keeps its own stable event adapters; a stable empty state lets it skip work when only the parent re-renders.
+  const empty = useMemo(() => <Card padding="none" style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 28, paddingHorizontal: 18, alignItems: 'center', gap: 8 }}>
+    <Text variant="heading">{future ? 'Este día todavía no llega' : 'Sin registros este día'}</Text>
+    <Text tone="secondary" style={{ fontSize: 14, textAlign: 'center' }}>{future ? 'Puedes planificar comidas con el botón +.' : 'Agrega lo que comiste con el botón +.'}</Text>
+  </Card>, [future]);
   return <View style={{ flex: 1 }}>
     {preference.preferencesReady && preference.weightTrackingEnabled ? <DailyWeightRow measurement={weight.weightsByDate[date]} disabled={date > today}
       onPress={() => { if (live()) router.push({ pathname: '/weight-entry', params: { dateId: date } }); }} /> : null}
     {weight.syncError ? <Text selectable tone="danger">{weight.syncError.message}</Text> : null}
     <StickyMacroHeader {...log} foods={log.foods}
       onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
-    <MealGroupFeed ref={feed} foods={log.foods}
-      empty={<Card padding="none" style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 28, paddingHorizontal: 18, alignItems: 'center', gap: 8 }}>
-        <Text variant="heading">{date > today ? 'Este día todavía no llega' : 'Sin registros este día'}</Text>
-        <Text tone="secondary" style={{ fontSize: 14, textAlign: 'center' }}>{date > today ? 'Puedes planificar comidas con el botón +.' : 'Agrega lo que comiste con el botón +.'}</Text>
-      </Card>}
+    <MealGroupFeed ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}
       onLongPressFood={food => { if (live()) selection.startFromFood(food); }}
       onLongPressGroup={ids => { if (live()) selection.startFromGroup(ids); }}
