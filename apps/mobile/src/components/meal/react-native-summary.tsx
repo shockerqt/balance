@@ -52,27 +52,27 @@ export function ReactNativeSummary({ onOpen }: { onOpen: (date: string, body: bo
           <Text variant="heading">Calorías</Text>
           <Text variant="caption" tone="secondary">meta {formatCalories(targets.targetCalories)}</Text>
         </View>
-        <Text>
+        <View style={styles.figure}>
           <Text variant="numberMedium">{range.calories === null ? '—' : formatCalories(range.calories)}</Text>
-          <Text variant="caption" tone="secondary"> kcal por día registrado</Text>
-        </Text>
+          <Text variant="caption" tone="secondary">kcal por día registrado</Text>
+        </View>
         <CalorieChart buckets={buckets} period={period} goal={targets.targetCalories} today={end} onOpen={date => onOpen(date, false)} />
         <Text variant="caption" tone="secondary">{range.recordedDays ? period === 7 ? 'Los días sin registro no cuentan en el promedio.' : 'Cada barra es el promedio de los días registrados de ese tramo.' : 'Sin alimentos registrados en este período.'}</Text>
       </Card>
 
       {weightOn ? <Card padding="none" style={[styles.card, { gap: 10 }]}>
         <TouchableOpacity accessibilityRole="button" disabled={!latest}
-          accessibilityLabel={latest ? `Peso: ${kg(latest.kg)} kilos${delta === null ? '' : `, ${delta <= 0 ? 'baja' : 'sube'} ${kg(Math.abs(delta))} en ${period} días`}` : 'Peso sin registros en este período'}
+          accessibilityLabel={latest ? `Peso: ${kg(latest.kg)} kilos${delta === null ? '' : delta === 0 ? `, sin cambio en ${period} días` : `, ${delta < 0 ? 'baja' : 'sube'} ${kg(Math.abs(delta))} en ${period} días`}` : 'Peso sin registros en este período'}
           accessibilityHint="Abre Mediciones" onPress={() => latest && onOpen(latest.date, true)} style={{ gap: 10 }}>
           <View style={styles.titleRow}>
             <Text variant="heading">Peso</Text>
             {delta !== null ? <Text variant="caption" tone="secondary">{delta > 0 ? '+' : delta < 0 ? '−' : ''}{kg(Math.abs(delta))} kg en {period} días</Text> : null}
           </View>
           {latest ? <>
-            <Text>
+            <View style={styles.figure}>
               <Text variant="numberMedium">{kg(latest.kg)}</Text>
-              <Text variant="caption" tone="secondary"> {latest.date === end ? 'kg hoy' : `kg el ${shortDate(latest.date)}`}</Text>
-            </Text>
+              <Text variant="caption" tone="secondary">{latest.date === end ? 'kg hoy' : `kg el ${shortDate(latest.date)}`}</Text>
+            </View>
             <WeightLine points={range.weights} />
           </> : <Text tone="secondary">Sin pesos en este período.</Text>}
         </TouchableOpacity>
@@ -124,15 +124,23 @@ function CalorieChart({ buckets, period, goal, today, onOpen }: { buckets: Bucke
       </View>
       {buckets.map(bucket => {
         const current = period === 7 && bucket.start === today;
-        const h = bucket.average === null ? 4 : Math.max(4, Math.min(CHART, Math.round(bucket.average / goal * SCALE)));
-        return <TouchableOpacity key={bucket.start} accessibilityRole="button" accessibilityLabel={describe(bucket)} accessibilityHint={bucket.latestRecorded ? 'Abre ese día en el diario' : undefined}
-          disabled={!bucket.latestRecorded} onPress={() => bucket.latestRecorded && onOpen(bucket.latestRecorded)} hitSlop={{ left: 4, right: 4 }} style={styles.barSlot}>
+        const ratio = goal > 0 && bucket.average !== null ? bucket.average / goal : 0;
+        const h = bucket.average === null ? 4 : Math.max(4, Math.min(CHART, Math.round(ratio * SCALE)));
+        // A single day opens even without records (to log it); a multi-day bucket opens its latest recorded day.
+        const target = period === 7 ? bucket.start : bucket.latestRecorded;
+        return <TouchableOpacity key={bucket.start} accessibilityRole="button" accessibilityLabel={describe(bucket)} accessibilityHint={target ? 'Abre ese día en el diario' : undefined}
+          disabled={!target} onPress={() => target && onOpen(target)} hitSlop={{ left: 4, right: 4 }} style={styles.barSlot}>
           <View style={[styles.bar, { height: h, backgroundColor: bucket.average === null ? theme.colors.barEmpty : current ? theme.colors.primary : theme.colors.bar }]} />
         </TouchableOpacity>;
       })}
     </View>
+    {/* Labels are centred under their bar but may be wider than it (12 bars on a narrow phone). */}
     <View style={styles.axis} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-      {labels.map((label, i) => <Text key={i} variant="label" tone="secondary" style={styles.axisLabel}>{label}</Text>)}
+      {width ? labels.map((label, i) => {
+        const slot = (width - 10 * (labels.length - 1)) / labels.length;
+        return label ? <Text key={i} variant="label" tone="secondary" numberOfLines={1}
+          style={[styles.axisLabel, { left: i * (slot + 10) + slot / 2 - 20 }]}>{label}</Text> : null;
+      }) : null}
     </View>
   </View>;
 }
@@ -172,8 +180,9 @@ const useStyles = makeStyles((t) => ({
   dash: { width: 5, height: 2 },
   barSlot: { flex: 1, height: '100%', justifyContent: 'flex-end' },
   bar: { borderTopLeftRadius: 6, borderTopRightRadius: 6, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
-  axis: { flexDirection: 'row', gap: 10, marginTop: t.space.md },
-  axisLabel: { flex: 1, textAlign: 'center', fontFamily: font.regular },
+  axis: { height: 16, marginTop: t.space.md },
+  axisLabel: { position: 'absolute', top: 0, width: 40, textAlign: 'center', fontFamily: font.regular },
+  figure: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
   macroRow: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
   macroName: { width: 104, fontSize: 14 },
   macroValue: { width: 84, textAlign: 'right' },

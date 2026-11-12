@@ -1,4 +1,4 @@
-import { dateIdToEpochDay, epochDayToDateId } from '@/lib/dates';
+import { dateIdToEpochDay, epochDayToDateId } from './dates';
 
 /* ============================================================
    Agregados del Resumen.

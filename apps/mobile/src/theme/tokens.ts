@@ -116,7 +116,7 @@ export const type: Record<TypeVariant, TextStyle> = {
   caption: { fontFamily: font.regular, fontSize: 13, lineHeight: 18 },
   number: { fontFamily: font.semibold, fontSize: 15, lineHeight: 20, fontVariant: tabular },
   numberLarge: { fontFamily: font.hero, fontSize: 40, lineHeight: 40, letterSpacing: -0.8, fontVariant: tabular },
-  numberMedium: { fontFamily: font.title, fontSize: 32, lineHeight: 43, letterSpacing: -0.64, fontVariant: tabular },
+  numberMedium: { fontFamily: font.title, fontSize: 32, lineHeight: 44, letterSpacing: -0.64, fontVariant: tabular },
   /** Hora de un grupo de comidas y numero del dia */
   hour: { fontFamily: font.displaySmall, fontSize: 16, lineHeight: 20, fontVariant: tabular },
 };
