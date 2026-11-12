@@ -6,28 +6,25 @@ import { snapToHour } from '@/lib/hours';
    Diario agrupado por hora.
 
    Solo aparecen las horas con registros, como en el rediseño: cada
-   hora es una cabecera (hora, total, +) y una tarjeta de lista. La
-   tarjeta se dibuja fila por fila para que la lista siga reciclando
-   celdas: cada fila sabe si abre o cierra su tarjeta.
+   hora es una cabecera (hora, total, +) y una tarjeta de lista. Cada
+   grupo es una celda de la lista: la tarjeta es una sola vista con un
+   borde uniforme, sin costuras entre filas en Android.
    ============================================================ */
 
-export type MealGroupRow =
-  | { kind: 'header'; key: string; hour: string; ids: string[]; calories: number }
-  | { kind: 'food'; key: string; hour: string; food: LoggedFoodItem; first: boolean; last: boolean };
+export type MealGroup = { key: string; hour: string; ids: string[]; calories: number; foods: LoggedFoodItem[] };
 
-export function buildMealGroupRows(foods: LoggedFoodItem[]): MealGroupRow[] {
+const timeOf = (food: LoggedFoodItem) => food.time || '12:00';
+
+export function buildMealGroups(foods: LoggedFoodItem[]): MealGroup[] {
   const byHour = new Map<string, LoggedFoodItem[]>();
   for (const food of foods) {
-    const hour = snapToHour(food.time || '12:00');
+    const hour = snapToHour(timeOf(food));
     const group = byHour.get(hour);
     if (group) group.push(food);
     else byHour.set(hour, [food]);
   }
-  const rows: MealGroupRow[] = [];
-  for (const hour of [...byHour.keys()].sort()) {
-    const group = [...byHour.get(hour)!].sort((a, b) => a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
-    rows.push({ kind: 'header', key: `h:${hour}`, hour, ids: group.map(food => food.id), calories: sumNutrition(group).calories });
-    group.forEach((food, index) => rows.push({ kind: 'food', key: `f:${food.id}`, hour, food, first: index === 0, last: index === group.length - 1 }));
-  }
-  return rows;
+  return [...byHour.keys()].sort().map(hour => {
+    const group = [...byHour.get(hour)!].sort((a, b) => timeOf(a).localeCompare(timeOf(b)) || a.id.localeCompare(b.id));
+    return { key: `h:${hour}`, hour, ids: group.map(food => food.id), calories: sumNutrition(group).calories, foods: group };
+  });
 }
