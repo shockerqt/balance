@@ -58,7 +58,7 @@ function FoodEntrySession() {
       time: typeof params.time === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(params.time) ? params.time : `${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}`,
     };
   });
-  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: theme.gradients?.header, actionGradient: theme.gradients?.action },
+  const data = useMemo(() => JSON.stringify({ session, draftId: documentId, ...initial, colors: { ...interfaceColors, ...theme.colors, scheme: theme.scheme, headerGradient: [theme.colors.background, theme.colors.background], actionGradient: [theme.colors.primary, theme.colors.primary] },
     templates: library.templateDocuments.filter(t => !t._deleted), ready: library.isLibraryReady, nutrientFields,
   }), [session, documentId, initial, theme, library.templateDocuments, library.isLibraryReady]);
   return <Screen edges={['top', 'bottom']} style={{ backgroundColor: theme.colors.background ?? interfaceColors.background }}><BalanceFoodEntryView style={{ flex: 1 }} data={data} active={active} status={JSON.stringify({ ...status, receipt: `${session}:${live.current.sequence}` })}

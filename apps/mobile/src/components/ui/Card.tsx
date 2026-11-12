@@ -3,13 +3,14 @@ import { View, ViewProps } from 'react-native';
 import { useTheme } from '@/theme';
 import { Radius, Space } from '@/theme/tokens';
 
-/* La tarjeta que cada pantalla redibujaba con valores levemente
-   distintos. `raised` es la caja dentro de una tarjeta. */
+/* Tarjeta: superficie con borde fino y radio 20. `raised` es la caja
+   suave (pista) dentro de una tarjeta. */
 
 export interface CardProps extends ViewProps {
   raised?: boolean;
   padding?: Space | 'none';
   radius?: Radius;
+  /** El borde es parte del diseño; se puede quitar en cajas internas. */
   bordered?: boolean;
 }
 
@@ -17,7 +18,7 @@ export const Card: React.FC<CardProps> = ({
   raised = false,
   padding = 'xl',
   radius = 'xl',
-  bordered = false,
+  bordered = !raised,
   style,
   ...rest
 }) => {

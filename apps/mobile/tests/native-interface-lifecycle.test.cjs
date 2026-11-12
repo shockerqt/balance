@@ -90,7 +90,7 @@ test('retained native payload preserves work while blurred and refreshes the com
     await renderer.act(async () => { view = renderer.create(React.createElement(Screen)); });
     const initial = props(view).data;
     assert.equal(JSON.parse(initial).colors.scheme, 'dark');
-    assert.deepEqual(JSON.parse(initial).colors.actionGradient, theme.gradients.action);
+    assert.deepEqual(JSON.parse(initial).colors.actionGradient, [theme.colors.primary, theme.colors.primary]);
     assert.deepEqual(Object.keys(JSON.parse(initial).days).sort(), [archivedDate, date]);
     await renderer.act(async () => blur());
     theme = { colors: { background: '#eff7f7', primary: '#146477' }, scheme: 'light', gradients: { header: ['#cce8e4', '#d8e8f2'], action: ['#165f68', '#3b6274'] } };
@@ -104,8 +104,8 @@ test('retained native payload preserves work while blurred and refreshes the com
     const refreshed = JSON.parse(props(view).data);
     assert.equal(refreshed.colors.scheme, 'light');
     assert.equal(refreshed.colors.background, '#eff7f7');
-    assert.deepEqual(refreshed.colors.headerGradient, theme.gradients.header);
-    assert.deepEqual(refreshed.colors.actionGradient, theme.gradients.action);
+    assert.deepEqual(refreshed.colors.headerGradient, [theme.colors.background, theme.colors.background]);
+    assert.deepEqual(refreshed.colors.actionGradient, [theme.colors.primary, theme.colors.primary]);
     assert.deepEqual(Object.keys(refreshed.days).sort(), [archivedDate, incomingDate, date]);
     assert.equal(refreshed.days[archivedDate].totals.calories, 50, 'distant history is not cropped or lost');
     assert.equal(refreshed.days[incomingDate].foods[0].id, 'incoming', 'history received while blurred appears on focus');

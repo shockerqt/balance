@@ -9,8 +9,7 @@ import { FoodLibraryProvider } from '@/hooks/use-food-library-store';
 import { AuthProvider } from '@/hooks/use-auth';
 import { PreferencesProvider } from '@/hooks/use-preferences-store';
 import { WeightProvider } from '@/hooks/use-weight-store';
-import { ThemeProvider, useTheme } from '@/theme';
-import { gradientBackground } from '@/theme/gradient';
+import { ThemeProvider, font, useTheme } from '@/theme';
 
 /** Los sheets comparten configuracion salvo la altura. */
 const sheet = (detents: number[]) =>
@@ -27,7 +26,7 @@ function Navigation() {
   return (
     <NavigationThemeProvider value={theme.scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerTitleStyle: { fontFamily: 'Outfit', fontSize: 21, fontWeight: '500' }, headerBackground: () => <View style={[{ flex: 1 }, gradientBackground(theme.gradients.header)]} /> }}>
+      <Stack screenOptions={{ headerShown: false, headerTintColor: theme.colors.text, headerTitleStyle: { fontFamily: font.titleSheet, fontSize: 22 }, headerShadowVisible: false, headerBackground: () => <View style={{ flex: 1, backgroundColor: theme.colors.background }} /> }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="auth-callback" />
@@ -48,7 +47,7 @@ function Navigation() {
             headerShown: true,
             title: 'Configuración',
             headerBackTitle: 'Atrás',
-            headerStyle: { backgroundColor: theme.colors.surface },
+            headerStyle: { backgroundColor: theme.colors.background },
             headerTintColor: theme.colors.text,
             contentStyle: { backgroundColor: theme.colors.background },
           }}
@@ -59,7 +58,7 @@ function Navigation() {
             headerShown: true,
             title: 'Importar MacroFactor',
             headerBackTitle: 'Atrás',
-            headerStyle: { backgroundColor: theme.colors.surface },
+            headerStyle: { backgroundColor: theme.colors.background },
             headerTintColor: theme.colors.text,
             contentStyle: { backgroundColor: theme.colors.background },
           }}

@@ -25,7 +25,7 @@ export const Text: React.FC<TextProps> = ({
     primary: theme.colors.text,
     secondary: theme.colors.textSecondary,
     muted: theme.colors.textMuted,
-    accent: theme.colors.primary,
+    accent: theme.colors.link,
     danger: theme.colors.danger,
     onPrimary: theme.colors.onPrimary,
     inherit: undefined,

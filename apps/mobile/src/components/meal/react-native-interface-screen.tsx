@@ -8,8 +8,7 @@ import { useWeightStore } from '@/hooks/use-weight-store';
 import { useTodayId } from '@/hooks/use-today-id';
 import { logsDateStore, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { currentTimeString, displayDateFor, todayId } from '@/lib/dates';
-import { useTheme } from '@/theme';
-import { gradientBackground } from '@/theme/gradient';
+import { font, useTheme } from '@/theme';
 import { WeightTrendCard } from '@/components/weight/weight-trend-card';
 import { CalendarMonth } from './calendar-month';
 import { ReactNativeDiary } from './react-native-diary';
@@ -23,8 +22,8 @@ export default function ReactNativeInterfaceScreen() {
 
 const Diary = React.memo(ReactNativeDiary);
 const destinations = [
-  { title: 'Alimentos', icon: 'notebook-pen' }, { title: 'Mediciones', icon: 'ruler' },
-  { title: 'Resumen', icon: 'chart-no-axes-combined' }, { title: 'Perfil', icon: 'user-round' },
+  { title: 'Diario', icon: 'receipt-text' }, { title: 'Mediciones', icon: 'trending-up' },
+  { title: 'Resumen', icon: 'chart-no-axes-column' }, { title: 'Perfil', icon: 'user-round' },
 ] as const;
 
 function InterfaceSession() {
@@ -58,18 +57,18 @@ function InterfaceSession() {
       {destination === 0 ? <Diary today={today} /> : destination === 1 ? <Measurements date={measurementDate} today={today} onDate={setMeasurementDate} /> : destination === 2 ?
         <ReactNativeSummary onOpen={(selected, body) => { logsDateStore.set(selected); setMeasurementDate(selected); setDestination(body ? 1 : 0); }} /> : <Profile />}
     </View>
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 10, backgroundColor: theme.colors.surface }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 8, paddingHorizontal: 10, paddingBottom: 14, backgroundColor: theme.colors.surface,
+      borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.border }}>
       {[0, 1, -1, 2, 3].map(index => index === -1 ?
         <TouchableOpacity key="register" accessibilityRole="button" accessibilityLabel="Registrar alimento o peso" onPress={register}
-          style={[{ width: 56, height: 56, marginHorizontal: 6, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.primary }, gradientBackground(theme.gradients.action)]}>
-          <Icon name="plus" size={26} tone="onPrimary" />
+          style={{ width: 60, height: 52, marginHorizontal: 6, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.primary }}>
+          <Icon name="plus" size={24} tone="onPrimary" />
         </TouchableOpacity> :
         <TouchableOpacity key={index} accessibilityRole="tab" accessibilityLabel={destinations[index].title} accessibilityState={{ selected: destination === index }} onPress={() => setDestination(index)}
-          style={{ flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <View style={{ paddingHorizontal: 16, paddingVertical: 5, borderRadius: 16, backgroundColor: destination === index ? theme.colors.surfaceRaised : 'transparent' }}>
-            <Icon name={destinations[index].icon} size={20} tone={destination === index ? 'accent' : 'secondary'} />
-          </View>
-          <Text variant="caption" tone={destination === index ? 'primary' : 'secondary'} style={{ fontSize: 10 }}>{destinations[index].title}</Text>
+          style={{ flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+          <Icon name={destinations[index].icon} size={22} tone={destination === index ? 'primary' : 'secondary'} />
+          <Text variant="label" tone={destination === index ? 'primary' : 'secondary'}
+            style={{ fontFamily: destination === index ? font.semibold : font.medium }}>{destinations[index].title}</Text>
         </TouchableOpacity>)}
     </View>
   </Screen>;

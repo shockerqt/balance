@@ -3,58 +3,66 @@ import type { TextStyle } from 'react-native';
 /* ============================================================
    Contrato del tema.
 
-   Una paleta es cualquier objeto que cumpla `Palette`. Los
-   componentes leen de aqui y nunca declaran un color, un tamaño de
-   fuente ni un espaciado literal: por eso un restyle se hace
-   editando este archivo y `palettes.ts`, no las pantallas.
+   Los componentes leen de aqui y nunca declaran un color, un tamaño de
+   fuente ni un espaciado literal: un restyle se hace editando este
+   archivo y `palettes.ts`, no las pantallas.
+
+   Diseño: rediseño limpio de 2026-11-12 (sandbox
+   /m/balance-clean-redesign). Ver docs/design/balance-redesign.md.
    ============================================================ */
 
-/** Colores. Cada paleta debe llenar todas las ranuras. */
+/** Colores. Cada esquema debe llenar todas las ranuras. */
 export interface PaletteColors {
-  /** Fondo de la pantalla */
+  /** Fondo de la pantalla (ground) */
   background: string;
+  /** Borde de controles (line-strong) */
   outline: string;
   secondary: string;
   onSecondary: string;
   amber: string;
-  /** Superficie elevada: tarjetas, cabeceras */
+  /** Tarjetas, barras, campos */
   surface: string;
-  /** Superficie por encima de `surface`: cajas dentro de tarjetas */
+  /** Pista y relleno suave dentro de una superficie (track) */
   surfaceRaised: string;
-  /** Borde de superficies y pistas de barras de progreso */
+  /** Borde de tarjetas (line) */
   border: string;
 
-  /** Color de accion y de marca */
+  /** Accion principal: tinta */
   primary: string;
-  /** Estado presionado de `primary` */
   primaryPressed: string;
-  /** Texto sobre `primary` */
+  /** Texto e iconos sobre `primary` */
   onPrimary: string;
 
-  /** Texto de primer nivel */
   text: string;
-  /** Texto de apoyo */
   textSecondary: string;
-  /** Texto terciario: etiquetas, unidades */
   textMuted: string;
 
-  /** Velo tras modales y hojas */
   scrim: string;
-  /** Color de sombra proyectada */
   shadow: string;
 
   /** Estados. Van siempre acompañados de texto o icono, nunca color solo. */
   danger: string;
   success: string;
 
-  /**
-   * Un color por macro. Antes estaban repartidos entre tokens y
-   * literales sueltos, lo que hacia imposible cambiarlos de una vez.
-   */
   macroProtein: string;
   macroCarbs: string;
   macroFat: string;
   macroFiber: string;
+
+  /** Borde de controles y botones de contorno */
+  lineStrong: string;
+  /** Pistas de progreso, divisores de fila, dia con registros */
+  track: string;
+  /** Enlaces */
+  link: string;
+  /** Anillo de foco */
+  focus: string;
+  /** Barras de dias pasados en graficos */
+  bar: string;
+  /** Dias sin registro en graficos y en la semana */
+  barEmpty: string;
+  /** Linea punteada de meta */
+  goal: string;
 }
 
 /** Variantes tipograficas. Reemplazan a los fontSize/fontWeight sueltos. */
@@ -67,24 +75,53 @@ export type TypeVariant =
   | 'label'
   | 'caption'
   | 'number'
-  | 'numberLarge';
+  | 'numberLarge'
+  | 'numberMedium'
+  | 'hour';
+
+/**
+ * Familias registradas en ThemeProvider. Cada archivo es un solo peso
+ * (las de Bricolage ademas fijan el tamaño optico), asi que ningun
+ * estilo con estas familias debe declarar `fontWeight`: Android
+ * sintetizaria una negrita sobre una fuente que ya lo es.
+ */
+export const font = {
+  regular: 'Inter',
+  medium: 'InterMedium',
+  semibold: 'InterSemiBold',
+  /** Bricolage Grotesque SemiBold, tamaño optico 16 (horas, dias) */
+  displaySmall: 'BricolageSemiBold16',
+  /** Bricolage Grotesque Bold, tamaño optico 22 (titulo de hoja) */
+  titleSheet: 'BricolageBold22',
+  /** Bricolage Grotesque Bold, tamaño optico 30 (titulos, cifras 32) */
+  title: 'BricolageBold30',
+  /** Bricolage Grotesque Bold, tamaño optico 40 (cifra principal) */
+  hero: 'BricolageBold40',
+} as const;
+
+const tabular: TextStyle['fontVariant'] = ['tabular-nums'];
 
 export const type: Record<TypeVariant, TextStyle> = {
-  display: { fontSize: 28, fontWeight: '500', letterSpacing: -0.4 },
-  title: { fontSize: 18, fontWeight: '500', letterSpacing: -0.2 },
-  heading: { fontSize: 15, fontWeight: '500' },
-  body: { fontSize: 13, fontWeight: '400' },
-  bodyStrong: { fontSize: 14, fontWeight: '500' },
-  /** Etiquetas en caja alta: el renglon de cabecera del libro. */
-  label: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
-  caption: { fontSize: 11, fontWeight: '500' },
-  /** Toda cifra va tabular: en un libro las columnas deben alinearse. */
-  number: { fontSize: 15, fontWeight: '500', fontVariant: ['tabular-nums'] },
-  numberLarge: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  /** Titulo de pantalla: "Hoy", "Resumen" */
+  display: { fontFamily: font.title, fontSize: 30, lineHeight: 32, letterSpacing: -0.6 },
+  /** Titulo de hoja: "Agregar" */
+  title: { fontFamily: font.titleSheet, fontSize: 22, lineHeight: 24 },
+  /** Titulo de tarjeta y etiqueta de boton */
+  heading: { fontFamily: font.semibold, fontSize: 15, lineHeight: 20 },
+  body: { fontFamily: font.regular, fontSize: 15, lineHeight: 20 },
+  bodyStrong: { fontFamily: font.medium, fontSize: 15, lineHeight: 20 },
+  /** Lo mas chico que se usa: nombre de macro, letra del dia */
+  label: { fontFamily: font.medium, fontSize: 12, lineHeight: 16 },
+  /** Texto de apoyo */
+  caption: { fontFamily: font.regular, fontSize: 13, lineHeight: 18 },
+  number: { fontFamily: font.semibold, fontSize: 15, lineHeight: 20, fontVariant: tabular },
+  numberLarge: { fontFamily: font.hero, fontSize: 40, lineHeight: 40, letterSpacing: -0.8, fontVariant: tabular },
+  numberMedium: { fontFamily: font.title, fontSize: 32, lineHeight: 36, letterSpacing: -0.64, fontVariant: tabular },
+  /** Hora de un grupo de comidas y numero del dia */
+  hour: { fontFamily: font.displaySmall, fontSize: 16, lineHeight: 20, fontVariant: tabular },
 };
-for (const [role, style] of Object.entries(type)) style.fontFamily = ['display', 'title', 'heading', 'numberLarge'].includes(role) ? 'Outfit' : ['bodyStrong', 'number'].includes(role) ? 'InterMedium' : 'Inter';
 
-/** Escala de espaciado. Multiplos de 4. */
+/** Escala de espaciado. Multiplos de 2. */
 export const space = {
   xs: 4,
   sm: 8,
@@ -95,25 +132,23 @@ export const space = {
   xxxl: 32,
 } as const;
 
-/** Radios de esquina. */
+/** Radios: tarjetas 20, listas y campos 16, controles 14, chips 999. */
 export const radius = {
-  sm: 8,
-  md: 12,
+  sm: 12,
+  md: 14,
   lg: 16,
-  xl: 24,
+  xl: 20,
   pill: 999,
 } as const;
 
-/**
- * Grosor de reglas. En el lenguaje del libro contable el peso del
- * filete codifica la jerarquia: la regla gruesa abre el panel, la
- * media separa secciones y el pelo separa asientos.
- */
 export const border = {
   hairline: 1,
   rule: 2,
   ruleHeavy: 3,
 } as const;
+
+/** Area tactil minima. */
+export const TOUCH = 44;
 
 export type Space = keyof typeof space;
 export type Radius = keyof typeof radius;
@@ -125,7 +160,6 @@ export interface Theme {
   /** `dark` alimenta la StatusBar y los temas de expo-router */
   scheme: 'light' | 'dark';
   colors: PaletteColors;
-  gradients: { header: string[]; action: string[] };
   type: typeof type;
   space: typeof space;
   radius: typeof radius;
