@@ -32,7 +32,6 @@ export default function LibraryScreen() {
           <Icon name="plus" size={22} tone="onPrimary" />
         </TouchableOpacity>
       ) }} />
-      <SyncStatusBanner />
 
       <View style={styles.controls}>
         {syncNotice ? (
@@ -90,6 +89,7 @@ export default function LibraryScreen() {
           onCreateFood={() => openFood()}
         />
       </View>
+      <SyncStatusBanner />
     </Screen>
   );
 }
