@@ -62,7 +62,7 @@
     "test:nutrition": "node --experimental-strip-types --test tests/nutrition-precision.test.mjs",
     "test:weight": "node --experimental-strip-types --test tests/weight-state.test.mjs",
     "test:feed": "tsx --test tests/meal-groups.test.mjs tests/hour-rail.test.mjs tests/food-selection.test.mjs tests/prepared-day-window.test.mjs tests/day-pager.test.mjs tests/meal-day-subscriptions.test.mjs tests/interactive-day-window.test.mjs tests/meal-day-provider-lifecycle.test.cjs tests/react-native-spike-gate.test.cjs tests/native-day-window.test.mjs tests/native-day-event-bridge.test.cjs tests/update-information.test.cjs tests/compiled-diary-revision.test.cjs tests/date-strip-progress.test.cjs",
-    "test:native-daily": "tsx --test tests/food-recents.test.mjs tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs tests/native-food-entry-lifecycle.test.cjs tests/native-interface.test.mjs tests/native-interface-lifecycle.test.cjs tests/native-copy-selection.test.mjs tests/native-copy-host-lifecycle.test.cjs tests/react-native-interface-lifecycle.test.cjs tests/react-native-shell.test.cjs && npm run test:theme",
+    "test:native-daily": "tsx --test tests/summary-buckets.test.mjs tests/food-recents.test.mjs tests/native-daily-log.test.mjs tests/native-food-entry.test.mjs tests/native-food-entry-lifecycle.test.cjs tests/native-interface.test.mjs tests/native-interface-lifecycle.test.cjs tests/native-copy-selection.test.mjs tests/native-copy-host-lifecycle.test.cjs tests/react-native-interface-lifecycle.test.cjs tests/react-native-shell.test.cjs && npm run test:theme",
     "test:theme": "tsx --test tests/balance-theme.test.mjs tests/theme-provider-lifecycle.test.cjs"
   },
   "private": true
