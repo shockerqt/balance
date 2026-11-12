@@ -51,7 +51,6 @@ export default function LibraryScreen() {
         ) : null}
 
         <Input
-          style={{ borderColor: theme.colors.text }}
           value={query}
           onChangeText={setQuery}
           placeholder="Buscar un alimento"
