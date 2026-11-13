@@ -35,6 +35,7 @@ export {
 
 export interface UserPreferences {
   weightTrackingEnabled?: boolean;
+  diaryMacrosEnabled?: boolean;
 }
 
 export interface UserPreferencesDoc {
@@ -212,6 +213,7 @@ export function isUserPreferencesDoc(value: unknown): value is UserPreferencesDo
   if (!doc.preferences || typeof doc.preferences !== 'object' || Array.isArray(doc.preferences)) return false;
   const preferences = doc.preferences as Record<string, unknown>;
   return (
+    (preferences.diaryMacrosEnabled === undefined || typeof preferences.diaryMacrosEnabled === 'boolean') &&
     (preferences.weightTrackingEnabled === undefined || typeof preferences.weightTrackingEnabled === 'boolean') &&
     typeof doc.updatedAt === 'number' &&
     Number.isFinite(doc.updatedAt) &&

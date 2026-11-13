@@ -6,6 +6,7 @@ import { useTheme } from '@/theme';
 import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
 
 interface StickyMacroHeaderProps {
+  compact?: boolean;
   foods: LoggedFoodItem[];
   targetCalories?: number;
   targetProtein?: number;
@@ -20,6 +21,7 @@ interface StickyMacroHeaderProps {
    por macro. Tocarlo abre el detalle (fibra y micronutrientes). */
 export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   foods,
+  compact = false,
   targetCalories = 2200,
   targetProtein = 150,
   targetCarbs = 220,
@@ -38,6 +40,12 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
     { name: 'Grasa', value: totals.fat, target: targetFat, color: c.macroFat },
   ];
 
+  if (compact) return <TouchableOpacity accessibilityRole="button" onPress={onPress}
+    accessibilityLabel={`${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías. Abre el detalle nutricional`}
+    style={{ paddingHorizontal: 20, height: 30, flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.background }}>
+    <Text variant="caption">{formatCalories(totals.calories)} / {formatCalories(targetCalories)} kcal</Text>
+    <View style={{ flex: 1 }}><ProgressBar value={targetCalories > 0 ? totals.calories / targetCalories : 0} height={3} color={c.primary} /></View>
+  </TouchableOpacity>;
   return (
     <TouchableOpacity
       accessibilityRole="button"
@@ -76,7 +84,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
 });
 
 const styles = StyleSheet.create({
-  card: { marginHorizontal: 20, padding: 18, gap: 14, borderRadius: 20, borderWidth: 1 },
+  card: { marginHorizontal: 20, padding: 14, gap: 12, borderRadius: 20, borderWidth: 1 },
   kcalRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   goal: { marginTop: 4 },
   right: { alignItems: 'flex-end' },

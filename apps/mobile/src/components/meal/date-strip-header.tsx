@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, createContext, useContext } from 'react';
 import { StyleSheet, View, TouchableOpacity } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import { useWeekStripSwipe } from './use-week-strip-swipe';
 import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, buildWeekGroup, generateWeeksWindow, getMondayDateId, parseDateId, shiftDateId, todayId } from '@/lib/dates';
 
 interface DateStripHeaderProps {
+  compact?: boolean;
   pagerPosition?: SharedValue<number>;
   pagerInteraction?: SharedValue<number>;
   active?: boolean;
@@ -21,6 +22,7 @@ interface DateStripHeaderProps {
 type Day = ReturnType<typeof buildWeekGroup>['days'][number];
 type Presentation = { position: SharedValue<number>; weekOffset: SharedValue<number>; weekPhase: SharedValue<number>; selectedDay: number };
 
+const CompactContext = createContext(false);
 const WEEK_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 function dateLabel(dateId: string, today: string) {
   const date = parseDateId(dateId);
@@ -37,7 +39,7 @@ function distanceFromDay(day: number, position: number, weekOffset: number, week
   return delta % 7 === 0 ? delta / 7 - weekOffset : 2;
 }
 export function DateStripHeader(props: DateStripHeaderProps) {
-  return props.pagerPosition ? <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} /> : <HeaderContent {...props} />;
+  return <CompactContext value={props.compact ?? false}>{props.pagerPosition ? <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} /> : <HeaderContent {...props} />}</CompactContext>;
 }
 function ProgressDateStripHeader(props: DateStripHeaderProps & { pagerPosition: SharedValue<number> }) {
   const width = useSharedValue(1);
@@ -49,7 +51,7 @@ function ProgressDateStripHeader(props: DateStripHeaderProps & { pagerPosition: 
   const presentation = { position: props.pagerPosition, weekOffset: offset, weekPhase, selectedDay: dateIdToEpochDay(props.selectedDateId) };
   return <HeaderContent {...props} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />;
 }
-function HeaderContent({ selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
+function HeaderContent({ compact = false, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
   presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
 }) {
   const theme = useTheme();
@@ -66,7 +68,7 @@ function HeaderContent({ selectedDateId, onSelectDate, onShiftDate, presentation
   const row = <View style={styles.daysRow}>{week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today}
     selected={item.dateId === selectedDateId} onSelectDate={onSelectDate} />)}</View>;
   return <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-    <View style={styles.topHeaderRow}>
+    <View style={[styles.topHeaderRow, compact && { height: 36, paddingTop: 0, paddingBottom: 0 }]}>
       {/* Swiping is the visual way to change day; assistive tech gets the same commands as actions. */}
       <View accessible accessibilityRole="adjustable" accessibilityLabel={`${label.title}, ${label.subtitle}`}
         accessibilityHint="Desliza hacia arriba o abajo para cambiar de día"
@@ -77,16 +79,16 @@ function HeaderContent({ selectedDateId, onSelectDate, onShiftDate, presentation
           if (action === 'increment') onShiftDate(1);
           else if (action === 'decrement') onShiftDate(-1);
           else if (action === 'activate' && selectedDateId !== today) onSelectDate(today);
-        }} style={styles.dateTitleBox}>
-        {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
+        }} style={[styles.dateTitleBox, compact && { height: 24 }]}>
+        {compact ? <Text numberOfLines={1} style={{ fontSize: 17 }}>{label.title} · {parseDateId(selectedDateId).getUTCDate()} {MONTH_NAMES[parseDateId(selectedDateId).getUTCMonth()].slice(0, 3)}</Text> : presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
       </View>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Elegir fecha"
-        style={[styles.calendarBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => router.push('/date-picker')}>
+        style={[styles.calendarBtn, compact && { height: 28, width: 36 }, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => router.push('/date-picker')}>
         <Icon name="calendar" size={20} tone="primary" />
       </TouchableOpacity>
     </View>
     {presentation && weekGesture && width ? <GestureDetector gesture={weekGesture}>
-      <View collapsable={false} style={styles.weekViewport} onLayout={event => onWidth?.(event.nativeEvent.layout.width)}>
+      <View collapsable={false} style={[styles.weekViewport, compact && { height: 42 }]} onLayout={event => onWidth?.(event.nativeEvent.layout.width)}>
         {weeks.map((item, index) => <ProgressWeek key={item.startDateId} week={item} offset={index - 1} today={today}
           monday={dateIdToEpochDay(monday)} width={width} presentation={presentation} selectedDateId={selectedDateId} onSelectDate={onSelectDate} />)}
       </View>
@@ -129,22 +131,24 @@ function ProgressWeek({ week, offset, monday, width, presentation, selectedDateI
 /** One face of a day cell: the resting look or the selected (ink) look. */
 function DayFace({ item, letter, logged, future, inverted }: { item: Day; letter: string; logged: boolean; future: boolean; inverted: boolean }) {
   const theme = useTheme();
+  const compact = useContext(CompactContext);
   const c = theme.colors;
   const ink = inverted ? c.onPrimary : future ? c.textSecondary : c.text;
   return <>
-    <Text style={[theme.type.label, { color: ink }]}>{letter}</Text>
+    {compact ? null : <Text style={[theme.type.label, { color: ink }]}>{letter}</Text>}
     <Text style={[styles.dayNumberText, { color: ink }]}>{item.dayNumber}</Text>
     <View style={[styles.mark, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty, opacity: inverted && !logged ? 0.35 : 1 }]} />
   </>;
 }
 function DayPill({ item, letter, today, selected, presentation, onSelectDate }: { item: Day; letter: string; today: string; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void }) {
+  const compact = useContext(CompactContext);
   const theme = useTheme();
   const logged = useMealDay(item.dateId).foods.length > 0;
   const future = item.dateId > today;
   const date = parseDateId(item.dateId);
   return <TouchableOpacity accessibilityRole="button"
     accessibilityLabel={`${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()].toLocaleLowerCase('es')}${logged ? ', con registros' : ''}`}
-    accessibilityState={{ selected }} testID={`day-${item.dateId}`} onPress={() => onSelectDate(item.dateId)} style={styles.dayTouch}>
+    accessibilityState={{ selected }} testID={`day-${item.dateId}`} onPress={() => onSelectDate(item.dateId)} style={[styles.dayTouch, compact && { height: 42 }]}>
     {presentation ? <ProgressDayPill day={dateIdToEpochDay(item.dateId)} presentation={presentation}
       rest={<DayFace item={item} letter={letter} logged={logged} future={future} inverted={false} />}
       active={<DayFace item={item} letter={letter} logged={logged} future={future} inverted />} />
@@ -169,7 +173,7 @@ const styles = StyleSheet.create({
   weekViewport: { height: 60, overflow: 'hidden' },
   weekLayer: { position: 'absolute', top: 0, left: 0, right: 0, height: 60 },
   titleLayer: { position: 'absolute', left: 0, right: 0, top: 0 },
-  topHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 16, paddingHorizontal: 20, paddingBottom: 16 },
+  topHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 4, paddingHorizontal: 20, paddingBottom: 6 },
   dateTitleBox: { flex: 1, height: 54, overflow: 'hidden', justifyContent: 'flex-start' },
   subtitleContext: { fontSize: 14, marginTop: 2 },
   calendarBtn: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },

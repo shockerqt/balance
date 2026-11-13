@@ -29,7 +29,7 @@ async function harness() {
     react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
     'react-native': { View: host('View'), Alert: { alert() {} } },
     'expo-router': {}, 'expo-router/react-navigation': { useIsFocused: () => true },
-    'react-native-reanimated': { useSharedValue: initial => React.useRef({ value: initial }).current },
+    'react-native-reanimated': { __esModule: true, default: { View: host('AnimatedView') }, useAnimatedStyle: fn => fn(), useAnimatedReaction() {}, runOnJS: fn => fn, useSharedValue: initial => React.useRef({ value: initial }).current },
     '@/components/ui': { Button: host('Button'), Card: host('Card'), Text: host('Text') },
     '@/components/weight/daily-weight-row': {}, '@/hooks/use-meal-store': {}, '@/hooks/use-preferences-store': {},
     '@/hooks/use-weight-store': {}, '@/hooks/use-food-selection': {}, '@/hooks/use-logs-date': hooks, '@/lib/dates': dates,
