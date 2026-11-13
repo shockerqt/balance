@@ -29,7 +29,7 @@ export function ReactNativeSummary({ onOpen }: { onOpen: (date: string, body: bo
   const days = useMemo(() => Object.fromEntries(Object.entries(projected).map(([date, day]) => [date, {
     recorded: day.recorded, calories: day.totals.calories, protein: day.totals.protein, carbs: day.totals.carbs, fat: day.totals.fat, weightKg: day.weightKg,
   } satisfies SummaryDay])), [projected]);
-  const targets = { ...DEFAULT_TARGETS, ...meals.dayLogs[end] };
+  const targets = { ...DEFAULT_TARGETS, ...meals.dayLogs[end], targetCalories: preferences.dailyCalorieTarget };
   const buckets = useMemo(() => summaryBuckets(days, end, period), [days, end, period]);
   const range = useMemo(() => rangeSummary(days, end, period), [days, end, period]);
   const weightOn = preferences.preferencesReady && preferences.weightTrackingEnabled;

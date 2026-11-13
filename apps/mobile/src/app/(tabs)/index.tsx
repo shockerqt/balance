@@ -29,13 +29,13 @@ export default function SummaryScreen() {
   const router = useRouter();
   const { dayLogs } = useMealStore();
   const { user, isGuest } = useAuth();
-  const { preferencesReady, weightTrackingEnabled } = usePreferencesStore();
+  const { preferencesReady, weightTrackingEnabled, dailyCalorieTarget } = usePreferencesStore();
   const { weightsByDate, syncError: weightSyncError } = useWeightStore();
 
   const todayDateId = todayId();
   const currentDayLog = useMemo(
-    () => dayLogs[todayDateId] ?? emptyDayLog(todayDateId),
-    [dayLogs, todayDateId]
+    () => ({ ...(dayLogs[todayDateId] ?? emptyDayLog(todayDateId, dailyCalorieTarget)), targetCalories: dailyCalorieTarget }),
+    [dayLogs, todayDateId, dailyCalorieTarget]
   );
 
   const totals = useMemo(() => sumDay(currentDayLog.foods), [currentDayLog.foods]);
