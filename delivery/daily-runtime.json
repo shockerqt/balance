@@ -1,7 +1,7 @@
 {
-  "build_id": "7138388f-60fb-465f-8e4c-a8614e5d3c57",
-  "source_sha": "7210b6bbcf38aaf519c7e55f155c0b3a22a703bd",
-  "runtime_version": "1.9.0",
-  "android_version_code": 12,
-  "build_fingerprint": "24437b5856164ed3b75b38920b285d0bd4a2ee13"
+  "build_id": "5ca199c6-3c88-4b13-9e1c-7ad73e2567f6",
+  "source_sha": "2721894da17b4402ca3029888173bf52b07d94ea",
+  "runtime_version": "1.11.0",
+  "android_version_code": 14,
+  "build_fingerprint": "4f61b3639c63046bdcec4645570caf7f8cc0a72c"
 }
