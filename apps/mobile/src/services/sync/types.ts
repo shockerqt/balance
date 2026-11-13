@@ -1,4 +1,8 @@
-import { isValidDailyCalorieTarget } from '../../lib/day-targets.ts';
+/** Wire and UI share the same bounded preference validation. */
+export function isValidDailyCalorieTarget(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 500 && value <= 10000;
+}
+
 export const SYNC_COLLECTIONS = ['userPreferences', 'mealTemplates', 'mealLogs', 'weightLogs'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
