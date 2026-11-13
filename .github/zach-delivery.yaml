@@ -1,0 +1,58 @@
+schema_version: 1
+post_merge_workflows:
+  - workflow: deliver-clients.yml
+    artifacts:
+      - name: 'daily-delivery-${sha}-${attempt}'
+        file: daily-delivery.json
+      - name: 'dashboard-delivery-${sha}-${attempt}'
+        file: dashboard-delivery.json
+    failure_states:
+      - marker: NEW_APK_REQUIRED
+        waiting_state: Waiting New APK
+        decision_kind: new_apk_required
+        options:
+          - Retry
+          - Reject
+    health_checks:
+      - url: https://balance.shocker.cl/release.json
+        source_sha_field: source_sha
+promotions:
+  - name: balance-api
+    when_paths:
+      - 'apps/server/**'
+      - 'scripts/seed-test-user.sql'
+      - 'scripts/schema-catalog.sql'
+      - 'scripts/schema-fingerprint.sh'
+      - 'scripts/render-schema-snapshot.sh'
+      - 'scripts/generate-schema-snapshot.sh'
+      - 'scripts/verify-schema-fingerprint.sh'
+      - 'docs/database-migrations.md'
+      - 'docs/generated/database-schema.md'
+      - 'Makefile'
+      - '.sqlx/**'
+      - 'Cargo.toml'
+      - '.github/workflows/build-arm.yml'
+      - 'scripts/delivery/package-api.py'
+      - 'scripts/delivery/source_identity.py'
+      - 'scripts/delivery/test_packaging.py'
+      - 'scripts/delivery/compiled_identity.py'
+      - 'scripts/delivery/test_compiled_identity.py'
+      - 'Cross.toml'
+    build_workflow: build-arm.yml
+    artifact_name_template: 'api-${sha}'
+    digest_file: api.sha256
+    promote_workflow: promote-api.yml
+    plan_inputs:
+      build_run_id: '${build_run_id}'
+      approve_production: false
+    approve_inputs:
+      build_run_id: '${build_run_id}'
+      expected_current: '${expected_current}'
+      approve_production: true
+    plan_artifact_prefix: 'api-delivery-${run_id}-${attempt}'
+    plan_file: api-plan.json
+    delivery_file: api-delivery.json
+    current_source_authority: plan
+    health_checks:
+      - url: https://balance.shocker.cl/api/api-docs/openapi.json
+        contains: openapi
