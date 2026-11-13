@@ -15,7 +15,7 @@ export default function SettingsScreen() {
   const { preference, setPreference, ready } = useThemeControls();
   const router = useRouter();
   const { user, isGuest, isLoading, logout, accountChoicesAvailable } = useAuth();
-  const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled, dailyCalorieTarget, setDailyCalorieTarget } =
+  const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled, dailyCalorieTarget, setDailyCalorieTarget, diaryMacrosEnabled, setDiaryMacrosEnabled } =
     usePreferencesStore();
 
   const [calorieDraft, setCalorieDraft] = useState(String(dailyCalorieTarget));
@@ -72,6 +72,19 @@ export default function SettingsScreen() {
             />
           </View>
           {syncError ? <Text tone="danger" accessibilityRole="alert">{syncError}</Text> : null}
+        </View>
+
+        <View style={styles.section}>
+          <Text variant="title" accessibilityRole="header">Diario</Text>
+          <View style={styles.settingRow}>
+            <View style={styles.settingCopy}>
+              <Text>Mostrar macros</Text>
+              <Text variant="caption" tone="secondary">{diaryMacrosEnabled ? 'P · C · G' : 'Simple'}</Text>
+            </View>
+            <Switch accessibilityLabel="Mostrar macros en el diario" disabled={!preferencesReady}
+              value={diaryMacrosEnabled} onValueChange={setDiaryMacrosEnabled}
+              trackColor={{ false: theme.colors.outline, true: theme.colors.primary }} />
+          </View>
         </View>
 
         <View style={styles.section}>

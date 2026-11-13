@@ -87,6 +87,7 @@ for(const populated of [false,true]) test(`actual Settings persists and propagat
     await h.change('2500');await h.save();
     assert.equal(h.cache().preferences.dailyCalorieTarget,2500);assert.equal(h.cache().preferences.weightTrackingEnabled,false);
     assert.equal(h.pushes.at(-1)[0],'userPreferences');assert.equal(h.pushes.at(-1)[1].preferences.dailyCalorieTarget,2500);
+    assert.equal(h.tree.root.findAllByType('DiaryCalories').length,2);
     assert.ok(h.tree.root.findAllByType('DiaryCalories').every(n=>n.props.targetCalories===2500));
     assert.ok(h.tree.root.findAllByType('Text').some(n=>[n.props.children].flat().join('').includes('meta 2.500')));
     assert.ok(h.tree.root.findAllByType('ProgressBar').some(n=>n.props.value===(populated?100/2500:0)));
@@ -104,4 +105,16 @@ test('saved target rehydrates through canonical preferences storage',async()=>{
   const second=await harness(false,saved);try{
     assert.equal(second.prefs().dailyCalorieTarget,2600);assert.equal(second.input().props.value,'2600');
   }finally{await second.close();}
+});
+
+test('macros switch and calorie target coexist without overwriting either preference',async()=>{
+  const h=await harness(true);try{
+    const toggle=()=>h.tree.root.findAllByType('Switch').find(n=>n.props.accessibilityLabel==='Mostrar macros en el diario');
+    await renderer.act(async()=>toggle().props.onValueChange(true));
+    await h.change('2700');await h.save();
+    assert.equal(h.cache().preferences.diaryMacrosEnabled,true);assert.equal(h.cache().preferences.dailyCalorieTarget,2700);
+    await renderer.act(async()=>toggle().props.onValueChange(false));
+    assert.equal(h.cache().preferences.diaryMacrosEnabled,false);assert.equal(h.cache().preferences.dailyCalorieTarget,2700);
+    assert.ok(h.tree.root.findAllByType('DiaryCalories').every(n=>n.props.targetCalories===2700));
+  }finally{await h.close();}
 });
