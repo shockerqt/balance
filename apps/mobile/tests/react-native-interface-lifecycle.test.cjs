@@ -270,3 +270,52 @@ test('RN selection expands in matching order and hidden drafts retain quantity, 
     assert.equal(h.backs.length,1);
   } finally { await h.close(); }
 });
+
+// Instrument only the test-loaded module to reach its real private renderer.
+// No helper is exported by production code and no geometry is duplicated here.
+async function weightLineHarness(points) {
+  const filename=path.join(root,'src/components/meal/react-native-summary.tsx');
+  const m=new Module(filename,module); m.filename=filename;
+  const stubs={react:React,'react/jsx-runtime':local('react/jsx-runtime'),
+    'react-native':{View:host('View'),ScrollView:host('ScrollView'),TouchableOpacity:host('Touch')},
+    '@/components/ui':{},'@/hooks/use-meal-store':{},'@/hooks/use-weight-store':{},'@/hooks/use-preferences-store':{},
+    '@/lib/day-targets':local('./src/lib/day-targets.ts'),'@/lib/dates':dates,
+    '@/lib/nutrition':local('./src/lib/nutrition.ts'),'@/lib/summary-buckets':local('./src/lib/summary-buckets.ts'),
+    '@/theme':{font:{},makeStyles:()=>()=>({}),useTheme:()=>({colors:{macroProtein:'#2F5BEA'}})},'./native/interface-contract':{}};
+  m.require=name=>{if(name in stubs)return stubs[name];throw Error('Unexpected '+name);};
+  const code=ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  m._compile(code+'\nexports.__WeightLine=WeightLine;',filename);
+  let tree;
+  await renderer.act(async()=>{tree=renderer.create(React.createElement(m.exports.__WeightLine,{points}));});
+  await renderer.act(async()=>tree.root.findAllByType('View').find(n=>n.props.onLayout).props.onLayout({nativeEvent:{layout:{width:312}}}));
+  return {tree, async close(){await renderer.act(async()=>tree.unmount());}};
+}
+function lineSegments(tree){
+  return tree.root.findAllByType('View').filter(n=>n.props.style?.height===3).map(n=>{
+    const s=n.props.style,a=parseFloat(s.transform[0].rotate),dx=Math.cos(a)*s.width,dy=Math.sin(a)*s.width;
+    return {x1:s.left+s.width/2-dx/2,x2:s.left+s.width/2+dx/2,y1:s.top+1.5-dy/2,y2:s.top+1.5+dy/2,color:s.backgroundColor};
+  });
+}
+const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-6,`${actual} != ${expected}`);
+test('summary weight renderer spaces irregular observations by calendar days and preserves equal-weight geometry',async()=>{
+  const h=await weightLineHarness(['2026-11-01','2026-11-02','2026-11-10'].map(date=>({date,kg:70})));
+  try{
+    const [a,b]=lineSegments(h.tree);near(a.x1,4);near(a.x2,4+304/9);near(b.x1,a.x2);near(b.x2,308);
+    for(const s of [a,b]){near(s.y1,8);near(s.y2,8);assert.equal(s.color,'#2F5BEA');}
+    const dot=h.tree.root.findAllByType('View').find(n=>n.props.style?.width===10);near(dot.props.style.left,303);near(dot.props.style.top,3);
+  }finally{await h.close();}
+});
+test('summary weight renderer uses UTC calendar spacing through DST, leap day and year boundaries',async()=>{
+  for(const [dateset,fraction] of [
+    [['2026-09-05','2026-09-06','2026-09-08'],1/3],
+    [['2028-02-28','2028-02-29','2028-03-02'],1/3],
+    [['2026-12-30','2027-01-01','2027-01-05'],1/3],
+  ]){
+    const h=await weightLineHarness(dateset.map((date,i)=>({date,kg:70-i})));
+    try{const[a,b]=lineSegments(h.tree);near(a.x1,4);near(a.x2,4+304*fraction);near(b.x1,a.x2);near(b.x2,308);near(a.y1,8);near(a.y2,35);near(b.y2,62);}finally{await h.close();}
+  }
+});
+test('summary weight renderer keeps one observation at the right edge without a line',async()=>{
+  const h=await weightLineHarness([{date:'2026-11-10',kg:70}]);
+  try{assert.equal(lineSegments(h.tree).length,0);const dot=h.tree.root.findAllByType('View').find(n=>n.props.style?.width===10);near(dot.props.style.left,303);near(dot.props.style.top,3);}finally{await h.close();}
+});

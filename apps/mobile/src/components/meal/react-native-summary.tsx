@@ -5,7 +5,7 @@ import { useMealStore } from '@/hooks/use-meal-store';
 import { useWeightStore } from '@/hooks/use-weight-store';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { DEFAULT_TARGETS } from '@/lib/day-targets';
-import { DAY_NAMES, MONTH_NAMES, parseDateId, todayId } from '@/lib/dates';
+import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, parseDateId, todayId } from '@/lib/dates';
 import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 import { rangeSummary, summaryBuckets, type Bucket, type SummaryDay } from '@/lib/summary-buckets';
 import { font, makeStyles, useTheme } from '@/theme';
@@ -153,7 +153,9 @@ function WeightLine({ points }: { points: { date: string; kg: number }[] }) {
   const values = points.map(p => p.kg);
   const lo = Math.min(...values), hi = Math.max(...values);
   const span = hi - lo || 1;
-  const xy = points.map((p, i) => ({ x: 4 + (points.length > 1 ? i / (points.length - 1) : 1) * Math.max(0, width - 8), y: 8 + (hi - p.kg) / span * (LINE_H - 16) }));
+  const firstDay = points.length ? dateIdToEpochDay(points[0].date) : 0;
+  const daySpan = points.length > 1 ? Math.max(1, dateIdToEpochDay(points.at(-1)!.date) - firstDay) : 1;
+  const xy = points.map(p => ({ x: 4 + (points.length > 1 ? (dateIdToEpochDay(p.date) - firstDay) / daySpan : 1) * Math.max(0, width - 8), y: 8 + (hi - p.kg) / span * (LINE_H - 16) }));
   const color = theme.colors.macroProtein;
   return <View style={{ height: LINE_H }} onLayout={event => setWidth(event.nativeEvent.layout.width)} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
     {width ? xy.slice(1).map((b, i) => {
