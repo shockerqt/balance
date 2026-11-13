@@ -5,13 +5,14 @@ const React = local('react'), renderer = local('react-test-renderer'), ts = loca
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const host = name => props => React.createElement(name, props, props.children);
 async function harness() {
-  const focus = new Set(), foods = [], weights = [];
+  const focus = new Set(), foods = [], weights = [], ticks = [];
   const file = path.join(root, 'src/components/meal/quick-add-dock.tsx'), m = new Module(file, module); m.filename = file;
   const stubs = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
     'react-native': { PanResponder: { create: handlers => ({ panHandlers: handlers }) }, View: host('View'), TouchableOpacity: host('Touch'), useWindowDimensions: () => ({ width: 400 }) },
     'expo-router': { useFocusEffect: fn => React.useEffect(() => { const cleanup = fn(); focus.add(cleanup); return () => { cleanup(); focus.delete(cleanup); }; }, [fn]) },
     '@/components/ui': { Icon: host('Icon'), Text: host('Text') },
     '@/theme': { font: {}, useTheme: () => ({ colors: {}, border: {} }) },
+    '@/lib/hour-haptics': { tickHourChange: (previous, next) => { if (next !== null && next !== previous) ticks.push(next); } },
     '@/lib/quick-add-gesture': local('./src/lib/quick-add-gesture.ts') };
   m.require = n => { if (n in stubs) return stubs[n]; throw Error('Unexpected ' + n); };
   m._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, file);
@@ -21,7 +22,7 @@ async function harness() {
   const plus = () => tree.root.findAllByType('View').find(n => n.props.onPanResponderGrant);
   const event = (x = 144, y = 400, id = 1, touches) => ({ nativeEvent: { identifier: id, pageX: x, pageY: y, touches: touches ?? [{ identifier: id, pageX: x, pageY: y }] } });
   const send = async (name, x, y, id, touches) => renderer.act(async () => plus().props[name](event(x,y,id,touches)));
-  return { tree, plus, foods, weights,
+  return { tree, plus, foods, weights, ticks,
     grant: () => send('onPanResponderGrant'), move: (x,y,id,touches) => send('onPanResponderMove',x,y,id,touches), release: (x,y) => send('onPanResponderRelease',x,y),
     async tap() { await send('onPanResponderGrant'); await send('onPanResponderRelease'); },
     async press(label) { await renderer.act(async () => tree.root.findAllByType('Touch').find(n => n.props.accessibilityLabel === label).props.onPress()); },
@@ -35,7 +36,7 @@ async function harness() {
 test('tap morphs dock at same plus axis; menu buttons register now or weight', async () => {
   const h = await harness(); try {
     const original = h.plus().props.style;
-    await h.tap(); assert.equal(h.tree.root.findAllByType('Tab').length, 0);
+    await h.tap(); assert.equal(h.ticks.length, 0); assert.equal(h.tree.root.findAllByType('Tab').length, 0);
     assert.deepEqual(h.plus().props.style, original);
     await h.press('Ahora'); assert.deepEqual(h.foods, [undefined]);
     await h.tap(); await h.press('Peso'); assert.equal(h.weights.length, 1);
@@ -65,5 +66,21 @@ test('disabled weight, second touch and termination never dispatch weight or foo
     await h.grant(); await h.move(210,400,2,[{ identifier: 1, pageX: 210, pageY: 400 }, { identifier: 2, pageX: 210, pageY: 400 }]); await h.release(210,400);
     assert.equal(h.foods.length, 0);
     await h.grant(); await renderer.act(async () => h.plus().props.onPanResponderTerminate()); await h.release(210,400); assert.equal(h.foods.length, 0);
+  } finally { await h.close(); }
+});
+
+test('hours tick once on highlight change and delayed hour choices cannot tick or navigate after cancel', async () => {
+  const h = await harness(); try {
+    await h.grant(); await h.move(144,360); await h.measure();
+    const point = hour => { const a = (126 + (hour-5)*16)*Math.PI/180; return [144+112*Math.cos(a),144+112*Math.sin(a)+24]; };
+    const p5 = point(5), p6 = point(6);
+    await h.move(...p5); await h.move(...p5); await h.move(...p6); await h.release(...p6);
+    assert.deepEqual(h.ticks,[5,6]); assert.deepEqual(h.foods,['06:00']);
+    await h.action('chooseHour');
+    const queued = h.tree.root.findAllByType('Touch').find(n => n.props.accessibilityLabel === 'Registrar a las 23:00').props.onPress;
+    await h.press('Cancelar elección de hora'); await h.action('chooseHour');
+    await renderer.act(async () => queued());
+    assert.deepEqual(h.ticks,[5,6]); assert.deepEqual(h.foods,['06:00']);
+    await h.press('Registrar a las 23:00'); assert.deepEqual(h.ticks,[5,6,23]);
   } finally { await h.close(); }
 });

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { PanResponder, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Icon, Text } from '@/components/ui';
+import { tickHourChange } from '@/lib/hour-haptics';
 import { font, useTheme } from '@/theme';
 import { HOURS, hh, radialSelection, transitionPlusGesture, type PlusGestureState } from '@/lib/quick-add-gesture';
 
@@ -36,7 +37,12 @@ export function QuickAddDock({ children, contextKey, weightAvailable, onFood, on
     else if (outcome === 'food') live.current.onFood();
     else if (typeof outcome === 'number') live.current.onFood(hh(outcome));
   }, [cancel, changeMode]);
-  const choose = (action: 'weight' | 'food' | number) => finish(action, generation.current);
+  const renderedGeneration = generation.current;
+  const choose = (action: 'weight' | 'food' | number, expected = generation.current) => {
+    if (!focused.current || generation.current !== expected) return;
+    if (typeof action === 'number') tickHourChange(null, action);
+    finish(action, expected);
+  };
   const openHours = () => { if (focused.current) { clearTimer(); gesture.current = null; setVisual(null); changeMode('hour'); } };
   const responder = React.useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -63,6 +69,7 @@ export function QuickAddDock({ children, contextKey, weightAvailable, onFood, on
       const hour = current.phase === 'radial' && bounds.current ? radialSelection(touch.pageX, touch.pageY, bounds.current, current.hour) : undefined;
       const next = transitionPlusGesture(current, { type: 'move', x: touch.pageX, y: touch.pageY, time: Date.now(), hour });
       if (next.maxDistance > 10) clearTimer();
+      tickHourChange(current.hour, next.hour);
       gesture.current = next; setVisual(next);
       if (next.phase === 'cancelled') return cancel();
       if (next.phase === 'radial') changeMode('hour');
@@ -75,6 +82,7 @@ export function QuickAddDock({ children, contextKey, weightAvailable, onFood, on
       const { pageX, pageY } = event.nativeEvent;
       const hour = current.phase === 'radial' ? bounds.current ? radialSelection(pageX, pageY, bounds.current, current.hour) : null : undefined;
       const next = transitionPlusGesture(current, { type: 'release', x: pageX, y: pageY, time: Date.now(), hour });
+      tickHourChange(current.hour, next.hour);
       finish(next.outcome, generation.current);
     },
     onPanResponderTerminationRequest: () => true,
@@ -112,7 +120,7 @@ export function QuickAddDock({ children, contextKey, weightAvailable, onFood, on
         const radians = (126 + index * 16) * Math.PI / 180;
         const x = size / 2 + 112 * size / 288 * Math.cos(radians), y = size / 2 + 112 * size / 288 * Math.sin(radians);
         const selected = visual?.hour === hour;
-        return <TouchableOpacity key={hour} accessibilityRole="button" accessibilityLabel={`Registrar a las ${hh(hour)}`} accessibilityState={{ selected }} onPress={() => choose(hour)}
+        return <TouchableOpacity key={hour} accessibilityRole="button" accessibilityLabel={`Registrar a las ${hh(hour)}`} accessibilityState={{ selected }} onPress={() => choose(hour, renderedGeneration)}
           style={{ position: 'absolute', left: x - 18, top: y - 18, width: 36, height: 36, borderRadius: 18, backgroundColor: selected ? theme.colors.primary : theme.colors.surface, alignItems: 'center', justifyContent: 'center' }}>
           <Text tone={selected ? 'onPrimary' : 'secondary'} style={{ fontSize: 12 }}>{hour}</Text>
         </TouchableOpacity>;
@@ -127,7 +135,7 @@ export function QuickAddDock({ children, contextKey, weightAvailable, onFood, on
       </TouchableOpacity>
     </View> : null}
     <View style={{ position: 'absolute', bottom: 14, left: 10, right: 10, height: 52, flexDirection: 'row', alignItems: 'center' }}>
-      {mode === 'none' ? <>{nav.slice(0, 2)}{plus}{nav.slice(2)}</> : <>{action('Peso', () => choose('weight'), !weightAvailable)}{plus}{action('Ahora', () => choose('food'))}</>}
+      {mode === 'none' ? <>{nav.slice(0, 2)}{plus}{nav.slice(2)}</> : <>{action('Peso', () => choose('weight', renderedGeneration), !weightAvailable)}{plus}{action('Ahora', () => choose('food', renderedGeneration))}</>}
     </View>
   </View>
   </>;
