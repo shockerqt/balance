@@ -9,7 +9,7 @@ function load(reduced = false) {
   const m = new Module(file, module); m.filename = file;
   const stubs = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
     'react-native': { TouchableOpacity: host('Touch'), View: host('View') },
-    '@legendapp/list/reanimated': { AnimatedLegendList: props => React.createElement('List', props, props.data.map(item => React.createElement(React.Fragment, { key: item.key }, props.renderItem({ item })))) },
+    '@legendapp/list/reanimated': { AnimatedLegendList: props => React.createElement('List', props, props.data.map((item, index) => React.createElement(React.Fragment, { key: item.key }, props.renderItem({ item, index })))) },
     'react-native-reanimated': { useReducedMotion: () => reduced },
     '@/lib/meal-groups': local('./src/lib/meal-groups.ts'),
     '@/lib/nutrition': local('./src/lib/nutrition.ts'),
@@ -71,8 +71,10 @@ test('macro mode shows monochrome totals for group and row, exposes TalkBack lab
     await renderer.act(async () => tree.update(React.createElement(Feed, { ...props, showMacros: true })));
     const labels = tree.root.findAllByType('Touch').map(n => n.props.accessibilityLabel);
     assert.equal(labels.filter(v => v.includes('P 5 · C 10 · G 2')).length, 2);
-    const macroTexts = tree.root.findAllByType('Text').filter(n => [n.props.children].flat().join('').includes('P 5 · C 10 · G 2'));
-    assert.equal(macroTexts.length, 2); assert.ok(macroTexts.every(n => n.props.tone === 'secondary' && !n.props.style?.color));
+    const macroTexts = tree.root.findAllByType('Text').filter(n => { const text = [n.props.children].flat().join(''); return text.includes('P 5 · C 10 · G 2') || text.includes('100 g · 5P · 10C · 2G'); });
+    assert.equal(macroTexts.length, 2);
+    const row = tree.root.findAllByType('Touch').find(n => n.props.accessibilityLabel.startsWith('Avena'));
+    assert.equal(row.findAllByType('Text').length, 3, 'name, one combined detail, and calories'); assert.ok(macroTexts.every(n => n.props.tone === 'secondary' && !n.props.style?.color));
     await renderer.act(async () => tree.root.findAllByType('Touch').find(n => n.props.accessibilityLabel.startsWith('Avena')).props.onPress());
     assert.equal(selected.id, 'a');
   } finally { if (tree) await renderer.act(async () => tree.unmount()); }

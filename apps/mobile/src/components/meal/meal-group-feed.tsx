@@ -28,25 +28,25 @@ const FoodRow = React.memo(function FoodRow({ food, first, actions, selected, sh
     </View> : null}
     <View style={styles.main}>
       <Text variant="bodyStrong" numberOfLines={1}>{food.name}</Text>
-      <Text variant="caption" tone="secondary" numberOfLines={1}>{food.portion}</Text>
-      {showMacros ? <Text variant="caption" tone="secondary">{macroLabel([food])}</Text> : null}
+      <Text variant="caption" tone="secondary" numberOfLines={1}>{food.portion}{showMacros ? ` · ${formatMacroGrams(food.protein)}P · ${formatMacroGrams(food.carbs)}C · ${formatMacroGrams(food.fat)}G` : ''}</Text>
     </View>
     <Text variant="number">{calories}</Text>
   </TouchableOpacity>;
 });
 
 /** One hour: header (hour, total, +) and its list card as a single cell. */
-const Group = React.memo(function Group({ group, actions, selectedFoodIds, showMacros }: { group: MealGroup; actions: FeedActions; selectedFoodIds?: ReadonlySet<string>; showMacros: boolean }) {
+const Group = React.memo(function Group({ group, first, actions, selectedFoodIds, showMacros }: { group: MealGroup; first: boolean; actions: FeedActions; selectedFoodIds?: ReadonlySet<string>; showMacros: boolean }) {
   const styles = useStyles();
   return <View>
-    <View style={styles.header}>
+    <View style={[styles.header, first && { paddingTop: 0 }]}>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Comidas de las ${group.hour}, ${formatCalories(group.calories)} kilocalorías${showMacros ? `, ${macroLabel(group.foods)}` : ''}`}
         accessibilityHint={actions.isSelectionMode ? 'Selecciona o quita todas las comidas de esta hora' : 'Mantén presionado para seleccionar esta hora'}
         disabled={!actions.isSelectionMode && !actions.onLongPressGroup} delayPressIn={0} style={styles.headerLabel}
         onPress={() => actions.isSelectionMode && actions.onToggleSelectGroup?.(group.ids)}
         onLongPress={() => actions.onLongPressGroup?.(group.ids)}>
         <Text variant="hour">{group.hour}</Text>
-        <Text variant="caption" tone="secondary">{formatCalories(group.calories)} kcal{showMacros ? ` · ${macroLabel(group.foods)}` : ''}</Text>
+        <Text variant="caption" tone="secondary">{formatCalories(group.calories)} kcal</Text>
+        {showMacros ? <Text variant="label" tone="secondary" numberOfLines={1} style={{ flexShrink: 1 }}>{macroLabel(group.foods)}</Text> : null}
       </TouchableOpacity>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Agregar a las ${group.hour}`} disabled={actions.isSelectionMode}
         delayPressIn={0} style={styles.add} onPress={() => actions.onAddAtHour(group.hour)}>
@@ -101,8 +101,8 @@ export const MealGroupFeed = React.memo(function MealGroupFeed({ foods, ref, emp
     onToggleSelectGroup: ids => { if (ids.every(id => live.current.foodIds.has(id))) live.current.actions.onToggleSelectGroup?.(ids); },
   }), []);
   const groupActions = useMemo(() => ({ ...handlers, isSelectionMode: actions.isSelectionMode }), [handlers, actions.isSelectionMode]);
-  const renderItem = useCallback(({ item }: { item: MealGroup }) =>
-    <Group group={item} actions={groupActions} selectedFoodIds={actions.selectedFoodIds} showMacros={showMacros} />, [groupActions, actions.selectedFoodIds, showMacros]);
+  const renderItem = useCallback(({ item, index }: { item: MealGroup; index: number }) =>
+    <Group group={item} first={index === 0} actions={groupActions} selectedFoodIds={actions.selectedFoodIds} showMacros={showMacros} />, [groupActions, actions.selectedFoodIds, showMacros]);
   return <AnimatedLegendList ref={attach} scrollEnabled={!scrollOffset || rawMax > 0} sharedValues={scrollOffset ? { scrollOffset } : undefined}
     onLayout={event => setViewport(event.nativeEvent.layout.height)}
     onContentSizeChange={(_width, height) => setContent(Math.max(0, height - runway))}

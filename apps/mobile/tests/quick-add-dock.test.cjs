@@ -11,7 +11,7 @@ async function harness() {
     'react-native': { PanResponder: { create: handlers => ({ panHandlers: handlers }) }, View: host('View'), TouchableOpacity: host('Touch'), useWindowDimensions: () => ({ width: 400 }) },
     'expo-router': { useFocusEffect: fn => React.useEffect(() => { const cleanup = fn(); focus.add(cleanup); return () => { cleanup(); focus.delete(cleanup); }; }, [fn]) },
     '@/components/ui': { Icon: host('Icon'), Text: host('Text') },
-    '@/theme': { font: {}, useTheme: () => ({ colors: {}, border: {} }) },
+    '@/theme': { font: local('./src/theme/tokens.ts').font, useTheme: () => local('./src/theme/palettes.ts').makeBalanceTheme('light') },
     '@/lib/hour-haptics': { tickHourChange: (previous, next) => { if (next !== null && next !== previous) ticks.push(next); } },
     '@/lib/quick-add-gesture': local('./src/lib/quick-add-gesture.ts') };
   m.require = n => { if (n in stubs) return stubs[n]; throw Error('Unexpected ' + n); };
@@ -37,7 +37,8 @@ test('tap morphs dock at same plus axis; menu buttons register now or weight', a
   const h = await harness(); try {
     const original = h.plus().props.style;
     await h.tap(); assert.equal(h.ticks.length, 0); assert.equal(h.tree.root.findAllByType('Tab').length, 0);
-    assert.deepEqual(h.plus().props.style, original);
+    assert.deepEqual({ ...h.plus().props.style, backgroundColor: original.backgroundColor }, original);
+    assert.equal(h.plus().props.style.backgroundColor, '#ECEDE9');
     await h.press('Ahora'); assert.deepEqual(h.foods, [undefined]);
     await h.tap(); await h.press('Peso'); assert.equal(h.weights.length, 1);
   } finally { await h.close(); }
@@ -82,5 +83,26 @@ test('hours tick once on highlight change and delayed hour choices cannot tick o
     await renderer.act(async () => queued());
     assert.deepEqual(h.ticks,[5,6]); assert.deepEqual(h.foods,['06:00']);
     await h.press('Registrar a las 23:00'); assert.deepEqual(h.ticks,[5,6,23]);
+  } finally { await h.close(); }
+});
+
+
+test('reference dock keeps its hit box while moving the ink puck and anchors an outlined radial hub', async () => {
+  const h = await harness();
+  try {
+    const box = { ...h.plus().props.style };
+    await h.grant(); await h.move(210,400);
+    const puck = h.plus().findAllByType('View').find(n => n.props.pointerEvents === 'none' && n.props.style.width === 52);
+    assert.equal(puck.props.style.height,44); assert.notEqual(puck.props.style.transform[0].translateX,0);
+    assert.equal(h.plus().props.style.width,box.width); assert.equal(h.plus().props.style.height,box.height);
+    await h.release(210,400); await h.action('chooseHour');
+    const dial=h.tree.root.findAllByType('View').find(n=>n.props.accessibilityLabel==='Elegir hora');
+    assert.equal(dial.props.style.bottom+144,193);
+    assert.equal(h.tree.root.findAllByType('View').filter(n=>n.props.testID==='hour-horseshoe').length,1);
+    const hub=h.tree.root.findAllByType('Touch').find(n=>n.props.accessibilityLabel==='Cancelar elección de hora');
+    assert.equal(hub.props.style.width,132); assert.equal(hub.props.style.height,132);
+    assert.equal(hub.props.style.backgroundColor,'#FFFFFF');
+    const first=h.tree.root.findAllByType('Touch').find(n=>n.props.accessibilityLabel==='Registrar a las 05:00');
+    assert.equal(first.findByType('Text').props.children,'05');
   } finally { await h.close(); }
 });

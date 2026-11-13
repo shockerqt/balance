@@ -40,7 +40,7 @@ export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} headerScroll={headerScroll} activeDay={activeDay} />, [selectionChanged, today, headerScroll, activeDay]);
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
-    <DateStripHeader compact={compact} selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
+    <DateStripHeader compact={compact} collapseScroll={headerScroll} selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
     </Animated.View>
     <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />

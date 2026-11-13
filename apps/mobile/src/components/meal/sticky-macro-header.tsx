@@ -84,7 +84,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
 });
 
 const styles = StyleSheet.create({
-  card: { marginHorizontal: 20, padding: 14, gap: 12, borderRadius: 20, borderWidth: 1 },
+  card: { marginHorizontal: 20, padding: 16, gap: 12, borderRadius: 20, borderWidth: 1 },
   kcalRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   goal: { marginTop: 4 },
   right: { alignItems: 'flex-end' },
