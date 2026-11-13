@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Alert, ScrollView, Switch, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Switch, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Screen, Button, Card, Icon, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
@@ -14,6 +14,7 @@ import { CalendarMonth } from './calendar-month';
 import { ReactNativeDiary } from './react-native-diary';
 import { ReactNativeSummary } from './react-native-summary';
 import { PageHeader } from './page-header';
+import { QuickAddDock } from './quick-add-dock';
 
 export default function ReactNativeInterfaceScreen() {
   const { user, isGuest } = useAuth();
@@ -38,39 +39,35 @@ function InterfaceSession() {
   const target = destination === 1 ? measurementDate : date;
   const active = useRef(false);
   const focusGeneration = useRef(0);
+  const [focusToken, setFocusToken] = useState(0);
   const liveTarget = useRef(target);
   useLayoutEffect(() => { liveTarget.current = target; }, [target]);
-  useFocusEffect(useCallback(() => { active.current = true; focusGeneration.current++; return () => { active.current = false; focusGeneration.current++; }; }, []));
-  const registerFood = (generation: number) => { if (!active.current || liveTarget.current !== target || focusGeneration.current !== generation) return; logsDateStore.set(target); router.push({ pathname: '/food-search', params: { dateId: target, time: currentTimeString() } }); };
-  const register = () => {
-    const generation = focusGeneration.current;
-    if (preference.preferencesReady && preference.weightTrackingEnabled && target <= todayId())
-      Alert.alert('Registrar', displayDateFor(target), [
-        { text: 'Alimento', onPress: () => registerFood(generation) },
-        { text: 'Peso', onPress: () => { if (active.current && liveTarget.current === target && focusGeneration.current === generation) router.push({ pathname: '/weight-entry', params: { dateId: target } }); } },
-        { text: 'Cancelar', style: 'cancel' },
-      ]);
-    else registerFood(generation);
+  useFocusEffect(useCallback(() => { active.current = true; focusGeneration.current++; setFocusToken(focusGeneration.current); return () => { active.current = false; focusGeneration.current++; }; }, []));
+  const liveDestination = useRef(destination);
+  useLayoutEffect(() => { liveDestination.current = destination; }, [destination]);
+  const valid = () => active.current && liveTarget.current === target && liveDestination.current === destination && focusGeneration.current === focusToken;
+  const registerFood = (time = currentTimeString()) => {
+    if (!valid()) return;
+    logsDateStore.set(target);
+    router.push({ pathname: '/food-search', params: { dateId: target, time } });
+  };
+  const weightAvailable = preference.preferencesReady && preference.weightTrackingEnabled && target <= today;
+  const registerWeight = () => {
+    if (valid() && weightAvailable) router.push({ pathname: '/weight-entry', params: { dateId: target } });
   };
   return <Screen edges={['top', 'bottom']}>
     <View style={{ flex: 1 }}>
       {destination === 0 ? <Diary today={today} /> : destination === 1 ? <Measurements date={measurementDate} today={today} onDate={setMeasurementDate} /> : destination === 2 ?
         <ReactNativeSummary onOpen={(selected, body) => { logsDateStore.set(selected); setMeasurementDate(selected); setDestination(body ? 1 : 0); }} /> : <Profile />}
     </View>
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 8, paddingHorizontal: 10, paddingBottom: 14, backgroundColor: theme.colors.surface,
-      borderTopWidth: theme.border.hairline, borderTopColor: theme.colors.border }}>
-      {[0, 1, -1, 2, 3].map(index => index === -1 ?
-        <TouchableOpacity key="register" accessibilityRole="button" accessibilityLabel="Registrar alimento o peso" onPress={register}
-          style={{ width: 60, height: 52, marginHorizontal: 6, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.primary }}>
-          <Icon name="plus" size={24} tone="onPrimary" />
-        </TouchableOpacity> :
-        <TouchableOpacity key={index} accessibilityRole="tab" accessibilityLabel={destinations[index].title} accessibilityState={{ selected: destination === index }} onPress={() => setDestination(index)}
+    <QuickAddDock contextKey={`${target}:${destination}`} weightAvailable={weightAvailable} onFood={registerFood} onWeight={registerWeight}>
+      {[0, 1, 2, 3].map(index => <TouchableOpacity key={index} accessibilityRole="tab" accessibilityLabel={destinations[index].title} accessibilityState={{ selected: destination === index }} onPress={() => setDestination(index)}
           style={{ flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
           <Icon name={destinations[index].icon} size={22} tone={destination === index ? 'primary' : 'secondary'} />
           <Text variant="label" tone={destination === index ? 'primary' : 'secondary'}
             style={{ fontFamily: destination === index ? font.semibold : font.medium }}>{destinations[index].title}</Text>
         </TouchableOpacity>)}
-    </View>
+    </QuickAddDock>
   </Screen>;
 }
 
