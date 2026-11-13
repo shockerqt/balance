@@ -1,3 +1,4 @@
+import { isValidDailyCalorieTarget } from '../../lib/day-targets.ts';
 export const SYNC_COLLECTIONS = ['userPreferences', 'mealTemplates', 'mealLogs', 'weightLogs'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];
 
@@ -35,6 +36,7 @@ export {
 
 export interface UserPreferences {
   weightTrackingEnabled?: boolean;
+  dailyCalorieTarget?: number;
 }
 
 export interface UserPreferencesDoc {
@@ -212,6 +214,7 @@ export function isUserPreferencesDoc(value: unknown): value is UserPreferencesDo
   if (!doc.preferences || typeof doc.preferences !== 'object' || Array.isArray(doc.preferences)) return false;
   const preferences = doc.preferences as Record<string, unknown>;
   return (
+    (preferences.dailyCalorieTarget === undefined || isValidDailyCalorieTarget(preferences.dailyCalorieTarget)) &&
     (preferences.weightTrackingEnabled === undefined || typeof preferences.weightTrackingEnabled === 'boolean') &&
     typeof doc.updatedAt === 'number' &&
     Number.isFinite(doc.updatedAt) &&

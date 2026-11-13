@@ -104,7 +104,7 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection }: { da
     {preference.preferencesReady && preference.weightTrackingEnabled ? <DailyWeightRow measurement={weight.weightsByDate[date]} disabled={date > today}
       onPress={() => { if (live()) router.push({ pathname: '/weight-entry', params: { dateId: date } }); }} /> : null}
     {weight.syncError ? <Text selectable tone="danger">{weight.syncError.message}</Text> : null}
-    <StickyMacroHeader {...log} foods={log.foods}
+    <StickyMacroHeader {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
       onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     <MealGroupFeed ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}

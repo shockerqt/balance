@@ -13,3 +13,11 @@ export const DEFAULT_TARGETS: DayTargets = {
   targetFat: 65,
   targetFiber: 30,
 };
+
+export function isValidDailyCalorieTarget(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 500 && value <= 10000;
+}
+
+export function resolveDailyCalorieTarget(value: unknown): number {
+  return isValidDailyCalorieTarget(value) ? value : DEFAULT_TARGETS.targetCalories;
+}

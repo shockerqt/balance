@@ -2,10 +2,10 @@ import type { DayLog, LoggedFoodItem } from '../hooks/use-meal-store';
 import type { MealLogDoc } from '../services/sync/types';
 import { logToLoggedFood } from '../services/sync/adapters';
 import { displayDateFor, toDateId, todayId } from './dates';
-import { DEFAULT_TARGETS } from './day-targets';
+import { DEFAULT_TARGETS, resolveDailyCalorieTarget } from './day-targets';
 
-export function emptyDayLog(dateId: string): DayLog {
-  return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, foods: [] };
+export function emptyDayLog(dateId: string, targetCalories = DEFAULT_TARGETS.targetCalories): DayLog {
+  return { dateId, displayDate: displayDateFor(dateId), ...DEFAULT_TARGETS, targetCalories: resolveDailyCalorieTarget(targetCalories), foods: [] };
 }
 
 /** Presentation only. The canonical store continues to own document revisions. */

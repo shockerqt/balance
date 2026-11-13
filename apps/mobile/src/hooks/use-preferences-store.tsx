@@ -1,3 +1,4 @@
+import { isValidDailyCalorieTarget, resolveDailyCalorieTarget } from '@/lib/day-targets';
 import { API_BASE_URL } from '@/services/config';
 import { authDataNamespace } from '@/services/auth/session-state';
 import React, {
@@ -17,6 +18,8 @@ import { SyncDocument, UserPreferencesDoc, isUserPreferencesDoc } from '@/servic
 interface PreferencesContextValue {
   preferencesReady: boolean;
   weightTrackingEnabled: boolean;
+  dailyCalorieTarget: number;
+  setDailyCalorieTarget: (calories: number) => boolean;
   syncError: string | null;
   setWeightTrackingEnabled: (enabled: boolean) => void;
 }
@@ -155,14 +158,30 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [namespace, user?.id, persist]
   );
 
+  const setDailyCalorieTarget = useCallback((dailyCalorieTarget: number) => {
+    if (!isValidDailyCalorieTarget(dailyCalorieTarget)) return false;
+    const previous = documentRef.current;
+    const next: UserPreferencesDoc = {
+      id: user?.id ?? 'guest',
+      preferences: { ...previous.preferences, dailyCalorieTarget },
+      updatedAt: Date.now(), _deleted: false,
+    };
+    documentRef.current = next; setDocument(next); setSyncError(null);
+    void persist([next]);
+    void syncClient.enqueue('userPreferences', next, previous).catch(() => undefined);
+    return true;
+  }, [namespace, user?.id, persist]);
+
   const value = useMemo(
     () => ({
       preferencesReady,
+      dailyCalorieTarget: resolveDailyCalorieTarget(document.preferences.dailyCalorieTarget),
+      setDailyCalorieTarget,
       weightTrackingEnabled: enabled,
       syncError,
       setWeightTrackingEnabled,
     }),
-    [enabled, preferencesReady, setWeightTrackingEnabled, syncError]
+    [document.preferences.dailyCalorieTarget, enabled, preferencesReady, setDailyCalorieTarget, setWeightTrackingEnabled, syncError]
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 };
