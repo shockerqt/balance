@@ -84,3 +84,43 @@ or the administrator restores the retained previous binary under the runbook.
 Artifacts are retained for 30 days and delivery receipts for 90 days in Actions;
 record durable identities in Governance before expiry. No automated old-release
 or task-branch deletion is included.
+
+## Zach contract and API producer evidence
+
+`.github/zach-delivery.yaml` uses schema version 1. Its client rule observes the
+main-push parent `deliver-clients.yml` and both `daily-delivery.json` and
+`dashboard-delivery.json` receipts. Daily's `publish-daily-ota.yml` is a reusable
+child, not a second push workflow. `NEW_APK_REQUIRED` waits for a new APK with
+Retry/Reject choices. Dashboard public identity comes from `release.json`.
+
+The API rule's paths match the existing `build-arm.yml` push paths exactly.
+Contract, promotion-helper and delivery-documentation changes alone therefore do
+not select an API build or promotion. They still select the client parent.
+The API OpenAPI health check proves availability; it does not identify the
+currently deployed source. Explicit `current_source_authority: plan` makes the
+validated host plan authoritative for production current.
+
+Read-only API dispatches omit `expected_current`. The producer validates the
+selected build's ID and source against the single bounded regular
+`api-release.json` member of the digest-checked archive, mapping package `run_id`
+to envelope `build_run_id`. It rejects duplicate JSON keys, unsafe archive members,
+invalid IDs and conflicting identities. A successful host plan must match that
+artifact and report `schema_compatible: true` plus an explicit current source or
+`current: null` (normalized to `none`). The uploaded `api-plan.json` binds source,
+build, digest and this observed current. Raw host plan and receipt plus
+`build-run.json` remain in the same `api-delivery-<run_id>-<attempt>` audit artifact.
+
+Approved dispatches require a strict lowercase 40-character source SHA or `none`.
+Before deploy, a fresh validated host plan must equal that approved current; the
+same token then reaches the existing host compare-and-swap gate. The normalized
+`api-delivery.json` additionally requires the actual host receipt's published
+status, source, run ID and digest to match. Its expected current comes from the
+validated predeploy observation and approval equality. An idempotent stored
+receipt's `previous` belongs to an earlier invocation and never supplies current.
+A production race still fails at the host compare-and-swap gate.
+
+BAL-070 is explicitly integration-only: its completion records contract/parser,
+producer tests, independent review and exact-SHA CI evidence. It does not require
+or claim a production API promotion, APK build or OTA restoration. BAL-072 owns
+the new Daily APK and restoration of compatible OTA delivery. Normal client
+publication triggered by integration retains the existing workflow behavior.
