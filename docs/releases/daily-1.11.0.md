@@ -1,9 +1,9 @@
 # Daily 1.11.0 release — BAL-072
 
-Status: verified APK available; native-baseline activation is proposed in a draft
-PR. Actual operator phone smoke and corrective OTA publication remain pending.
-The baseline values in this branch are a proposal, not an active main release.
-Do not merge this proposal or dispatch delivery before the phone result is recorded.
+Status: verified APK available and basic operator phone smoke confirmed.
+Native-baseline activation is prepared for final independent review and exact-head
+CI; corrective OTA publication remains pending until the verified-main DAG records
+its real delivery identities. The baseline becomes active through PR integration.
 
 ## Verified binary
 
@@ -57,11 +57,14 @@ claimed fixed by these visual corrections; BAL-056/053/057 retain that ownership
 
 ## Phone observation and activation gate
 
-Build, merge and OTA publication permission is already explicit. The user's
-requests to continue are not successful device-test observations. Actual
-confirmation of installed Daily `1.11.0 (14)`, working login/session and record
-read/write remains pending. Record the exact result and any untested behavior
-before changing this draft to ready or activating its baseline.
+Build, merge and OTA publication permission is already explicit. On 2026-11-13,
+in response to the explicit question whether Daily `1.11.0 (14)` is installed and
+login/session, record loading and saving work, the operator replied:
+**«si funciona bien»**. This confirms the basic installed-version/session/data
+smoke in that question's context and satisfies the activation prerequisite.
+This is operator-reported evidence, not an agent-observed device test. No broader
+visual, accessibility, haptic, logout or WSS-specific acceptance is inferred.
+Final exact-head Terra review and CI remain mandatory before integration.
 
 The operator previously reported visual differences and persistent lags after
 receiving the APK link. That feedback is not successful visual/performance
@@ -77,22 +80,22 @@ publication succeeded and public `release.json` reported exact source
 `NEW_APK_REQUIRED` against the previous 1.9 baseline; it did not publish a
 corrective update/group.
 
-After phone validation, independently reviewed final-head CI and merge, only the
+With basic phone validation confirmed, after final-head review, CI and merge, only the
 existing `Deliver Balance Clients` DAG may publish/reconcile Android/preview/daily.
 Verify the exact delivered SHA, runtime `1.11.0`, active daily-to-daily mapping,
 update ID and group ID from Actions receipts and EAS. No successful publication,
-OTA installation on a phone, or delivered corrective SHA is claimed by this draft.
+OTA installation on a phone, or delivered corrective SHA is claimed by this pre-publication receipt.
 Record real publication identities on issue #144 and linked delivery tasks.
 A later receipt-only source PR must run its own delivery checks and cannot claim
 an earlier OTA as the current source.
 
 ## Previous references
 
-Before activation, main still records Daily build
+The previous main baseline, retained here as historical evidence, was Daily build
 `7138388f-60fb-465f-8e4c-a8614e5d3c57`, source
 `7210b6bbcf38aaf519c7e55f155c0b3a22a703bd`, runtime `1.9.0`, versionCode `12`,
 fingerprint `24437b5856164ed3b75b38920b285d0bd4a2ee13`.
-Keep this identity as historical evidence after the new baseline is activated.
+This identity remains historical evidence after the new baseline is activated.
 
 EAS also has a finished 1.10.0/code13 APK (`26cf165e-1d3c-4cac-acfa-a03930f55ca6`,
 source `39657a7c30e82a7764c5622659f2635d94d52bfd`), which predates the integrated
