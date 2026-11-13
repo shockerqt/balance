@@ -30,7 +30,7 @@ test('RN shell has four destinations, central registration uses the measurement 
     '@/lib/dates': { ...dates, todayId: () => date, currentTimeString: () => '13:00' },
     '@/theme': { useTheme: () => ({ colors, border: { hairline: 1 } }), font: { medium: 'InterMedium', semibold: 'InterSemiBold' } },
     '@/components/weight/weight-trend-card': { WeightTrendCard: host('Weight') },
-    './calendar-month': { CalendarMonth: host('Calendar') }, './react-native-diary': { ReactNativeDiary: host('Diary') },
+    './quick-add-dock': { QuickAddDock: host('Dock') }, './calendar-month': { CalendarMonth: host('Calendar') }, './react-native-diary': { ReactNativeDiary: host('Diary') },
     './react-native-summary': { ReactNativeSummary: host('Summary') }, './page-header': { PageHeader: host('PageHeader') },
   };
   const Screen = compile('src/components/meal/react-native-interface-screen.tsx', stubs).default;
@@ -40,15 +40,17 @@ test('RN shell has four destinations, central registration uses the measurement 
     assert.equal(tree.root.findAllByType('TouchableOpacity').filter(node => node.props.accessibilityRole === 'tab').length, 4);
     assert.equal(tree.root.findAllByType('Diary').length, 1);
     await press('Mediciones'); await renderer.act(async () => tree.root.findByType('Calendar').props.onChange('2026-10-10'));
-    await press('Registrar alimento o peso'); await renderer.act(async () => alerts.at(-1)[2].find(button => button.text === 'Peso').onPress());
+    await renderer.act(async () => tree.root.findByType('Dock').props.onWeight());
     assert.deepEqual(pushes.at(-1), { pathname: '/weight-entry', params: { dateId: '2026-10-10' } });
+    await renderer.act(async () => tree.root.findByType('Dock').props.onFood('05:00'));
+    assert.deepEqual(pushes.at(-1), { pathname: '/food-search', params: { dateId: '2026-10-10', time: '05:00' } });
     await press('Resumen'); await renderer.act(async () => tree.root.findByType('Summary').props.onOpen('2026-10-12', false));
     assert.equal(nav.get(), '2026-10-12'); assert.equal(tree.root.findAllByType('Diary').length, 1);
     await press('Resumen'); await renderer.act(async () => tree.root.findByType('Summary').props.onOpen('2026-10-09', true));
     assert.equal(nav.get(), '2026-10-09'); assert.equal(tree.root.findByType('Calendar').props.value, '2026-10-09');
     await press('Perfil'); const setting = tree.root.findAllByType('Button').find(node => node.props.title === 'Cuenta y configuración');
     await renderer.act(async () => setting.props.onPress()); assert.equal(pushes.at(-1), '/settings');
-    await press('Registrar alimento o peso'); const queued = alerts.at(-1)[2].find(button => button.text === 'Alimento').onPress;
+    const queued = tree.root.findByType('Dock').props.onFood;
     await renderer.act(async () => { for (const entry of focusEntries.values()) entry.cleanup?.(); });
     const before = pushes.length; await renderer.act(async () => queued()); assert.equal(pushes.length, before);
   } finally { await renderer.act(async () => tree.unmount()); }
