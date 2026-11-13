@@ -35,14 +35,14 @@ async function harness(reduced = false) {
 }
 test('fitting day reserves no runway and does not snap', async () => {
   const h = await harness(); try {
-    await h.size(700); assert.equal(h.list().props.contentContainerStyle[1].paddingBottom, 120);
+    await h.size(700); assert.equal(h.list().props.contentContainerStyle[1].paddingBottom, 16);
     h.calls.length = 0; await h.release(60); assert.equal(h.calls.length, 0);
     assert.equal(h.list().props.sharedValues.scrollOffset, h.scrollOffset);
   } finally { await h.close(); }
 });
 test('short overflow gets full collapse travel, with midpoint snap in either direction', async () => {
   const h = await harness(); try {
-    await h.size(850); assert.equal(h.list().props.contentContainerStyle[1].paddingBottom, 286);
+    await h.size(850); assert.equal(h.list().props.contentContainerStyle[1].paddingBottom, 182);
     await h.release(107); await h.release(108); await h.release(300);
     assert.deepEqual(h.calls, [{ offset: 0, animated: true }, { offset: 216, animated: true }]);
   } finally { await h.close(); }
@@ -126,4 +126,28 @@ test('Settings starts Simple, toggles canonical preferences, persists, rehydrate
     await renderer.act(async () => callbacks.onDocuments([{ id: 'guest', preferences: { diaryMacrosEnabled: false }, updatedAt: Date.now() + 100, _deleted: false }]));
     assert.equal(toggle().props.value, false);
   } finally { if (tree) await renderer.act(async () => tree.unmount()); }
+});
+
+
+test('real base clearance keeps near-fitting rows static; runway size notifications do not compound', async () => {
+  const h = await harness();
+  try {
+    const padding=h.list().props.contentContainerStyle[1];
+    await h.size(padding.paddingTop+396+padding.paddingBottom);
+    assert.equal(h.list().props.scrollEnabled,false,'396px of rows fit with the approved header and clearance');
+    h.calls.length=0; await h.release(60); assert.equal(h.calls.length,0);
+    await h.size(850);
+    assert.equal(h.list().props.contentContainerStyle[1].paddingBottom,182);
+    await h.size(1016); // native reports base850 + added166 runway
+    assert.equal(h.list().props.contentContainerStyle[1].paddingBottom,182,'runway never adds itself twice');
+    await h.size(650); // content shrinks while old166 runway still exists
+    assert.equal(h.list().props.contentContainerStyle[1].paddingBottom,16);
+    await h.size(484); // native reports the same content after removing runway
+    assert.equal(h.list().props.scrollEnabled,false);
+    await h.size(1300); assert.equal(h.list().props.contentContainerStyle[1].paddingBottom,16);
+    h.calls.length=0;
+    await renderer.act(async()=>h.list().props.onScrollEndDrag({nativeEvent:{contentOffset:{y:150},velocity:{y:2}}}));
+    assert.equal(h.calls.length,0,'a fling waits for momentum to finish');
+    await h.release(150); assert.deepEqual(h.calls,[{offset:216,animated:true}]);
+  } finally { await h.close(); }
 });

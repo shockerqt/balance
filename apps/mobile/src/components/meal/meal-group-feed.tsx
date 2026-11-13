@@ -109,11 +109,11 @@ export const MealGroupFeed = React.memo(function MealGroupFeed({ foods, ref, emp
     onScrollEndDrag={event => { if (!event.nativeEvent.velocity?.y) snap(event.nativeEvent.contentOffset.y); }}
     onMomentumScrollEnd={event => snap(event.nativeEvent.contentOffset.y)} data={groups} renderItem={renderItem} keyExtractor={keyExtractor}
     recycleItems maintainVisibleContentPosition={false} drawDistance={250} showsVerticalScrollIndicator={false}
-    ListEmptyComponent={empty} contentContainerStyle={[styles.content, scrollOffset ? { paddingTop: 336, paddingBottom: 120 + runway } : null]} />;
+    ListEmptyComponent={empty} contentContainerStyle={[styles.content, scrollOffset ? { paddingTop: 336, paddingBottom: 16 + runway } : null]} />;
 });
 
 const useStyles = makeStyles((t) => ({
-  content: { paddingTop: 2, paddingBottom: 120 },
+  content: { paddingTop: 2, paddingBottom: 16 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: t.space.xl, paddingTop: t.space.md, paddingBottom: 4 },
   headerLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 36 },
   add: { width: 44, height: 36, borderRadius: t.radius.sm, borderWidth: t.border.hairline, borderColor: t.colors.lineStrong, alignItems: 'center', justifyContent: 'center' },
