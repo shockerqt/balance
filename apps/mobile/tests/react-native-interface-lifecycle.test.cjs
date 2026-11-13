@@ -73,6 +73,8 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
   const labelled = (label, prop) => view.root.findAll(node => node.props.accessibilityLabel === label && typeof node.props[prop] === 'function')[0];
   const press = async label => { assert.ok(labelled(label, 'onPress'), `missing ${label}`); await renderer.act(async () => { await labelled(label, 'onPress').props.onPress(); }); };
   return { writes, backs, selections, removals, alerts, button, field, press, labelled,
+    rowActions: () => view.root.findAllByType('Touch').map(n => n.props.accessibilityLabel).filter(label => /^(Agregar|Quitar) /.test(label ?? '')),
+    text: () => view.root.findAllByType('Text').map(n => [n.props.children].flat().join('')),
     async type(label, value) { assert.ok(labelled(label, 'onChangeText'), `missing input ${label}`); await renderer.act(async () => { labelled(label, 'onChangeText').props.onChangeText(value); }); },
     get guard() { return guard; },
     async fill(label, value) { assert.ok(field(label), `missing field ${label}`); await renderer.act(async () => { field(label).props.onChangeText(value); }); },
@@ -108,7 +110,7 @@ test('RN multi-add records every selected food once, with stable ids across a fa
   const h = await harness('react-native-food-entry-screen', { commit: async () => { if (fail) throw Error('disk'); } });
   try {
     await h.changeTemplates([template, pan]);
-    await h.press('Agregar Avena'); await h.press('Mis alimentos'); assert.ok(h.labelled('Quitar Avena', 'onPress'), 'selected foods stay listed'); await h.press('Agregar Pan'); await h.press('Más Pan');
+    await h.press('Agregar Avena'); await h.press('Mis alimentos'); assert.ok(h.labelled('Quitar Avena', 'onPress'), 'selected food is a matching personal template'); await h.press('Agregar Pan'); await h.press('Más Pan');
     assert.equal(h.labelled('Cantidad de Pan', 'onChangeText').props.value, '110');
     await h.click('Guardar'); assert.equal(h.backs.length, 0);
     const first = h.writes[0];
@@ -232,4 +234,39 @@ test('RN move rejects nonexistent Chilean DST times and changed/deleted selectio
   const valid = await harness('react-native-move-screen');
   try { await valid.click('Mover a las 13:00'); assert.equal(valid.writes.length, 1); assert.equal(dates.chileDateParts(valid.writes[0][0].consumedAt).hour, 13); }
   finally { await valid.close(); }
+});
+
+test('RN selection expands in matching order and hidden drafts retain quantity, portion and durable batch', async () => {
+  const pan={...template,id:uuid(3),name:'Pan',details:{...template.details,portions:[]}};
+  const yogur={...template,id:uuid(4),name:'Yogur',isOfficial:true};
+  const h=await harness('react-native-food-entry-screen',{documents:[]});
+  try {
+    await h.changeTemplates([yogur,pan,template]);
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Agregar Pan','Agregar Yogur']);
+    await h.press('Agregar Pan'); await h.press('Más Pan');
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Quitar Pan','Agregar Yogur']);
+    assert.ok(h.text().includes('110 g · 418 kcal · 14,3 g proteína'));
+    await h.press('Agregar Yogur'); await h.type('Cantidad de Yogur','1,5');
+    assert.ok(h.text().includes('1,5 taza · 456 kcal · 15,6 g proteína'));
+    await h.type('Buscar alimento','Avena');
+    assert.deepEqual(h.rowActions(),['Agregar Avena']);
+    assert.ok(h.text().includes('2 alimentos')); assert.ok(h.text().includes('874 kcal a las 08:15'));
+    await h.press('Mis alimentos');
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Quitar Pan']);
+    assert.equal(h.labelled('Cantidad de Pan','onChangeText').props.value,'110');
+    await h.press('Recientes');
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Quitar Pan','Quitar Yogur']);
+    assert.equal(h.labelled('Cantidad de Yogur','onChangeText').props.value,'1,5');
+    await h.press('Quitar Pan');
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Agregar Pan','Quitar Yogur']);
+    await h.press('Agregar Pan'); await h.type('Cantidad de Pan','110');
+    await h.type('Buscar alimento','no-existe'); assert.deepEqual(h.rowActions(),[]);
+    await h.click('Guardar');
+    assert.equal(h.writes.length,1); assert.equal(h.writes[0].length,2);
+    const selected=new Map(h.writes[0].map(doc=>[doc.templateId,doc]));
+    assert.equal(selected.get(uuid(3)).canonicalQuantity,110);
+    assert.equal(selected.get(uuid(4)).canonicalQuantity,120);
+    assert.equal(selected.get(uuid(4)).entry.portionSnapshot.name,'taza');
+    assert.equal(h.backs.length,1);
+  } finally { await h.close(); }
 });

@@ -84,8 +84,7 @@ function FoodEntrySession() {
     if (source === 'mine') return personalTemplates(library.templateDocuments);
     return recents.length ? recents : searchTemplates(library.templateDocuments, '');
   }, [query, source, recents, library.templateDocuments, meals.mealDocuments, now]);
-  const selectedIds = new Set(drafts.map(d => d.template.id));
-  const rows = [...drafts.map(d => d.template), ...list.filter(t => !selectedIds.has(t.id))];
+  const rows = list;
   const total = drafts.reduce((sum, d) => sum + caloriesOf(d), 0);
 
   const toggle = (template: MealTemplateDoc) => {
@@ -211,7 +210,7 @@ function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
     <View style={styles.rowTop}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text variant="bodyStrong" numberOfLines={1} style={draft ? { fontFamily: font.semibold } : null}>{template.name}</Text>
-        <Text variant="caption" tone="secondary" numberOfLines={1}>{draft ? `${formatCalories(caloriesOf(draft))} kcal · ${formatMacroGrams(template.details.nutritionPer100.protein * canonical(template, draft.portionId, amount) / 100)} g proteína` : describe(template)}</Text>
+        <Text variant="caption" tone="secondary" numberOfLines={1}>{draft ? `${formatMacroGrams(amount)} ${portion?.name ?? template.details.canonicalUnit} · ${formatCalories(caloriesOf(draft))} kcal · ${formatMacroGrams(template.details.nutritionPer100.protein * canonical(template, draft.portionId, amount) / 100)} g proteína` : describe(template)}</Text>
       </View>
       {toggleButton}
     </View>
