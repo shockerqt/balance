@@ -40,7 +40,7 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
     { name: 'Grasa', value: totals.fat, target: targetFat, color: c.macroFat },
   ];
 
-  if (compact) return <TouchableOpacity accessibilityRole="button" onPress={onPress}
+  if (compact) return <TouchableOpacity accessibilityRole="button" onPress={onPress} hitSlop={{ top: 7, bottom: 7 }}
     accessibilityLabel={`${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías. Abre el detalle nutricional`}
     style={{ paddingHorizontal: 20, height: 30, flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.background }}>
     <Text variant="caption">{formatCalories(totals.calories)} / {formatCalories(targetCalories)} kcal</Text>

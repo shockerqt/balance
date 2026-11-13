@@ -55,7 +55,9 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
   useAnimatedReaction(() => ({ offset: scrollOffset.value, day: activeDay.value }), (next) => {
     if (next.day === dayNumber) headerScroll.value = Math.max(0, next.offset);
   });
-  useAnimatedReaction(() => scrollOffset.value >= 108, (next, prev) => { if (next !== prev) runOnJS(setCompact)(next); });
+  useAnimatedReaction(() => scrollOffset.value > 0, (next, prev) => { if (next !== prev) runOnJS(setCompact)(next); });
+  const expandedSummaryStyle = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - scrollOffset.value / 72) }));
+  const compactSummaryStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, (scrollOffset.value - 54) / 162)) }));
   const summaryStyle = useAnimatedStyle(() => {
     const p = Math.min(1, Math.max(0, scrollOffset.value / 216));
     return { top: 136 - 58 * p, height: 188 - 158 * p };
@@ -67,6 +69,10 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
   const selection = useFoodSelection(date);
   const feed = useRef<HourRailFeedHandle>(null);
   const focused = useRef(false);
+  useLayoutEffect(() => {
+    scrollOffset.value = 0;
+    feed.current?.resetScroll();
+  }, [date, scrollOffset]);
   const preference = usePreferencesStore();
   const live = () => focused.current && logsDateStore.get() === date;
   useFocusEffect(useCallback(() => {
@@ -118,8 +124,17 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
   </Card>, [future]);
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', left: 0, right: 0, zIndex: 4, overflow: 'hidden' }, summaryStyle]}>
-    <StickyMacroHeader compact={compact} {...log} foods={log.foods}
-      onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
+    <Animated.View pointerEvents={compact ? 'none' : 'auto'} accessibilityElementsHidden={compact}
+      importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={expandedSummaryStyle}>
+      <StickyMacroHeader {...log} foods={log.foods}
+        onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
+    </Animated.View>
+    <Animated.View pointerEvents={compact ? 'auto' : 'none'} accessibilityElementsHidden={!compact}
+      importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'}
+      style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, compactSummaryStyle]}>
+      <StickyMacroHeader compact {...log} foods={log.foods}
+        onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
+    </Animated.View>
     </Animated.View>
     <MealGroupFeed scrollOffset={scrollOffset} showMacros={preference.diaryMacrosEnabled} ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}

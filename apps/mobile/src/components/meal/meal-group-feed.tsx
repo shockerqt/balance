@@ -18,7 +18,7 @@ const keyExtractor = (group: MealGroup) => group.key;
 const FoodRow = React.memo(function FoodRow({ food, first, actions, selected, showMacros }: { food: LoggedFoodItem; first: boolean; actions: FeedActions; selected: boolean; showMacros: boolean }) {
   const styles = useStyles();
   const calories = formatCalories(food.calories);
-  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${food.name}, ${food.portion}, ${calories} kilocalorías`}
+  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${food.name}, ${food.portion}, ${calories} kilocalorías${showMacros ? `, ${macroLabel([food])}` : ''}`}
     accessibilityState={{ selected: actions.isSelectionMode ? selected : undefined }} activeOpacity={0.7} delayPressIn={0}
     style={[styles.row, !first && styles.divider]}
     onPress={() => actions.isSelectionMode && actions.onToggleSelectFood ? actions.onToggleSelectFood(food.id) : actions.onSelectFood(food)}
@@ -40,7 +40,7 @@ const Group = React.memo(function Group({ group, actions, selectedFoodIds, showM
   const styles = useStyles();
   return <View>
     <View style={styles.header}>
-      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Comidas de las ${group.hour}, ${formatCalories(group.calories)} kilocalorías`}
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Comidas de las ${group.hour}, ${formatCalories(group.calories)} kilocalorías${showMacros ? `, ${macroLabel(group.foods)}` : ''}`}
         accessibilityHint={actions.isSelectionMode ? 'Selecciona o quita todas las comidas de esta hora' : 'Mantén presionado para seleccionar esta hora'}
         disabled={!actions.isSelectionMode && !actions.onLongPressGroup} delayPressIn={0} style={styles.headerLabel}
         onPress={() => actions.isSelectionMode && actions.onToggleSelectGroup?.(group.ids)}

@@ -82,7 +82,7 @@ function HeaderContent({ compact = false, selectedDateId, onSelectDate, onShiftD
         }} style={[styles.dateTitleBox, compact && { height: 24 }]}>
         {compact ? <Text numberOfLines={1} style={{ fontSize: 17 }}>{label.title} · {parseDateId(selectedDateId).getUTCDate()} {MONTH_NAMES[parseDateId(selectedDateId).getUTCMonth()].slice(0, 3)}</Text> : presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
       </View>
-      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Elegir fecha"
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Elegir fecha" hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
         style={[styles.calendarBtn, compact && { height: 28, width: 36 }, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => router.push('/date-picker')}>
         <Icon name="calendar" size={20} tone="primary" />
       </TouchableOpacity>
