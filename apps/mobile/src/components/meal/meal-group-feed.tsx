@@ -1,19 +1,24 @@
-import React, { useCallback, useImperativeHandle, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
-import { LegendList } from '@legendapp/list/react-native';
+import { AnimatedLegendList } from '@legendapp/list/reanimated';
+import { useReducedMotion, type SharedValue } from 'react-native-reanimated';
 import type { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { buildMealGroups, type MealGroup } from '@/lib/meal-groups';
-import { formatCalories } from '@/lib/nutrition';
+import { formatCalories, formatMacroGrams, sumNutrition } from '@/lib/nutrition';
 import { makeStyles } from '@/theme';
 import { Icon, Text } from '@/components/ui';
 import type { FeedActions, HourRailFeedHandle } from './hour-rail-feed';
 
+function macroLabel(foods: LoggedFoodItem[]) {
+  const n = sumNutrition(foods);
+  return `P ${formatMacroGrams(n.protein)} · C ${formatMacroGrams(n.carbs)} · G ${formatMacroGrams(n.fat)}`;
+}
 const keyExtractor = (group: MealGroup) => group.key;
 
-const FoodRow = React.memo(function FoodRow({ food, first, actions, selected }: { food: LoggedFoodItem; first: boolean; actions: FeedActions; selected: boolean }) {
+const FoodRow = React.memo(function FoodRow({ food, first, actions, selected, showMacros }: { food: LoggedFoodItem; first: boolean; actions: FeedActions; selected: boolean; showMacros: boolean }) {
   const styles = useStyles();
   const calories = formatCalories(food.calories);
-  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${food.name}, ${food.portion}, ${calories} kilocalorías`}
+  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${food.name}, ${food.portion}, ${calories} kilocalorías${showMacros ? `, ${macroLabel([food])}` : ''}`}
     accessibilityState={{ selected: actions.isSelectionMode ? selected : undefined }} activeOpacity={0.7} delayPressIn={0}
     style={[styles.row, !first && styles.divider]}
     onPress={() => actions.isSelectionMode && actions.onToggleSelectFood ? actions.onToggleSelectFood(food.id) : actions.onSelectFood(food)}
@@ -24,23 +29,24 @@ const FoodRow = React.memo(function FoodRow({ food, first, actions, selected }: 
     <View style={styles.main}>
       <Text variant="bodyStrong" numberOfLines={1}>{food.name}</Text>
       <Text variant="caption" tone="secondary" numberOfLines={1}>{food.portion}</Text>
+      {showMacros ? <Text variant="caption" tone="secondary">{macroLabel([food])}</Text> : null}
     </View>
     <Text variant="number">{calories}</Text>
   </TouchableOpacity>;
 });
 
 /** One hour: header (hour, total, +) and its list card as a single cell. */
-const Group = React.memo(function Group({ group, actions, selectedFoodIds }: { group: MealGroup; actions: FeedActions; selectedFoodIds?: ReadonlySet<string> }) {
+const Group = React.memo(function Group({ group, actions, selectedFoodIds, showMacros }: { group: MealGroup; actions: FeedActions; selectedFoodIds?: ReadonlySet<string>; showMacros: boolean }) {
   const styles = useStyles();
   return <View>
     <View style={styles.header}>
-      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Comidas de las ${group.hour}, ${formatCalories(group.calories)} kilocalorías`}
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Comidas de las ${group.hour}, ${formatCalories(group.calories)} kilocalorías${showMacros ? `, ${macroLabel(group.foods)}` : ''}`}
         accessibilityHint={actions.isSelectionMode ? 'Selecciona o quita todas las comidas de esta hora' : 'Mantén presionado para seleccionar esta hora'}
         disabled={!actions.isSelectionMode && !actions.onLongPressGroup} delayPressIn={0} style={styles.headerLabel}
         onPress={() => actions.isSelectionMode && actions.onToggleSelectGroup?.(group.ids)}
         onLongPress={() => actions.onLongPressGroup?.(group.ids)}>
         <Text variant="hour">{group.hour}</Text>
-        <Text variant="caption" tone="secondary">{formatCalories(group.calories)} kcal</Text>
+        <Text variant="caption" tone="secondary">{formatCalories(group.calories)} kcal{showMacros ? ` · ${macroLabel(group.foods)}` : ''}</Text>
       </TouchableOpacity>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Agregar a las ${group.hour}`} disabled={actions.isSelectionMode}
         delayPressIn={0} style={styles.add} onPress={() => actions.onAddAtHour(group.hour)}>
@@ -48,22 +54,39 @@ const Group = React.memo(function Group({ group, actions, selectedFoodIds }: { g
       </TouchableOpacity>
     </View>
     <View style={styles.card}>
-      {group.foods.map((food, index) => <FoodRow key={food.id} food={food} first={index === 0} actions={actions}
+      {group.foods.map((food, index) => <FoodRow key={food.id} food={food} first={index === 0} actions={actions} showMacros={showMacros}
         selected={selectedFoodIds?.has(food.id) ?? false} />)}
     </View>
   </View>;
 });
 
 /** Comidas del dia agrupadas por hora. Conserva la seleccion multiple y el reciclado de celdas. */
-export const MealGroupFeed = React.memo(function MealGroupFeed({ foods, ref, empty, ...actions }: FeedActions & {
+export const MealGroupFeed = React.memo(function MealGroupFeed({ foods, ref, empty, showMacros = false, scrollOffset, ...actions }: FeedActions & {
+  showMacros?: boolean;
+  scrollOffset?: SharedValue<number>;
   foods: LoggedFoodItem[];
   ref?: React.Ref<HourRailFeedHandle>;
   empty: React.ReactElement;
 }) {
   const styles = useStyles();
+  const reducedMotion = useReducedMotion();
+  const [viewport, setViewport] = useState(0);
+  const [content, setContent] = useState(0);
+  const rawMax = Math.max(0, content - viewport);
+  const runway = rawMax > 0 ? Math.max(0, 216 - rawMax) : 0;
+  const snap = (offset: number) => {
+    if (!scrollOffset || rawMax <= 0 || offset <= 0 || offset >= 216) return;
+    list.current?.scrollToOffset({ offset: offset < 108 ? 0 : 216, animated: !reducedMotion });
+  };
   const list = useRef<{ scrollToOffset: (options: { offset: number; animated: boolean }) => unknown } | null>(null);
   const attach = useCallback((value: typeof list.current) => { list.current = value; }, []);
   useImperativeHandle(ref, () => ({ resetScroll: () => { list.current?.scrollToOffset({ offset: 0, animated: false }); } }), []);
+  useEffect(() => {
+    if (scrollOffset && content > 0 && viewport > 0 && rawMax <= 0) {
+      scrollOffset.value = 0;
+      list.current?.scrollToOffset({ offset: 0, animated: false });
+    }
+  }, [content, viewport, rawMax, scrollOffset]);
   const groups = useMemo(() => buildMealGroups(foods), [foods]);
   const foodIds = useMemo(() => new Set(foods.map(food => food.id)), [foods]);
   const live = useRef({ actions, foodIds });
@@ -79,10 +102,14 @@ export const MealGroupFeed = React.memo(function MealGroupFeed({ foods, ref, emp
   }), []);
   const groupActions = useMemo(() => ({ ...handlers, isSelectionMode: actions.isSelectionMode }), [handlers, actions.isSelectionMode]);
   const renderItem = useCallback(({ item }: { item: MealGroup }) =>
-    <Group group={item} actions={groupActions} selectedFoodIds={actions.selectedFoodIds} />, [groupActions, actions.selectedFoodIds]);
-  return <LegendList ref={attach} data={groups} renderItem={renderItem} keyExtractor={keyExtractor}
+    <Group group={item} actions={groupActions} selectedFoodIds={actions.selectedFoodIds} showMacros={showMacros} />, [groupActions, actions.selectedFoodIds, showMacros]);
+  return <AnimatedLegendList ref={attach} scrollEnabled={!scrollOffset || rawMax > 0} sharedValues={scrollOffset ? { scrollOffset } : undefined}
+    onLayout={event => setViewport(event.nativeEvent.layout.height)}
+    onContentSizeChange={(_width, height) => setContent(Math.max(0, height - runway))}
+    onScrollEndDrag={event => { if (!event.nativeEvent.velocity?.y) snap(event.nativeEvent.contentOffset.y); }}
+    onMomentumScrollEnd={event => snap(event.nativeEvent.contentOffset.y)} data={groups} renderItem={renderItem} keyExtractor={keyExtractor}
     recycleItems maintainVisibleContentPosition={false} drawDistance={250} showsVerticalScrollIndicator={false}
-    ListEmptyComponent={empty} contentContainerStyle={styles.content} />;
+    ListEmptyComponent={empty} contentContainerStyle={[styles.content, scrollOffset ? { paddingTop: 336, paddingBottom: 120 + runway } : null]} />;
 });
 
 const useStyles = makeStyles((t) => ({

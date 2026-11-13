@@ -17,6 +17,8 @@ import { SyncDocument, UserPreferencesDoc, isUserPreferencesDoc } from '@/servic
 interface PreferencesContextValue {
   preferencesReady: boolean;
   weightTrackingEnabled: boolean;
+  diaryMacrosEnabled: boolean;
+  setDiaryMacrosEnabled: (enabled: boolean) => void;
   syncError: string | null;
   setWeightTrackingEnabled: (enabled: boolean) => void;
 }
@@ -155,14 +157,34 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [namespace, user?.id, persist]
   );
 
+  const setDiaryMacrosEnabled = useCallback(
+    (diaryMacrosEnabled: boolean) => {
+      const next: UserPreferencesDoc = {
+        id: user?.id ?? 'guest',
+        preferences: { ...documentRef.current.preferences, diaryMacrosEnabled },
+        updatedAt: Date.now(),
+        _deleted: false,
+      };
+      const previous = documentRef.current;
+      documentRef.current = next;
+      setDocument(next);
+      setSyncError(null);
+      void persist([next]);
+      void syncClient.enqueue('userPreferences', next, previous).catch(() => undefined);
+    },
+    [namespace, user?.id, persist]
+  );
+
   const value = useMemo(
     () => ({
       preferencesReady,
+      diaryMacrosEnabled: document.preferences.diaryMacrosEnabled === true,
+      setDiaryMacrosEnabled,
       weightTrackingEnabled: enabled,
       syncError,
       setWeightTrackingEnabled,
     }),
-    [enabled, preferencesReady, setWeightTrackingEnabled, syncError]
+    [document.preferences.diaryMacrosEnabled, enabled, preferencesReady, setDiaryMacrosEnabled, setWeightTrackingEnabled, syncError]
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 };
