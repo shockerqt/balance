@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, Switch, TouchableOpacity, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { Button, Icon, Screen, Text } from '@/components/ui';
+import { Button, Icon, Input, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { reactNativeSpikeEnabled } from '@/dev/react-native-spike-gate';
 import type { Appearance } from '@/theme';
@@ -15,8 +15,20 @@ export default function SettingsScreen() {
   const { preference, setPreference, ready } = useThemeControls();
   const router = useRouter();
   const { user, isGuest, isLoading, logout, accountChoicesAvailable } = useAuth();
-  const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled, diaryMacrosEnabled, setDiaryMacrosEnabled } =
+  const { preferencesReady, weightTrackingEnabled, syncError, setWeightTrackingEnabled, dailyCalorieTarget, setDailyCalorieTarget, diaryMacrosEnabled, setDiaryMacrosEnabled } =
     usePreferencesStore();
+
+  const [calorieDraft, setCalorieDraft] = useState(String(dailyCalorieTarget));
+  const [calorieDirty, setCalorieDirty] = useState(false);
+  const [calorieError, setCalorieError] = useState<string | null>(null);
+  useEffect(() => { if (!calorieDirty) setCalorieDraft(String(dailyCalorieTarget)); }, [dailyCalorieTarget, calorieDirty]);
+  const saveCalorieTarget = () => {
+    const raw = calorieDraft.trim();
+    if (!/^\d+$/.test(raw) || !setDailyCalorieTarget(Number(raw))) {
+      setCalorieError('Ingresa un entero entre 500 y 10000 kcal.'); return;
+    }
+    setCalorieDirty(false); setCalorieError(null);
+  };
 
   const logoutPending = useRef(false);
   const handleLogout = async () => {
@@ -73,6 +85,16 @@ export default function SettingsScreen() {
               value={diaryMacrosEnabled} onValueChange={setDiaryMacrosEnabled}
               trackColor={{ false: theme.colors.outline, true: theme.colors.primary }} />
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text variant="title" accessibilityRole="header">Meta diaria</Text>
+          <Input accessibilityLabel="Meta diaria de calorías" keyboardType="number-pad" maxLength={5}
+            editable={preferencesReady} value={calorieDraft}
+            onChangeText={value => { setCalorieDraft(value); setCalorieDirty(true); setCalorieError(null); }} />
+          <Text variant="caption" tone="secondary">kcal por día</Text>
+          {calorieError ? <Text tone="danger" accessibilityRole="alert">{calorieError}</Text> : null}
+          <Button title="Guardar meta" disabled={!preferencesReady} onPress={saveCalorieTarget} />
         </View>
 
         <View style={styles.section}>

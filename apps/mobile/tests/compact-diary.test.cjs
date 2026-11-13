@@ -88,6 +88,7 @@ test('Settings starts Simple, toggles canonical preferences, persists, rehydrate
   const types = local('./src/services/sync/types.ts');
   const preferences = loadFile('src/hooks/use-preferences-store.tsx', {
     react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    '@/lib/day-targets': local('./src/lib/day-targets.ts'),
     '@/services/config': { API_BASE_URL: 'https://example.test/api' },
     '@/services/auth/session-state': { authDataNamespace: () => 'user' },
     '@/hooks/use-auth': { useAuth: () => ({ user: null }) },
@@ -103,7 +104,7 @@ test('Settings starts Simple, toggles canonical preferences, persists, rehydrate
     react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
     'react-native': Object.fromEntries(['Alert','Modal','Pressable','ScrollView','Switch','TouchableOpacity','View'].map(n => [n, host(n)])),
     'expo-router': { Stack: { Screen: host('StackScreen') }, useRouter: () => ({}) },
-    '@/components/ui': Object.fromEntries(['Button','Icon','Screen','Text'].map(n => [n, host(n)])),
+    '@/components/ui': Object.fromEntries(['Button','Icon','Input','Screen','Text'].map(n => [n, host(n)])),
     '@/hooks/use-auth': { useAuth: () => ({ isGuest: true }) },
     '@/dev/react-native-spike-gate': { reactNativeSpikeEnabled: false },
     '@/hooks/use-preferences-store': preferences,

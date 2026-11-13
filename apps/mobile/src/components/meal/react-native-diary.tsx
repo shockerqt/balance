@@ -126,13 +126,13 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
     <Animated.View style={[{ position: 'absolute', left: 0, right: 0, zIndex: 4, overflow: 'hidden' }, summaryStyle]}>
     <Animated.View pointerEvents={compact ? 'none' : 'auto'} accessibilityElementsHidden={compact}
       importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={expandedSummaryStyle}>
-      <StickyMacroHeader {...log} foods={log.foods}
+      <StickyMacroHeader {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
         onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     </Animated.View>
     <Animated.View pointerEvents={compact ? 'auto' : 'none'} accessibilityElementsHidden={!compact}
       importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'}
       style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, compactSummaryStyle]}>
-      <StickyMacroHeader compact {...log} foods={log.foods}
+      <StickyMacroHeader compact {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
         onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     </Animated.View>
     </Animated.View>
