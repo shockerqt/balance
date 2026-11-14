@@ -94,3 +94,59 @@ The dominant cost is the single-file collection cache: one added food rewrites
 about 22 MB, and a first sync writes a growing copy of the file once per page.
 Per-document `Intl` formatting costs about 84 ms for 24,000 calls in Node, which
 is small next to the storage cost.
+
+## Scroll-linked week strip (BAL-074)
+
+The 2026-11-14 diagnostic used a physical Samsung SM-S906E, Android 16,
+Balance Dev 1.6.0/build 9 and Hermes. Source `67f472e` had the same diary as
+integrated `5acd138`. Freezing only the week strip at expanded geometry reduced
+moving-transition UI callback intervals from median 100.31 ms/p95 200.61 ms
+(n=74) to median 8.36 ms/p95 16.72 ms (n=390). Original compact median was
+8.36 ms (n=152), and the operator reported greater fluidity with the frozen week.
+Both captures stopped on day-change guards; days and gestures were not matched.
+These exploratory development scheduling measurements identify a likely cost;
+they are not production FPS or measurements of this implementation. The frozen
+diagnostic is not the implementation. Probe/data/report remain at
+`/home/ubuntu/.local/state/balance-diagnostics/20261114-scroll/`.
+
+The implementation retains three weeks, the existing pager/swipe hook and date
+owner. Inside `DateStripHeader`, `pVisible` (`useDerivedValue`) clamps collapse
+progress to `[0, 1]` and gates all visible collapse styles (`titleHeight`,
+`fullTitle`, `compactTitle`, `weekHeight`, and `collapseVisible.week`), while
+`pDeferred` holds offscreen weeks (`offset = -1, +1`) constant during pure
+vertical collapse `(0, 1)` and syncs immediately on endpoints (`0` / `1`) or any
+horizontal gesture (`weekPhase`, `offset`, `pagerPosition`, or `pagerInteraction`).
+During vertical transition frames, only 5 header/strip style mappers (`4` header +
+`1` visible week row) run instead of updating all 42 day faces, and `0` style
+mappers run in compact scroll `>216 dp` or overscroll `<0 dp` thanks to
+`useDerivedValue` (`valueSetter`) equality suppression.
+
+Each pill uses the single-view bottom-anchored `dayPill` (`borderRadius: 14`,
+`borderWidth: 1`, `justifyContent: 'flex-end'`, `overflow: 'hidden'`) and
+`dayActive` hierarchy without multi-view `PillSurface` caps or split touch
+layers. All 42 selected/rest day faces keep static text and mark slots (number
+`fontSize: 17` and `lineHeight: 20`, letter `height: 16`, mark `height: 4`) with
+zero per-frame style updates inside `DayFace`, clipping the top weekday letter
+cleanly as the week row height and padding contract (`72 -> 42 dp`, `paddingTop:
+4 -> 2 dp`, `paddingBottom: 8 -> 4 dp`), avoiding Android `ParagraphShadowNode`
+text re-measurement.
+
+| Collapse progress | Viewport / week row | Top / bottom inset | Clipped pill height | Static number slot | Static letter slot | Static mark slot |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 72 dp | 4 / 8 dp | 60 dp | 17 / 20 dp | 16 dp | 4 dp |
+| 0.5 | 57 dp | 3 / 6 dp | 48 dp | 17 / 20 dp | 16 dp (top-clipped) | 4 dp |
+| 1 | 42 dp | 2 / 4 dp | 36 dp | 17 / 20 dp | 16 dp (clipped) | 4 dp |
+
+Each date retains one `TouchableOpacity` button (`flex: 1`, `4 dp` vertical
+`hitSlop`) and its selected state, while adjacent weeks stay hidden from
+accessibility. The operator validated the visual appearance of the bottom-anchored
+clipped pill on the device.
+
+The compiled real-component renderer tests use the real swipe hook and check
+week and viewport geometry at endpoints, midpoint, out-of-range clamps and
+reversal; single-view bottom-anchored pill geometry without `PillSurface` caps;
+static `DayFace` slots; visibility-gated `pVisible`/`pDeferred` updates (5 style
+mappers mid-collapse, 0 in compact/overscroll) and same-frame horizontal
+synchronization; horizontal/vertical composition; no React/date updates during
+UI frames; drag cancellation/completion/invalidation; commands, accessibility
+and non-pager/compact-only fallbacks. Historical title timing tests remain intact.
