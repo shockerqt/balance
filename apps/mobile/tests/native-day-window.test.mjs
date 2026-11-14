@@ -34,21 +34,17 @@ const hooks = registerHooks({
       export const runOnJS = fn => (...args) => globalThis.__nativeWindowTest.js.push(() => fn(...args));
       export const useEvent = fn => fn;
       export const useSharedValue = value => { const ref = useRef({ value }); return ref.current; };
-      export const useAnimatedRef = () => useRef(null);
-      export const useAnimatedProps = read => ({ read });
-      export const useFrameCallback = () => {};
-      export const dispatchCommand = () => {};
     `);
     return next(url, context);
   },
 });
 const { NativeDayWindow } = await import('../src/components/meal/native-day-window.tsx');
-const renderDay = (dateId, presentation) => React.createElement('Day', { dateId, presentation });
+const renderDay = dateId => React.createElement('Day', { dateId });
 const flushJS = () => { for (const fn of state.js.splice(0)) fn(); };
 const flushFrames = () => { for (const [id, fn] of [...state.frames]) { state.frames.delete(id); fn(); } };
 const pager = tree => tree.root.findByType('NativePager');
-const selected = (p, index) => { p.props.onPageScroll({ eventName: 'onPageSelected', position: index }); p.props.onPageSelected({ nativeEvent: { position: index } }); };
-const phase = (p, value) => { p.props.onPageScroll({ eventName: 'onPageScrollStateChanged', pageScrollState: value }); p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } }); };
+const selected = (p, index) => p.props.onPageSelected({ nativeEvent: { position: index } });
+const phase = (p, value) => p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } });
 const scroll = (p, index, offset) => p.props.onPageScroll({ eventName: 'onPageScroll', position: index, offset });
 function setup() {
   const nav = createLogNavigation('2026-11-07');
@@ -93,41 +89,43 @@ test('native scroll frames and selected events do not commit React or change the
   await act(() => tree.unmount());
 });
 
-test('UI readiness and week touch lock gate reversal independently of canonical JS acknowledgement', async () => {
-  const app = setup(), tree = await mount(app), p = pager(tree);
-  const presentation = tree.root.findAllByType('Day').find(n => n.props.dateId === app.nav.get()).props.presentation;
-  const first = dateIdToEpochDay(app.nav.get());
+test('native swipes and immediate reversal never wait for neighbor layout or readiness', async () => {
+  const app = setup();
+  let tree;
   try {
-    assert.equal(p.props.animatedProps.read().scrollEnabled, false);
-    presentation.ready.value = { [first - 1]: true, [first]: true, [first + 1]: true };
-    assert.equal(p.props.animatedProps.read().scrollEnabled, true);
-    presentation.headerTouch(true);
-    assert.equal(p.props.animatedProps.read().scrollEnabled, false);
-    presentation.headerTouch(false);
-    assert.equal(p.props.animatedProps.read().scrollEnabled, true);
-    await act(() => { phase(p, 'dragging'); scroll(p, 7, .5); scroll(p, 7, 0); selected(p, 7); phase(p, 'idle'); });
-    assert.equal(presentation.motion.value.cleanup, null, 'cancelling does not clean or reset the source');
-    await act(() => { phase(p, 'dragging'); scroll(p, 7, 1); selected(p, 8); phase(p, 'idle'); });
-    assert.equal(presentation.motion.value.visual, first + 1);
-    assert.equal(app.nav.get(), '2026-11-07', 'UI completion does not accept the canonical day');
-    assert.equal(presentation.ready.value[first], false);
-    assert.equal(p.props.animatedProps.read().scrollEnabled, false, 'old source and next header must be prepared before a new gesture');
-    presentation.ready.value = { ...presentation.ready.value, [first]: true, [first + 2]: true };
-    assert.equal(p.props.animatedProps.read().scrollEnabled, true);
-    await act(() => flushJS());
-    assert.equal(app.nav.get(), '2026-11-08');
-  } finally { await act(() => tree.unmount()); }
+    await act(() => { tree = create(React.createElement(app.Host)); });
+    const p = pager(tree);
+    assert.equal(tree.root.findAllByType('Day').length, 1, 'neighbor content has not even been prepared');
+    assert.equal(p.props.scrollEnabled, true, 'native swipe permission is already enabled before any layout callback');
+    await act(() => selected(p, 7));
+    for (const [index, date] of [[8, '2026-11-08'], [9, '2026-11-09'], [8, '2026-11-08']]) {
+      assert.equal(p.props.scrollEnabled, true);
+      await act(() => {
+        phase(p, 'dragging'); scroll(p, index, 0); selected(p, index); phase(p, 'idle'); flushJS();
+      });
+      assert.equal(app.nav.get(), date);
+      assert.equal(pager(tree), p);
+      assert.equal(p.props.scrollEnabled, true, 'acknowledgement never introduces a measured-neighbor lock');
+    }
+    const revision = app.nav.getRevision();
+    await act(() => { phase(p, 'dragging'); scroll(p, 8, .4); scroll(p, 8, 0); selected(p, 8); phase(p, 'idle'); flushJS(); });
+    assert.equal(app.nav.getRevision(), revision, 'a canceled swipe does not commit another day');
+    assert.equal(p.props.scrollEnabled, true);
+  } finally { if (tree) await act(() => tree.unmount()); }
 });
 
 test('rapid native swipes discard a queued older idle callback and acknowledge only the final settled index', async () => {
   const app = setup(), tree = await mount(app), p = pager(tree), baseline = app.commits();
   await act(() => {
-    phase(p, 'dragging'); scroll(p, 7, 0.5); phase(p, 'settling'); selected(p, 8); phase(p, 'idle');
-    phase(p, 'dragging'); scroll(p, 8, 0.6); phase(p, 'settling'); selected(p, 9); phase(p, 'idle');
+    for (const index of [8, 9, 10]) {
+      assert.equal(p.props.scrollEnabled, true, 'every rapid gesture is permitted without neighbor measurement or JS acknowledgement');
+      phase(p, 'dragging'); scroll(p, index - 1, 0.6); phase(p, 'settling'); selected(p, index); phase(p, 'idle');
+    }
   });
   assert.equal(app.commits(), baseline);
   await act(() => flushJS());
-  assert.equal(app.nav.get(), '2026-11-09');
+  assert.equal(app.nav.get(), '2026-11-10');
+  assert.equal(p.props.scrollEnabled, true);
   assert.equal(pager(tree), p);
   await act(() => tree.unmount());
 });

@@ -49,7 +49,7 @@ async function harness(initial = '2026-12-06', staticMode = false) {
   const gesturesModule = { GestureDetector: 'GestureDetector', Gesture: { Pan() {
     const g = { handlers: {} };
     for (const key of ['enabled', 'maxPointers', 'activeOffsetX', 'failOffsetY']) g[key] = () => g;
-    for (const key of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize', 'onTouchesDown', 'onTouchesUp', 'onTouchesCancelled']) g[key] = fn => { g.handlers[key] = fn; return g; };
+    for (const key of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) g[key] = fn => { g.handlers[key] = fn; return g; };
     gestures.push(g); return g;
   } } };
   const common = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native-reanimated': reanimated,
@@ -264,5 +264,37 @@ test('collapse shares UI progress with date paging, morphs week geometry and kee
     assert.equal(active.length, 1); assert.match(active[0].props.accessibilityLabel, /jueves 3 de diciembre/);
     await renderer.act(async () => calendars()[0].props.onPress());
     assert.deepEqual(h.routes, ['/date-picker']);
+  } finally { await h.close(); }
+});
+
+test('compiled global title restores the historical fade timing inside its fixed clip', async () => {
+  const h = await harness('2026-12-02');
+  const face = kind => {
+    let node = h.tree.root.findAllByType('AnimatedView').find(n => n.props.testID === `date-label-${kind}-2026-12-02`).parent;
+    while (node && node.props.accessibilityElementsHidden === undefined) node = node.parent;
+    return node;
+  };
+  try {
+    const baseline = h.commits();
+    for (const offset of [-20, 0, 54, 90.72, 108, 125.28, 162, 216, 300]) {
+      await h.collapseTo(offset);
+      const p = Math.min(1, Math.max(0, offset / 216));
+      const expanded = h.style(face('expanded')), compact = h.style(face('compact'));
+      assert.ok(Math.abs(expanded.opacity - Math.max(0, 1 - p / .42)) < 1e-12);
+      assert.ok(Math.abs(compact.opacity - Math.min(1, Math.max(0, (p - .58) / .42))) < 1e-12);
+      if (p >= .42 && p <= .58) {
+        assert.ok(expanded.opacity < 1e-12);
+        assert.ok(compact.opacity < 1e-12, 'the familiar baseline retains its historical blank interval');
+      }
+      assert.equal(expanded.transform[0].translateY, -28 * p);
+      const clip = face('expanded').parent;
+      assert.equal(h.style(clip).overflow, 'hidden');
+      assert.equal(h.style(clip).height, 64 - 28 * p);
+    }
+    assert.equal(h.commits(), baseline, 'collapse remains on the UI thread between semantic handoffs');
+    await h.compactMode(true);
+    assert.equal(face('expanded').props.accessibilityElementsHidden, true);
+    assert.equal(face('compact').props.accessibilityElementsHidden, false);
+    assert.equal(h.tree.root.findAllByType('Button').filter(n => n.props.accessibilityLabel === 'Elegir fecha' && n.props.accessible).length, 1);
   } finally { await h.close(); }
 });

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Alert, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useIsFocused } from 'expo-router/react-navigation';
-import Animated, { useAnimatedStyle, useAnimatedReaction, runOnJS, useSharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useAnimatedReaction, runOnJS, type SharedValue, useSharedValue } from 'react-native-reanimated';
 import { Button, Card, Text } from '@/components/ui';
 import { useMealActions, useMealDay, type LoggedFoodItem } from '@/hooks/use-meal-store';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -13,14 +13,19 @@ import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
 import { NativeDayWindow } from './native-day-window';
 import { MealGroupFeed } from './meal-group-feed';
-import { pageGeometry, type DiaryPagePresentation } from '@/lib/diary-presentation';
-import { recordDiaryCommit } from '@/dev/native-pager-status';
+import type { HourRailFeedHandle } from './hour-rail-feed';
 
 export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const active = useIsFocused();
-  const [date] = useLogsSelectedDate();
+  const [date, setDate] = useLogsSelectedDate();
   const revision = useLogsDateRevision();
   const [lockedDate, setLockedDate] = useState<string | null>(null);
+  const headerScroll = useSharedValue(0);
+  const activeDay = useSharedValue(dateIdToEpochDay(date));
+  const [compact, setCompact] = useState(false);
+  useLayoutEffect(() => { activeDay.value = dateIdToEpochDay(date); headerScroll.value = 0; setCompact(false); }, [date, revision, activeDay, headerScroll]);
+  useAnimatedReaction(() => headerScroll.value >= 108, (next, prev) => { if (next !== prev) runOnJS(setCompact)(next); });
+  const headerStyle = useAnimatedStyle(() => ({ height: 136 - 58 * Math.min(1, Math.max(0, headerScroll.value / 216)) }));
   const position = useSharedValue(dateIdToEpochDay(date));
   const interaction = useSharedValue(0);
   useEffect(() => { setLockedDate(null); }, [date]);
@@ -32,69 +37,52 @@ export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const selectionChanged = useCallback((day: string, selected: boolean) => {
     if (logsDateStore.get() === day) setLockedDate(selected ? day : null);
   }, []);
-  const renderDay = useCallback((day: string, presentation?: DiaryPagePresentation) => <DiaryDay date={day} today={today}
-    onSelection={selectionChanged} presentation={presentation} active={active}
-    headerEnabled={Math.abs(dateIdToEpochDay(day) - dateIdToEpochDay(date)) <= 1} />,
-  [active, date, selectionChanged, today]);
-  const body = <View style={{ flex: 1 }}>
+  const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} headerScroll={headerScroll} activeDay={activeDay} />, [selectionChanged, today, headerScroll, activeDay]);
+  return <View style={{ flex: 1 }}>
+    <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
+    <DateStripHeader compact={compact} collapseScroll={headerScroll} selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
+    </Animated.View>
     <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
   </View>;
-  return __DEV__ ? <React.Profiler id="diary-presentation" onRender={(_id, _phase, duration) => recordDiaryCommit(duration)}>{body}</React.Profiler> : body;
 }
 
-const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, presentation, active, headerEnabled }: {
-  date: string; today: string; presentation?: DiaryPagePresentation; active: boolean; headerEnabled: boolean;
-  onSelection: (date: string, selected: boolean) => void;
-}) {
+const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, headerScroll, activeDay }: { date: string; today: string; headerScroll: SharedValue<number>; activeDay: SharedValue<number>; onSelection: (date: string, selected: boolean) => void }) {
   const router = useRouter();
   const scrollOffset = useSharedValue(0);
   const dayNumber = dateIdToEpochDay(date);
-  const localPosition = useSharedValue(dayNumber);
-  const headerTouch = useCallback((down: boolean) => {
-    'worklet';
-    if (presentation?.motion.value.visual === dayNumber) presentation.headerTouch(down);
-  }, [dayNumber, presentation]);
   const [compact, setCompact] = useState(false);
-  const [headerSize, setHeaderSize] = useState({ expanded: 136, compact: 78, measured: false });
-  const [summarySize, setSummarySize] = useState({ expanded: 188, compact: 30, measured: false });
-  const measureHeader = useCallback((expanded: number, compactHeight: number) => {
-    setHeaderSize(previous => previous.measured && previous.expanded === expanded && previous.compact === compactHeight
-      ? previous : { expanded, compact: compactHeight, measured: true });
-  }, []);
-  const measureSummary = useCallback((expanded: number, compactHeight: number) => {
-    setSummarySize(previous => previous.measured && previous.expanded === expanded && previous.compact === compactHeight
-      ? previous : { expanded, compact: compactHeight, measured: true });
-  }, []);
-  const geometry = useMemo(() => pageGeometry(headerSize.expanded, headerSize.compact, summarySize.expanded, summarySize.compact), [headerSize, summarySize]);
-  useAnimatedReaction(() => scrollOffset.value >= geometry.distance / 2, (next, prev) => {
-    if (next !== prev) runOnJS(setCompact)(next);
+  useAnimatedReaction(() => ({ offset: scrollOffset.value, day: activeDay.value }), (next) => {
+    if (next.day === dayNumber) headerScroll.value = Math.max(0, next.offset);
   });
-  const headerStyle = useAnimatedStyle(() => ({ height: headerSize.expanded - (headerSize.expanded - headerSize.compact)
-    * Math.min(1, Math.max(0, scrollOffset.value / geometry.distance)) }));
+  useAnimatedReaction(() => scrollOffset.value > 0, (next, prev) => { if (next !== prev) runOnJS(setCompact)(next); });
+  const expandedSummaryStyle = useAnimatedStyle(() => ({ opacity: Math.max(0, 1 - scrollOffset.value / 72) }));
+  const compactSummaryStyle = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, (scrollOffset.value - 54) / 162)) }));
   const summaryStyle = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, scrollOffset.value / geometry.distance));
-    return { top: headerSize.expanded - (headerSize.expanded - headerSize.compact) * p,
-      height: summarySize.expanded - (summarySize.expanded - summarySize.compact) * p };
+    const p = Math.min(1, Math.max(0, scrollOffset.value / 216));
+    return { top: 136 - 58 * p, height: 188 - 158 * p };
   });
   const log = useMealDay(date);
   const currentLog = useRef(log);
   useLayoutEffect(() => { currentLog.current = log; }, [log]);
   const { deleteMultipleFoods } = useMealActions();
   const selection = useFoodSelection(date);
+  const feed = useRef<HourRailFeedHandle>(null);
   const focused = useRef(false);
+  useLayoutEffect(() => {
+    scrollOffset.value = 0;
+    feed.current?.resetScroll();
+  }, [date, scrollOffset]);
   const preference = usePreferencesStore();
-  const live = useCallback(() => focused.current && logsDateStore.get() === date && (!presentation ||
-    (presentation.motion.value.enabled && presentation.motion.value.phase === 0 && presentation.motion.value.visual === dayNumber)), [date, dayNumber, presentation]);
-  const selectDate = useCallback((next: string) => { if (live()) logsDateStore.set(next); }, [live]);
-  const shiftDate = useCallback((days: number) => { if (live()) logsDateStore.shift(days); }, [live]);
+  const live = () => focused.current && logsDateStore.get() === date;
   useFocusEffect(useCallback(() => {
     focused.current = true;
     return () => { focused.current = false; selection.clear(); onSelection(date, false); };
   }, [date, onSelection, selection.clear]));
   useEffect(() => logsDateStore.subscribe(() => {
-    if (logsDateStore.get() !== date) selection.clear();
-  }), [date, selection.clear]);
+    if (logsDateStore.get() === date) { scrollOffset.value = 0; feed.current?.resetScroll(); }
+    else selection.clear();
+  }), [date, selection.clear, scrollOffset]);
   useEffect(() => {
     onSelection(date, selection.isSelectionMode);
   }, [date, onSelection, selection.isSelectionMode]);
@@ -135,21 +123,20 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, presen
     <Text tone="secondary" style={{ fontSize: 14, textAlign: 'center' }}>{future ? 'Puedes planificar comidas con el botón +.' : 'Agrega lo que comiste con el botón +.'}</Text>
   </Card>, [future]);
   return <View style={{ flex: 1 }}>
-    {headerEnabled ? <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
-      <DateStripHeader pageLocal compact={compact} collapseScroll={scrollOffset} collapseDistance={geometry.distance}
-        selectedDateId={date} onSelectDate={selectDate}
-        onShiftDate={shiftDate} pagerPosition={localPosition}
-        pagerInteraction={presentation?.interaction} onHeaderTouch={headerTouch}
-        active={active && logsDateStore.get() === date} onMeasure={measureHeader} />
-    </Animated.View> : null}
     <Animated.View style={[{ position: 'absolute', left: 0, right: 0, zIndex: 4, overflow: 'hidden' }, summaryStyle]}>
+    <Animated.View pointerEvents={compact ? 'none' : 'auto'} accessibilityElementsHidden={compact}
+      importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={expandedSummaryStyle}>
       <StickyMacroHeader {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
-        collapseScroll={scrollOffset} collapseDistance={geometry.distance} onMeasure={measureSummary}
         onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     </Animated.View>
-    <MealGroupFeed scrollOffset={scrollOffset} showMacros={preference.diaryMacrosEnabled} foods={log.foods} empty={empty}
-      dayNumber={dayNumber} presentation={presentation} prefix={geometry.prefix} collapseDistance={geometry.distance}
-      headerReady={headerEnabled && headerSize.measured && summarySize.measured}
+    <Animated.View pointerEvents={compact ? 'auto' : 'none'} accessibilityElementsHidden={!compact}
+      importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'}
+      style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, compactSummaryStyle]}>
+      <StickyMacroHeader compact {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
+        onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
+    </Animated.View>
+    </Animated.View>
+    <MealGroupFeed scrollOffset={scrollOffset} showMacros={preference.diaryMacrosEnabled} ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}
       onLongPressFood={food => { if (live()) selection.startFromFood(food); }}
       onLongPressGroup={ids => { if (live()) selection.startFromGroup(ids); }}
