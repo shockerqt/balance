@@ -127,13 +127,11 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
 }) {
   const firstDay = dateIdToEpochDay(baseDate) - RADIUS;
   const firstDayRef = useRef(firstDay);
-  firstDayRef.current = firstDay;
   const pagerRef = useRef<PagerView | null>(null);
   const [preparedDays, setPreparedDays] = useState<ReadonlySet<number>>(() => createInitialPreparedDays(firstDay + RADIUS));
   const preparedDaysRef = useRef<ReadonlySet<number>>(preparedDays);
   const preloadFrameRef = useRef<number | null>(null);
   const activeRef = useRef(active);
-  activeRef.current = active;
 
   const cancelIdlePreload = useCallback(() => {
     if (preloadFrameRef.current !== null) {
@@ -216,7 +214,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   }, [applyPreparedSet]);
 
   const scheduleIdlePreload = useCallback(() => {
-    if (preloadFrameRef.current !== null || !activeRef.current) return;
+    if (!motion.current.mounted || preloadFrameRef.current !== null || !activeRef.current) return;
     const step = () => {
       preloadFrameRef.current = null;
       if (!motion.current.mounted || motion.current.phase !== 'idle' || !activeRef.current) return;
@@ -293,7 +291,11 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     preloadFrameRef.current = requestAnimationFrame(step);
   }, []);
 
-  useLayoutEffect(() => { latest.current = { onSettle, readRevision }; }, [onSettle, readRevision]);
+  useLayoutEffect(() => {
+    latest.current = { onSettle, readRevision };
+    firstDayRef.current = firstDay;
+    activeRef.current = active;
+  }, [active, firstDay, onSettle, readRevision]);
   useLayoutEffect(() => {
     const initialFirstDay = firstDayRef.current;
     motion.current.mounted = true;
