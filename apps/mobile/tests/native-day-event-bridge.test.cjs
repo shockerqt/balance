@@ -41,7 +41,7 @@ const reanimated = {
   runOnUI: fn => (...args) => fn(...args),
   runOnJS: fn => (...args) => queued.push(() => fn(...args)),
 };
-const { NativeDayWindow } = compile(path.join(root, 'src/components/meal/native-day-window.tsx'), {
+const { NativeDayWindow, NATIVE_WINDOW_RADIUS: C } = compile(path.join(root, 'src/components/meal/native-day-window.tsx'), {
   react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native': native,
   'react-native-pager-view': { __esModule: true, default: PagerView },
   'react-native-reanimated': reanimated, '../../lib/dates': dates,
@@ -67,18 +67,20 @@ test('installed PagerView callback forwarding keeps visible day, header/week and
   const selected = (p, index) => p.props.onPageSelected({ nativeEvent: { position: index } });
   const phase = (p, value) => p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } });
   const flush = () => { for (const fn of queued.splice(0)) fn(); };
+  const flushAllFrames = () => { while (frames.length > 0) for (const fn of frames.splice(0)) fn(); };
   try {
     await renderer.act(async () => { tree = renderer.create(React.createElement(Host)); });
     let p = tree.root.findByType('PagerHost');
-    await renderer.act(async () => { selected(p, 7); for (const fn of frames.splice(0)) fn(); });
+    await renderer.act(async () => { selected(p, C); flushAllFrames(); });
     const baseline = commits;
     await renderer.act(async () => {
-      selected(p, 8); // Page selection before the scrolling-state callback.
+      selected(p, C + 1); // Page selection before the scrolling-state callback.
       phase(p, 'dragging');
-      for (let i = 0; i <= 200; i++) p.props.testWorklets.onPageScroll({ position: 7, offset: i / 200 });
+      for (let i = 0; i <= 200; i++) p.props.testWorklets.onPageScroll({ position: C, offset: i / 200 });
+      flush();
       phase(p, 'settling');
     });
-    assert.equal(commits, baseline, 'native frame/selection/state receipt cannot render React');
+    assert.equal(commits, baseline, 'native frame/selection/state receipt cannot render React once surrounding days are prepared');
     assert.equal(nav.get(), '2026-11-08', 'selection alone cannot change the authority');
     assert.equal(position.value, dates.dateIdToEpochDay('2026-11-09'));
     await renderer.act(async () => { phase(p, 'idle'); flush(); });
@@ -86,9 +88,9 @@ test('installed PagerView callback forwarding keeps visible day, header/week and
     assert.equal(tree.root.findByType('Header').props.week, '2026-11-09');
     assert.equal(tree.root.findByType('PagerHost'), p, 'own acknowledgement preserves the native surface');
     const next = tree.root.findByType('PagerHost');
-    await renderer.act(async () => { selected(next, 9); phase(next, 'idle'); flush(); });
+    await renderer.act(async () => { selected(next, C + 2); phase(next, 'idle'); flush(); });
     assert.equal(nav.get(), '2026-11-10', 'missing intermediate states cannot strand the header');
-    await renderer.act(async () => { phase(next, 'idle'); selected(next, 10); flush(); });
+    await renderer.act(async () => { phase(next, 'idle'); selected(next, C + 3); flush(); });
     assert.equal(tree.root.findByType('Header').props.date, '2026-11-11', 'coalesced idle before selection must use the final batch selection');
     assert.equal(position.value, dates.dateIdToEpochDay('2026-11-11'), 'the week marker must finish on that same date');
   } finally {
