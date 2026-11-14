@@ -1,14 +1,14 @@
-import React, { useMemo, createContext, useContext } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState, createContext, useContext } from 'react';
 import { StyleSheet, View, TouchableOpacity, type ViewStyle } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { font, useTheme } from '@/theme';
 import { useMealDay } from '@/hooks/use-meal-store';
 import { Icon, Text } from '@/components/ui';
-import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type DerivedValue, type SharedValue, type AnimatedStyle } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedReaction, useAnimatedStyle, useDerivedValue, useSharedValue, type DerivedValue, type SharedValue, type AnimatedStyle } from 'react-native-reanimated';
 import { DateSwipe } from './date-swipe';
 import { useWeekStripSwipe } from './use-week-strip-swipe';
-import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, buildWeekGroup, generateWeeksWindow, getMondayDateId, parseDateId, shiftDateId, todayId } from '@/lib/dates';
+import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, epochDayToDateId, buildWeekGroup, generateWeeksWindow, getMondayDateId, parseDateId, shiftDateId, todayId } from '@/lib/dates';
 
 interface DateStripHeaderProps {
   compact?: boolean;
@@ -74,6 +74,7 @@ function ProgressDateStripHeader(props: DateStripHeaderProps & {
   pVisible: DerivedValue<number>;
   collapseVisible: CollapsePresentation;
 }) {
+  const { pagerPosition, pVisible, collapseVisible, selectedDateId, active = true } = props;
   const width = useSharedValue(1);
   const { gesture, offset, phase, setWidth } = useWeekStripSwipe({ dateId: props.selectedDateId, active: props.active ?? true,
     width, interaction: props.pagerInteraction, onSelectDate: props.onSelectDate });
@@ -83,8 +84,31 @@ function ProgressDateStripHeader(props: DateStripHeaderProps & {
   const selectedDayEpoch = dateIdToEpochDay(props.selectedDateId);
   const selectedDay = useSharedValue(selectedDayEpoch);
   selectedDay.value = selectedDayEpoch;
+  // The canonical date advances only at accepted idle; chained native swipes
+  // can travel much farther. Recenter bounded visual windows with headroom.
+  const [window, setWindow] = useState({ dateId: selectedDateId, day: selectedDayEpoch });
+  if (window.dateId !== selectedDateId) setWindow({ dateId: selectedDateId, day: selectedDayEpoch });
+  const visualDay = window.dateId === selectedDateId ? window.day : selectedDayEpoch;
+  const windowDay = useSharedValue(visualDay);
+  const live = useRef({ dateId: selectedDateId, active: active, mounted: true });
+  useLayoutEffect(() => {
+    live.current = { dateId: selectedDateId, active: active, mounted: true };
+    windowDay.value = visualDay;
+    return () => { live.current.mounted = false; };
+  }, [selectedDateId, active, visualDay, windowDay]);
+  const moveWindow = useCallback((expectedDate: string) => {
+    if (!live.current.mounted || !live.current.active || live.current.dateId !== expectedDate) return;
+    // Read the latest position, never a potentially stale queued target.
+    const day = Math.floor(pagerPosition.value);
+    setWindow(previous => previous.dateId === expectedDate && previous.day === day ? previous : { dateId: expectedDate, day });
+  }, [pagerPosition]);
+  useAnimatedReaction(() => pagerPosition.value, position => {
+    if (!active || weekPhase.value !== 0 || Math.abs(position - windowDay.value) < 4) return;
+    windowDay.value = Math.floor(position);
+    runOnJS(moveWindow)(selectedDateId);
+  });
+  const visualDateId = epochDayToDateId(visualDay);
   const lastSyncedP = useSharedValue(props.compact ? 1 : 0);
-  const { pagerPosition, pVisible, collapseVisible } = props;
   // Gate offscreen weeks and occluded faces during pure vertical collapse; sync immediately on horizontal activity or endpoints.
   const pDeferred = useDerivedValue(() => {
     const p = pVisible.value;
@@ -106,11 +130,11 @@ function ProgressDateStripHeader(props: DateStripHeaderProps & {
     [pagerPosition, offset, weekPhase, selectedDay],
   );
   return <CollapseContext value={collapse}>
-    <HeaderContent {...props} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />
+    <HeaderContent {...props} visualDateId={visualDateId} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />
   </CollapseContext>;
 }
-function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
-  pVisible: DerivedValue<number>; presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
+function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate, onShiftDate, visualDateId = selectedDateId, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
+  pVisible: DerivedValue<number>; visualDateId?: string; presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
 }) {
   const theme = useTheme();
   const router = useRouter();
@@ -143,20 +167,20 @@ function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate
     hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
     style={[styles.calendarBtn, small ? styles.calendarCompact : { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
     onPress={() => router.push('/date-picker')}><Icon name="calendar" size={small ? 18 : 20} tone="primary" /></TouchableOpacity>;
-  const monday = getMondayDateId(selectedDateId);
+  const monday = getMondayDateId(visualDateId);
   return <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
     <Animated.View style={[{ overflow: 'hidden' }, titleHeight]}>
       <Animated.View pointerEvents={compact ? 'none' : 'box-none'} accessibilityElementsHidden={compact}
         importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={[styles.topHeaderRow, fullTitle]}>
         <View accessible={!compact} {...dateCommands} style={styles.dateTitleBox}>
-          {presentation ? <TitleLayerList selectedDateId={selectedDateId} today={today} compact={false} presentation={presentation} /> : <DateLabel {...label} />}
+          {presentation ? <TitleLayerList selectedDateId={visualDateId} today={today} compact={false} presentation={presentation} /> : <DateLabel {...label} />}
         </View>
         {calendar(false)}
       </Animated.View>
       <Animated.View pointerEvents={compact ? 'box-none' : 'none'} accessibilityElementsHidden={!compact}
         importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'} style={[styles.compactHeaderRow, compactTitle]}>
         <View accessible={compact} {...dateCommands} style={[styles.dateTitleBox, { height: 20 }]}>
-          {presentation ? <TitleLayerList selectedDateId={selectedDateId} today={today} compact presentation={presentation} /> : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
+          {presentation ? <TitleLayerList selectedDateId={visualDateId} today={today} compact presentation={presentation} /> : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
         </View>
         {calendar(true)}
       </Animated.View>
