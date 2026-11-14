@@ -49,7 +49,7 @@ async function harness(initial = '2026-12-06', staticMode = false) {
   const gesturesModule = { GestureDetector: 'GestureDetector', Gesture: { Pan() {
     const g = { handlers: {} };
     for (const key of ['enabled', 'maxPointers', 'activeOffsetX', 'failOffsetY']) g[key] = () => g;
-    for (const key of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize']) g[key] = fn => { g.handlers[key] = fn; return g; };
+    for (const key of ['onBegin', 'onStart', 'onUpdate', 'onEnd', 'onFinalize', 'onTouchesDown', 'onTouchesUp', 'onTouchesCancelled']) g[key] = fn => { g.handlers[key] = fn; return g; };
     gestures.push(g); return g;
   } } };
   const common = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native-reanimated': reanimated,

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { LoggedFoodItem } from '@/hooks/use-meal-store';
 import { ProgressBar, Text } from '@/components/ui';
 import { useTheme } from '@/theme';
@@ -15,6 +16,9 @@ interface StickyMacroHeaderProps {
   targetFiber?: number;
   /** Abre el detalle nutricional del dia. */
   onPress?: () => void;
+  collapseScroll?: SharedValue<number>;
+  collapseDistance?: number;
+  onMeasure?: (expanded: number, compact: number) => void;
 }
 
 /* Resumen del dia: calorias contra la meta, lo que queda y un medidor
@@ -27,6 +31,9 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
   targetCarbs = 220,
   targetFat = 65,
   onPress,
+  collapseScroll,
+  collapseDistance = 216,
+  onMeasure,
 }) => {
   const theme = useTheme();
   const c = theme.colors;
@@ -40,21 +47,17 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
     { name: 'Grasa', value: totals.fat, target: targetFat, color: c.macroFat },
   ];
 
-  if (compact) return <TouchableOpacity accessibilityRole="button" onPress={onPress} hitSlop={{ top: 7, bottom: 7 }}
-    accessibilityLabel={`${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías. Abre el detalle nutricional`}
-    style={{ paddingHorizontal: 20, height: 30, flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.background }}>
+  const label = `Resumen del día: ${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías, ${formatCalories(Math.abs(left))} ${over ? 'sobre la meta' : 'restantes'}. ${macros.map(m => `${m.name} ${formatMacroGrams(m.value)} de ${formatMacroGrams(m.target)} gramos`).join(', ')}`;
+  const compactBody = <View style={{ paddingHorizontal: 20, minHeight: 30, flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: c.background }}>
     <Text variant="caption">{formatCalories(totals.calories)} / {formatCalories(targetCalories)} kcal</Text>
     <View style={{ flex: 1 }}><ProgressBar value={targetCalories > 0 ? totals.calories / targetCalories : 0} height={3} color={c.primary} /></View>
+  </View>;
+  if (compact && !collapseScroll) return <TouchableOpacity accessibilityRole="button" onPress={onPress} hitSlop={{ top: 7, bottom: 7 }}
+    accessibilityLabel={`${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías. Abre el detalle nutricional`}
+    disabled={!onPress}>
+    {compactBody}
   </TouchableOpacity>;
-  return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityLabel={`Resumen del día: ${formatCalories(totals.calories)} de ${formatCalories(targetCalories)} kilocalorías, ${formatCalories(Math.abs(left))} ${over ? 'sobre la meta' : 'restantes'}. ${macros.map(m => `${m.name} ${formatMacroGrams(m.value)} de ${formatMacroGrams(m.target)} gramos`).join(', ')}`}
-      accessibilityHint="Abre el detalle nutricional"
-      activeOpacity={0.8}
-      disabled={!onPress}
-      onPress={onPress}
-      style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+  const fullBody = <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
       <View style={styles.kcalRow}>
         <View>
           <Text variant="numberLarge" style={over ? { color: c.danger } : null}>{formatCalories(totals.calories)}</Text>
@@ -79,9 +82,35 @@ export const StickyMacroHeader: React.FC<StickyMacroHeaderProps> = React.memo(({
           </View>
         ))}
       </View>
-    </TouchableOpacity>
-  );
+    </View>;
+  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} accessibilityHint="Abre el detalle nutricional"
+    activeOpacity={0.8} disabled={!onPress} onPress={onPress}>
+    {collapseScroll ? <MorphSummary full={fullBody} compact={compactBody} scroll={collapseScroll} distance={collapseDistance} onMeasure={onMeasure} /> : fullBody}
+  </TouchableOpacity>;
 });
+
+function MorphSummary({ full, compact, scroll, distance, onMeasure }: {
+  full: React.ReactNode; compact: React.ReactNode; scroll: SharedValue<number>; distance: number;
+  onMeasure?: (expanded: number, compact: number) => void;
+}) {
+  const [heights, setHeights] = useState({ full: 0, compact: 0 });
+  useEffect(() => { if (heights.full && heights.compact) onMeasure?.(heights.full, heights.compact); }, [heights, onMeasure]);
+  const expanded = useAnimatedStyle(() => {
+    const p = Math.min(1, Math.max(0, scroll.value / distance));
+    return { opacity: 1 - p, transform: [{ translateY: -Math.max(0, heights.full - heights.compact) * p }] };
+  });
+  const collapsed = useAnimatedStyle(() => ({ opacity: Math.min(1, Math.max(0, scroll.value / distance)) }));
+  return <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <Animated.View style={expanded} onLayout={event => {
+      const height = event.nativeEvent.layout.height;
+      setHeights(previous => previous.full === height ? previous : { ...previous, full: height });
+    }}>{full}</Animated.View>
+    <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0 }, collapsed]} onLayout={event => {
+      const height = event.nativeEvent.layout.height;
+      setHeights(previous => previous.compact === height ? previous : { ...previous, compact: height });
+    }}>{compact}</Animated.View>
+  </View>;
+}
 
 const styles = StyleSheet.create({
   card: { marginHorizontal: 20, padding: 16, gap: 12, borderRadius: 20, borderWidth: 1 },

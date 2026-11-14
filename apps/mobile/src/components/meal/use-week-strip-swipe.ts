@@ -5,12 +5,13 @@ import { logsDateStore, useLogsDateRevision } from '@/hooks/use-logs-date';
 import { shiftDateId } from '@/lib/dates';
 
 /** Local presentation only. One accepted release sends one existing date command. */
-export function useWeekStripSwipe({ dateId, active, width, interaction, onSelectDate }: {
+export function useWeekStripSwipe({ dateId, active, width, interaction, onSelectDate, onHeaderTouch }: {
   dateId: string;
   active: boolean;
   width: SharedValue<number>;
   interaction?: SharedValue<number>;
   onSelectDate: (date: string) => void;
+  onHeaderTouch?: (down: boolean) => void;
 }) {
   const revision = useLogsDateRevision();
   const offset = useSharedValue(0);
@@ -91,6 +92,9 @@ export function useWeekStripSwipe({ dateId, active, width, interaction, onSelect
     };
     return Gesture.Pan().enabled(active).maxPointers(1)
       .activeOffsetX([-16, 16]).failOffsetY([-16, 16])
+      .onTouchesDown(() => { onHeaderTouch?.(true); })
+      .onTouchesUp(() => { onHeaderTouch?.(false); })
+      .onTouchesCancelled(() => { onHeaderTouch?.(false); })
       .onBegin(() => { touchRevision.value = liveRevision.value; })
       .onStart(() => {
         if (width.value <= 1 || touchRevision.value !== liveRevision.value || (interaction?.value ?? 0) !== 0) return;
@@ -108,8 +112,8 @@ export function useWeekStripSwipe({ dateId, active, width, interaction, onSelect
         const projected = offset.value - event.velocityX / width.value * 0.12;
         settle(success && Math.abs(projected) > 0.2 ? Math.sign(projected) : 0);
       })
-      .onFinalize(() => { if (phase.value === 1) settle(0); });
-  }, [active, commit, generation, interaction, liveRevision, offset, origin, phase, touchRevision, width]);
+      .onFinalize(() => { onHeaderTouch?.(false); if (phase.value === 1) settle(0); });
+  }, [active, commit, generation, interaction, liveRevision, offset, onHeaderTouch, origin, phase, touchRevision, width]);
 
   return { gesture, offset, phase, setWidth };
 }

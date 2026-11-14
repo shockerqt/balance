@@ -1,4 +1,4 @@
-import React, { useMemo, createContext, useContext } from 'react';
+import React, { useEffect, useMemo, useState, createContext, useContext } from 'react';
 import { StyleSheet, View, TouchableOpacity } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
@@ -16,6 +16,10 @@ interface DateStripHeaderProps {
   pagerPosition?: SharedValue<number>;
   pagerInteraction?: SharedValue<number>;
   active?: boolean;
+  pageLocal?: boolean;
+  collapseDistance?: number;
+  onMeasure?: (expanded: number, compact: number) => void;
+  onHeaderTouch?: (down: boolean) => void;
   selectedDateId: string;
   onSelectDate: (dateId: string) => void;
   onShiftDate: (days: number) => void;
@@ -32,6 +36,8 @@ type CollapsePresentation = {
   week: AnimatedStyle<{ height: number; paddingTop: number; paddingBottom: number }>;
 };
 const CollapseContext = createContext<CollapsePresentation | null>(null);
+type HeaderMetrics = { fullTitle: number; compactTitle: number; fullWeek: number; compactWeek: number; letter: number };
+const HeaderMetricsContext = createContext<HeaderMetrics>({ fullTitle: 64, compactTitle: 36, fullWeek: 72, compactWeek: 42, letter: 16 });
 const DayTouch = Animated.createAnimatedComponent(TouchableOpacity);
 const WEEK_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 function dateLabel(dateId: string, today: string) {
@@ -49,72 +55,83 @@ function distanceFromDay(day: number, position: number, weekOffset: number, week
   return delta % 7 === 0 ? delta / 7 - weekOffset : 2;
 }
 export function DateStripHeader(props: DateStripHeaderProps) {
-  const { collapseScroll, compact = false } = props;
+  const { collapseScroll, compact = false, collapseDistance = 216, onMeasure } = props;
+  const [measurements, setMeasurements] = useState<Partial<HeaderMetrics>>({});
+  const metrics = { fullTitle: 64, compactTitle: 36, fullWeek: 72, compactWeek: 42, letter: 16, ...measurements };
+  useEffect(() => {
+    if (Object.keys(measurements).length === 5) onMeasure?.(metrics.fullTitle + metrics.fullWeek, metrics.compactTitle + metrics.compactWeek);
+  }, [measurements, onMeasure, metrics.fullTitle, metrics.fullWeek, metrics.compactTitle, metrics.compactWeek]);
   // All day faces share these five UI styles, avoiding duplicate worklet registration per face.
   const letter = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { height: 16 * (1 - p), opacity: Math.max(0, 1 - p / 0.45) };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { height: metrics.letter * (1 - p), opacity: 1 - p };
   });
   const number = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
     return { fontSize: 17 - 2 * p };
   });
   const mark = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
     return { height: 4 - p };
   });
   const touch = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { height: 60 - 24 * p };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { height: metrics.fullWeek - 12 - (metrics.fullWeek - 12 - metrics.compactWeek + 6) * p };
   });
   const week = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { height: 72 - 30 * p, paddingTop: 4 - 2 * p, paddingBottom: 8 - 4 * p };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { height: metrics.fullWeek - (metrics.fullWeek - metrics.compactWeek) * p, paddingTop: 4 - 2 * p, paddingBottom: 8 - 4 * p };
   });
   const collapse = useMemo(() => ({ letter, number, mark, touch, week }), [letter, number, mark, touch, week]);
-  return <CompactContext value={compact}><CollapseContext value={collapse}>{props.pagerPosition ? <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} /> : <HeaderContent {...props} />}</CollapseContext></CompactContext>;
+  return <HeaderMetricsContext value={metrics}><CompactContext value={compact}><CollapseContext value={collapse}>
+    {props.pagerPosition ? <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} /> : <HeaderContent {...props} />}
+    {onMeasure ? <HeaderMeasurement dateId={props.selectedDateId} onMeasure={(key, height) => {
+      setMeasurements(previous => previous[key] === height ? previous : { ...previous, [key]: height });
+    }} /> : null}
+  </CollapseContext></CompactContext></HeaderMetricsContext>;
 }
 function ProgressDateStripHeader(props: DateStripHeaderProps & { pagerPosition: SharedValue<number> }) {
   const width = useSharedValue(1);
   const { gesture, offset, phase, setWidth } = useWeekStripSwipe({ dateId: props.selectedDateId, active: props.active ?? true,
-    width, interaction: props.pagerInteraction, onSelectDate: props.onSelectDate });
+    width, interaction: props.pagerInteraction, onSelectDate: props.onSelectDate, onHeaderTouch: props.onHeaderTouch });
   const interaction = props.pagerInteraction;
   // A content swipe takes visual precedence if another touch starts the pager.
   const weekPhase = useDerivedValue(() => (interaction?.value ?? 0) === 0 ? phase.value : 0);
   const presentation = { position: props.pagerPosition, weekOffset: offset, weekPhase, selectedDay: dateIdToEpochDay(props.selectedDateId) };
   return <HeaderContent {...props} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />;
 }
-function HeaderContent({ compact = false, collapseScroll, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
+function HeaderContent({ compact = false, collapseScroll, collapseDistance = 216, pageLocal = false, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
   presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
 }) {
   const theme = useTheme();
   const router = useRouter();
+  const metrics = useContext(HeaderMetricsContext);
   const today = todayId();
   const monday = getMondayDateId(selectedDateId);
   const week = useMemo(() => buildWeekGroup(monday, 0, today), [monday, today]);
   const weeks = useMemo(() => generateWeeksWindow(selectedDateId, 1, 1, today), [selectedDateId, today]);
-  const labels = useMemo(() => Array.from({ length: 15 }, (_, i) => {
-    const dateId = shiftDateId(selectedDateId, i - 7);
+  const labels = useMemo(() => Array.from({ length: pageLocal ? 3 : 15 }, (_, i) => {
+    const dateId = shiftDateId(selectedDateId, pageLocal ? (i - 1) * 7 : i - 7);
     return { dateId, day: dateIdToEpochDay(dateId), ...dateLabel(dateId, today) };
-  }), [selectedDateId, today]);
+  }), [pageLocal, selectedDateId, today]);
   const label = dateLabel(selectedDateId, today);
   const row = <View style={styles.daysRow}>{week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today}
     selected={item.dateId === selectedDateId} onSelectDate={onSelectDate} />)}</View>;
   const titleHeight = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { height: 64 - 28 * p };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { height: metrics.fullTitle - (metrics.fullTitle - metrics.compactTitle) * p };
   });
   const fullTitle = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { opacity: Math.max(0, 1 - p / 0.42), transform: [{ translateY: -28 * p }] };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { opacity: 1 - p, transform: [{ translateY: -(metrics.fullTitle - metrics.compactTitle) * p }] };
   });
   const compactTitle = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { opacity: Math.min(1, Math.max(0, (p - 0.58) / 0.42)) };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { opacity: p };
   });
   const weekHeight = useAnimatedStyle(() => {
-    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
-    return { height: 72 - 30 * p };
+    const p = Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / collapseDistance : compact ? 1 : 0));
+    return { height: metrics.fullWeek - (metrics.fullWeek - metrics.compactWeek) * p };
   });
   const dateCommands = {
     accessibilityRole: 'adjustable' as const,
@@ -137,15 +154,15 @@ function HeaderContent({ compact = false, collapseScroll, selectedDateId, onSele
   return <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
     <Animated.View style={[{ overflow: 'hidden' }, titleHeight]}>
       <Animated.View pointerEvents={compact ? 'none' : 'box-none'} accessibilityElementsHidden={compact}
-        importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={[styles.topHeaderRow, fullTitle]}>
-        <View accessible={!compact} {...dateCommands} style={styles.dateTitleBox}>
+        importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={[styles.topHeaderRow, { height: metrics.fullTitle }, fullTitle]}>
+        <View accessible={!compact} {...dateCommands} style={[styles.dateTitleBox, { height: metrics.fullTitle - 12 }]}>
           {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
         </View>
         {calendar(false)}
       </Animated.View>
       <Animated.View pointerEvents={compact ? 'box-none' : 'none'} accessibilityElementsHidden={!compact}
-        importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'} style={[styles.compactHeaderRow, compactTitle]}>
-        <View accessible={compact} {...dateCommands} style={[styles.dateTitleBox, { height: 20 }]}>
+        importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'} style={[styles.compactHeaderRow, { height: metrics.compactTitle }, compactTitle]}>
+        <View accessible={compact} {...dateCommands} style={[styles.dateTitleBox, { height: metrics.compactTitle - 16 }]}>
           {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} compact presentation={presentation} />) : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
         </View>
         {calendar(true)}
@@ -235,6 +252,28 @@ function ProgressDayPill({ day, presentation, rest, active }: { day: number; pre
   return <View style={[styles.dayPill, { borderColor: theme.colors.border }]}>
     {rest}
     <Animated.View testID={`day-active-${day}`} style={[styles.dayActive, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, fill]}>{active}</Animated.View>
+  </View>;
+}
+
+/** Natural text/control measurements are outside the animated clipping boxes. */
+function HeaderMeasurement({ dateId, onMeasure }: { dateId: string; onMeasure: (key: keyof HeaderMetrics, height: number) => void }) {
+  const label = dateLabel(dateId, todayId());
+  const measure = (key: keyof HeaderMetrics) => (event: { nativeEvent: { layout: { height: number } } }) => onMeasure(key, event.nativeEvent.layout.height);
+  return <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+    style={{ position: 'absolute', left: 20, right: 76, top: 0, opacity: 0 }}>
+    <View style={{ minHeight: 64, paddingTop: 12 }} onLayout={measure('fullTitle')}><DateLabel {...label} /></View>
+    <View style={{ minHeight: 36, paddingVertical: 8 }} onLayout={measure('compactTitle')}><CompactDateLabel title={label.title} dateId={dateId} /></View>
+    <View style={{ paddingTop: 4, paddingBottom: 8 }} onLayout={measure('fullWeek')}>
+      <View style={{ minHeight: 60, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+        <Text variant="label" onLayout={measure('letter')}>L</Text>
+        <Text style={styles.dayNumberText}>28</Text><View style={{ height: 4 }} />
+      </View>
+    </View>
+    <View style={{ paddingTop: 2, paddingBottom: 4 }} onLayout={measure('compactWeek')}>
+      <View style={{ minHeight: 36, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+        <View style={{ height: 0 }} /><Text style={[styles.dayNumberText, { fontSize: 15 }]}>28</Text><View style={{ height: 3 }} />
+      </View>
+    </View>
   </View>;
 }
 

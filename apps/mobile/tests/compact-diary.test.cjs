@@ -10,9 +10,14 @@ function load(reduced = false) {
   const stubs = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
     'react-native': { TouchableOpacity: host('Touch'), View: host('View') },
     '@legendapp/list/reanimated': { AnimatedLegendList: props => React.createElement('List', props, props.data.map((item, index) => React.createElement(React.Fragment, { key: item.key }, props.renderItem({ item, index })))) },
-    'react-native-reanimated': { useReducedMotion: () => reduced },
+    'react-native-reanimated': { __esModule: true, default: { ScrollView: host('ScrollView') },
+      useReducedMotion: () => reduced, useAnimatedRef: () => React.useCallback(() => {}, []),
+      useSharedValue: value => React.useRef({ value }).current, useEvent: fn => fn, useAnimatedReaction() {},
+      runOnUI: fn => fn, runOnJS: fn => fn, scrollTo() {} },
     '@/lib/meal-groups': local('./src/lib/meal-groups.ts'),
     '@/lib/nutrition': local('./src/lib/nutrition.ts'),
+    '@/lib/diary-presentation': local('./src/lib/diary-presentation.ts'),
+    '@/dev/native-pager-status': local('./src/dev/native-pager-status.ts'),
     '@/theme': { makeStyles: () => () => ({}) },
     '@/components/ui': { Icon: host('Icon'), Text: host('Text') } };
   m.require = n => { if (n in stubs) return stubs[n]; throw Error('Unexpected ' + n); };
@@ -133,7 +138,7 @@ test('real base clearance keeps near-fitting rows static; runway size notificati
   const h = await harness();
   try {
     const padding=h.list().props.contentContainerStyle[1];
-    await h.size(padding.paddingTop+396+padding.paddingBottom);
+    await h.size(h.list().props.ListHeaderComponent.props.style.height+396+padding.paddingBottom);
     assert.equal(h.list().props.scrollEnabled,false,'396px of rows fit with the approved header and clearance');
     h.calls.length=0; await h.release(60); assert.equal(h.calls.length,0);
     await h.size(850);
