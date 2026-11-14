@@ -40,7 +40,7 @@ function Navigation() {
         <Stack.Screen name="batch-move" options={sheet([0.55])} />
         <Stack.Screen name="batch-copy" options={sheet([0.8, 1.0])} />
         <Stack.Screen name="day-nutrition" options={sheet([0.8, 1.0])} />
-        <Stack.Screen name="weight-entry" options={{ ...sheet([0.5, 0.95]), sheetGrabberVisible: false, sheetCornerRadius: 28, contentStyle: { backgroundColor: theme.colors.surface } }} />
+        <Stack.Screen name="weight-entry" options={{ presentation: 'transparentModal', animation: 'fade', gestureEnabled: false, headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
         <Stack.Screen
           name="settings"
           options={{
