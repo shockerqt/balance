@@ -1,11 +1,11 @@
 import React, { useMemo, createContext, useContext } from 'react';
-import { StyleSheet, View, TouchableOpacity, type TextStyle, type ViewStyle } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, type ViewStyle } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { font, useTheme } from '@/theme';
 import { useMealDay } from '@/hooks/use-meal-store';
 import { Icon, Text } from '@/components/ui';
-import Animated, { interpolateColor, useAnimatedStyle, useDerivedValue, useSharedValue, withTiming, type SharedValue, type AnimatedStyle } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type DerivedValue, type SharedValue, type AnimatedStyle } from 'react-native-reanimated';
 import { DateSwipe } from './date-swipe';
 import { useWeekStripSwipe } from './use-week-strip-swipe';
 import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, buildWeekGroup, generateWeeksWindow, getMondayDateId, parseDateId, shiftDateId, todayId } from '@/lib/dates';
@@ -21,20 +21,16 @@ interface DateStripHeaderProps {
   onShiftDate: (days: number) => void;
 }
 type Day = ReturnType<typeof buildWeekGroup>['days'][number];
-type Presentation = { position: SharedValue<number>; weekOffset: SharedValue<number>; weekPhase: SharedValue<number>; selectedDay: number };
+type Presentation = { position: SharedValue<number>; weekOffset: SharedValue<number>; weekPhase: SharedValue<number>; selectedDay: SharedValue<number> };
 
-const CompactContext = createContext(false);
 type CollapsePresentation = {
-  letter: AnimatedStyle<TextStyle>;
-  number: AnimatedStyle<TextStyle>;
-  mark: AnimatedStyle<ViewStyle>;
-  pillMiddle: AnimatedStyle<ViewStyle>;
-  pillBottom: AnimatedStyle<ViewStyle>;
-  touch: AnimatedStyle<ViewStyle>;
-  weekRow: AnimatedStyle<ViewStyle>;
+  week: AnimatedStyle<ViewStyle>;
 };
-const CollapseContext = createContext<CollapsePresentation | null>(null);
-const DayTouch = Animated.createAnimatedComponent(TouchableOpacity);
+type CollapseState = {
+  visible: CollapsePresentation;
+  deferred: CollapsePresentation;
+};
+const CollapseContext = createContext<CollapseState | null>(null);
 const WEEK_LETTERS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 function dateLabel(dateId: string, today: string) {
   const date = parseDateId(dateId);
@@ -50,96 +46,85 @@ function distanceFromDay(day: number, position: number, weekOffset: number, week
   const delta = day - selectedDay;
   return delta % 7 === 0 ? delta / 7 - weekOffset : 2;
 }
-function collapseProgress(collapseScroll: SharedValue<number> | undefined, compact: boolean) {
+function collapseProgress(collapseScroll: SharedValue<number> | undefined, compactFallback: number) {
   'worklet';
-  return Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compact ? 1 : 0));
+  return Math.min(1, Math.max(0, collapseScroll ? collapseScroll.value / 216 : compactFallback));
 }
-function collapseMetrics(p: number) {
-  'worklet';
-  const H = 60 - 24 * p;
-  const L = 16 * (1 - p);
-  const M = 4 - p;
-  const stackTop = (H - (L + 20 + M + 4)) / 2;
-  return { H, L, M, stackTop };
+function useCollapsePresentation(progress: DerivedValue<number>): CollapsePresentation {
+  const week = useAnimatedStyle(() => {
+    const p = progress.value;
+    return { height: 72 - 30 * p, paddingTop: 4 - 2 * p, paddingBottom: 8 - 4 * p };
+  });
+  return useMemo(() => ({ week }), [week]);
 }
 export function DateStripHeader(props: DateStripHeaderProps) {
   const { collapseScroll, compact = false } = props;
-  // All day faces, pill surfaces and touch overlays share these UI-thread styles so collapse animates via transform/opacity without repeated face layout.
-  const letter = useAnimatedStyle(() => {
-    const p = collapseProgress(collapseScroll, compact);
-    const { L, stackTop } = collapseMetrics(p);
-    return { opacity: Math.max(0, 1 - p / 0.45), transform: [{ translateY: stackTop + L / 2 - 16 }] };
-  });
-  const number = useAnimatedStyle(() => {
-    const p = collapseProgress(collapseScroll, compact);
-    const { L, stackTop } = collapseMetrics(p);
-    return { transform: [{ translateY: stackTop + L + 12 - 36 }, { scale: (17 - 2 * p) / 17 }] };
-  });
-  const mark = useAnimatedStyle(() => {
-    const p = collapseProgress(collapseScroll, compact);
-    const { L, M, stackTop } = collapseMetrics(p);
-    return { transform: [{ translateY: stackTop + L + 24 + M / 2 - 50 }, { scaleY: M / 4 }] };
-  });
-  const pillMiddle = useAnimatedStyle(() => {
-    const p = collapseProgress(collapseScroll, compact);
-    const H = 60 - 24 * p;
-    // Compensate centered scaleY origin (y=30) so the middle segment stays anchored at y=14..H-14.
-    return { transform: [{ translateY: (H - 60) / 2 }, { scaleY: (H - 28) / 32 }] };
-  });
-  const pillBottom = useAnimatedStyle(() => {
-    const H = 60 - 24 * collapseProgress(collapseScroll, compact);
-    return { transform: [{ translateY: H - 60 }] };
-  });
-  const touch = useAnimatedStyle(() => {
-    const H = 60 - 24 * collapseProgress(collapseScroll, compact);
-    // Compensate centered scaleY origin (y=30) so the touch overlay tracks y=0..H without squashing sibling visuals.
-    return { transform: [{ translateY: (H - 60) / 2 }, { scaleY: H / 60 }] };
-  });
-  const weekRow = useAnimatedStyle(() => ({
-    transform: [{ translateY: -2 * collapseProgress(collapseScroll, compact) }],
-  }));
-  const collapse = useMemo(
-    () => ({ letter, number, mark, pillMiddle, pillBottom, touch, weekRow }),
-    [letter, number, mark, pillMiddle, pillBottom, touch, weekRow],
-  );
-  return <CompactContext value={compact}><CollapseContext value={collapse}>{props.pagerPosition ? <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} /> : <HeaderContent {...props} />}</CollapseContext></CompactContext>;
+  // When collapseScroll is provided, keep compactFallback constant (0) so toggling `compact` at 108dp never restarts the pVisible UI mapper.
+  const compactFallback = collapseScroll ? 0 : compact ? 1 : 0;
+  const pVisible = useDerivedValue(() => collapseProgress(collapseScroll, compactFallback));
+  const collapseVisible = useCollapsePresentation(pVisible);
+  const staticCollapse = useMemo(() => ({ visible: collapseVisible, deferred: collapseVisible }), [collapseVisible]);
+  if (props.pagerPosition) {
+    return <ProgressDateStripHeader {...props} pagerPosition={props.pagerPosition} pVisible={pVisible} collapseVisible={collapseVisible} />;
+  }
+  return <CollapseContext value={staticCollapse}><HeaderContent {...props} pVisible={pVisible} /></CollapseContext>;
 }
-function ProgressDateStripHeader(props: DateStripHeaderProps & { pagerPosition: SharedValue<number> }) {
+function ProgressDateStripHeader(props: DateStripHeaderProps & {
+  pagerPosition: SharedValue<number>;
+  pVisible: DerivedValue<number>;
+  collapseVisible: CollapsePresentation;
+}) {
   const width = useSharedValue(1);
   const { gesture, offset, phase, setWidth } = useWeekStripSwipe({ dateId: props.selectedDateId, active: props.active ?? true,
     width, interaction: props.pagerInteraction, onSelectDate: props.onSelectDate });
   const interaction = props.pagerInteraction;
   // A content swipe takes visual precedence if another touch starts the pager.
   const weekPhase = useDerivedValue(() => (interaction?.value ?? 0) === 0 ? phase.value : 0);
-  const presentation = { position: props.pagerPosition, weekOffset: offset, weekPhase, selectedDay: dateIdToEpochDay(props.selectedDateId) };
-  return <HeaderContent {...props} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />;
+  const selectedDayEpoch = dateIdToEpochDay(props.selectedDateId);
+  const selectedDay = useSharedValue(selectedDayEpoch);
+  selectedDay.value = selectedDayEpoch;
+  const lastSyncedP = useSharedValue(props.compact ? 1 : 0);
+  const { pagerPosition, pVisible, collapseVisible } = props;
+  // Gate offscreen weeks and occluded faces during pure vertical collapse; sync immediately on horizontal activity or endpoints.
+  const pDeferred = useDerivedValue(() => {
+    const p = pVisible.value;
+    const isHorizontalActive =
+      weekPhase.value !== 0 ||
+      Math.abs(offset.value) > 1e-4 ||
+      Math.abs(pagerPosition.value - selectedDay.value) > 1e-4 ||
+      (interaction ? interaction.value !== 0 : false);
+    if (isHorizontalActive || p === 0 || p === 1) {
+      if (lastSyncedP.value !== p) lastSyncedP.value = p;
+      return p;
+    }
+    return lastSyncedP.value;
+  });
+  const collapseDeferred = useCollapsePresentation(pDeferred);
+  const collapse = useMemo(() => ({ visible: collapseVisible, deferred: collapseDeferred }), [collapseVisible, collapseDeferred]);
+  const presentation = useMemo(
+    () => ({ position: pagerPosition, weekOffset: offset, weekPhase, selectedDay }),
+    [pagerPosition, offset, weekPhase, selectedDay],
+  );
+  return <CollapseContext value={collapse}>
+    <HeaderContent {...props} presentation={presentation} weekGesture={gesture} width={width} onWidth={setWidth} />
+  </CollapseContext>;
 }
-function HeaderContent({ compact = false, collapseScroll, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
-  presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
+function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate, onShiftDate, presentation, weekGesture, width, onWidth }: DateStripHeaderProps & {
+  pVisible: DerivedValue<number>; presentation?: Presentation; weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture']; width?: SharedValue<number>; onWidth?: (width: number) => void;
 }) {
   const theme = useTheme();
   const router = useRouter();
-  const collapse = useContext(CollapseContext)!;
   const today = todayId();
-  const monday = getMondayDateId(selectedDateId);
-  const week = useMemo(() => buildWeekGroup(monday, 0, today), [monday, today]);
-  const weeks = useMemo(() => generateWeeksWindow(selectedDateId, 1, 1, today), [selectedDateId, today]);
-  const labels = useMemo(() => Array.from({ length: 15 }, (_, i) => {
-    const dateId = shiftDateId(selectedDateId, i - 7);
-    return { dateId, day: dateIdToEpochDay(dateId), ...dateLabel(dateId, today) };
-  }), [selectedDateId, today]);
   const label = dateLabel(selectedDateId, today);
-  const row = <View style={styles.weekLayer}><Animated.View style={[styles.daysRow, collapse.weekRow]}>{week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today}
-    selected={item.dateId === selectedDateId} onSelectDate={onSelectDate} />)}</Animated.View></View>;
-  const titleHeight = useAnimatedStyle(() => ({ height: 64 - 28 * collapseProgress(collapseScroll, compact) }));
+  const titleHeight = useAnimatedStyle(() => ({ height: 64 - 28 * pVisible.value }));
   const fullTitle = useAnimatedStyle(() => {
-    const p = collapseProgress(collapseScroll, compact);
+    const p = pVisible.value;
     return { opacity: Math.max(0, 1 - p / 0.42), transform: [{ translateY: -28 * p }] };
   });
   const compactTitle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, Math.max(0, (collapseProgress(collapseScroll, compact) - 0.58) / 0.42)),
+    opacity: Math.min(1, Math.max(0, (pVisible.value - 0.58) / 0.42)),
   }));
-  const weekHeight = useAnimatedStyle(() => ({ height: 72 - 30 * collapseProgress(collapseScroll, compact) }));
+  const weekHeight = useAnimatedStyle(() => ({ height: 72 - 30 * pVisible.value }));
   const dateCommands = {
     accessibilityRole: 'adjustable' as const,
     accessibilityLabel: `${label.title}, ${label.subtitle}`,
@@ -158,31 +143,102 @@ function HeaderContent({ compact = false, collapseScroll, selectedDateId, onSele
     hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
     style={[styles.calendarBtn, small ? styles.calendarCompact : { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
     onPress={() => router.push('/date-picker')}><Icon name="calendar" size={small ? 18 : 20} tone="primary" /></TouchableOpacity>;
+  const monday = getMondayDateId(selectedDateId);
   return <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
     <Animated.View style={[{ overflow: 'hidden' }, titleHeight]}>
       <Animated.View pointerEvents={compact ? 'none' : 'box-none'} accessibilityElementsHidden={compact}
         importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={[styles.topHeaderRow, fullTitle]}>
         <View accessible={!compact} {...dateCommands} style={styles.dateTitleBox}>
-          {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} presentation={presentation} />) : <DateLabel {...label} />}
+          {presentation ? <TitleLayerList selectedDateId={selectedDateId} today={today} compact={false} presentation={presentation} /> : <DateLabel {...label} />}
         </View>
         {calendar(false)}
       </Animated.View>
       <Animated.View pointerEvents={compact ? 'box-none' : 'none'} accessibilityElementsHidden={!compact}
         importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'} style={[styles.compactHeaderRow, compactTitle]}>
         <View accessible={compact} {...dateCommands} style={[styles.dateTitleBox, { height: 20 }]}>
-          {presentation ? labels.map(item => <ProgressDateLabel key={item.dateId} {...item} compact presentation={presentation} />) : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
+          {presentation ? <TitleLayerList selectedDateId={selectedDateId} today={today} compact presentation={presentation} /> : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
         </View>
         {calendar(true)}
       </Animated.View>
     </Animated.View>
-    {presentation && weekGesture && width ? <GestureDetector gesture={weekGesture}>
-      <Animated.View testID="week-viewport" collapsable={false} style={[styles.weekViewport, weekHeight]} onLayout={event => onWidth?.(event.nativeEvent.layout.width)}>
-        {weeks.map((item, index) => <ProgressWeek key={item.startDateId} week={item} offset={index - 1} today={today}
-          monday={dateIdToEpochDay(monday)} width={width} presentation={presentation} selectedDateId={selectedDateId} onSelectDate={onSelectDate} />)}
-      </Animated.View>
-    </GestureDetector> : <DateSwipe days={7}><Animated.View testID="week-viewport" style={[styles.weekViewport, weekHeight]}>{row}</Animated.View></DateSwipe>}
+    <WeekStripSection
+      monday={monday}
+      selectedDateId={selectedDateId}
+      today={today}
+      weekHeight={weekHeight}
+      presentation={presentation}
+      weekGesture={weekGesture}
+      width={width}
+      onWidth={onWidth}
+      onSelectDate={onSelectDate}
+    />
   </View>;
 }
+
+const TitleLayerList = React.memo(function TitleLayerList({
+  selectedDateId,
+  today,
+  compact,
+  presentation,
+}: {
+  selectedDateId: string;
+  today: string;
+  compact: boolean;
+  presentation: Presentation;
+}) {
+  const labels = useMemo(() => Array.from({ length: 15 }, (_, i) => {
+    const dateId = shiftDateId(selectedDateId, i - 7);
+    return { dateId, day: dateIdToEpochDay(dateId), ...dateLabel(dateId, today) };
+  }), [selectedDateId, today]);
+  return <>{labels.map(item => <ProgressDateLabel key={item.dateId} {...item} compact={compact} presentation={presentation} />)}</>;
+});
+
+const WeekStripSection = React.memo(function WeekStripSection({
+  monday,
+  selectedDateId,
+  today,
+  weekHeight,
+  presentation,
+  weekGesture,
+  width,
+  onWidth,
+  onSelectDate,
+}: {
+  monday: string;
+  selectedDateId: string;
+  today: string;
+  weekHeight: AnimatedStyle<ViewStyle>;
+  presentation?: Presentation;
+  weekGesture?: ReturnType<typeof useWeekStripSwipe>['gesture'];
+  width?: SharedValue<number>;
+  onWidth?: (width: number) => void;
+  onSelectDate: (dateId: string) => void;
+}) {
+  const collapse = useContext(CollapseContext)!;
+  const week = useMemo(() => buildWeekGroup(monday, 0, today), [monday, today]);
+  const weeks = useMemo(() => generateWeeksWindow(monday, 1, 1, today), [monday, today]);
+  if (presentation && weekGesture && width) {
+    return (
+      <GestureDetector gesture={weekGesture}>
+        <Animated.View testID="week-viewport" collapsable={false} style={[styles.weekViewport, weekHeight]} onLayout={event => onWidth?.(event.nativeEvent.layout.width)}>
+          {weeks.map((item, index) => <ProgressWeek key={item.startDateId} week={item} offset={index - 1} today={today}
+            monday={dateIdToEpochDay(monday)} width={width} presentation={presentation} selectedDateId={selectedDateId} onSelectDate={onSelectDate} />)}
+        </Animated.View>
+      </GestureDetector>
+    );
+  }
+  return (
+    <DateSwipe days={7}>
+      <Animated.View testID="week-viewport" style={[styles.weekViewport, weekHeight]}>
+        <Animated.View style={[styles.daysRow, collapse.visible.week]}>
+          {week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today}
+            selected={item.dateId === selectedDateId} onSelectDate={onSelectDate} />)}
+        </Animated.View>
+      </Animated.View>
+    </DateSwipe>
+  );
+});
+
 function CompactDateLabel({ title, dateId }: { title: string; dateId: string }) {
   const date = parseDateId(dateId);
   return <Text numberOfLines={1} style={styles.compactDate}>{title} · {date.getUTCDate()} {MONTH_NAMES[date.getUTCMonth()].slice(0, 3).toLocaleLowerCase('es')}</Text>;
@@ -197,7 +253,7 @@ function DateLabel({ title, subtitle }: { title: string; subtitle: string }) {
 function ProgressDateLabel({ day, title, subtitle, dateId, compact = false, presentation }: { day: number; title: string; subtitle: string; dateId: string; compact?: boolean; presentation: Presentation }) {
   const { position, weekOffset, weekPhase, selectedDay } = presentation;
   const animated = useAnimatedStyle(() => {
-    const distance = distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay);
+    const distance = distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay.value);
     return { opacity: Math.max(0, 1 - Math.abs(distance)), transform: [{ translateX: Math.max(-1, Math.min(1, distance)) * -16 }] };
   });
   return <Animated.View testID={`date-label-${compact ? 'compact' : 'expanded'}-${dateId}`} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
@@ -207,7 +263,8 @@ function ProgressWeek({ week, offset, monday, width, presentation, selectedDateI
   week: ReturnType<typeof buildWeekGroup>; offset: number; monday: number; width: SharedValue<number>; presentation: Presentation;
   selectedDateId: string; today: string; onSelectDate: (date: string) => void;
 }) {
-  const collapse = useContext(CollapseContext)!;
+  const { visible, deferred } = useContext(CollapseContext)!;
+  const weekCollapse = offset === 0 ? visible : deferred;
   const { position, weekOffset, weekPhase } = presentation;
   const animated = useAnimatedStyle(() => {
     const relativeDay = position.value - monday;
@@ -217,74 +274,51 @@ function ProgressWeek({ week, offset, monday, width, presentation, selectedDateI
     return { transform: [{ translateX: (offset - progress) * width.value }] };
   });
   return <Animated.View testID={`week-layer-${offset}`} accessibilityElementsHidden={offset !== 0} importantForAccessibility={offset === 0 ? 'auto' : 'no-hide-descendants'}
-    style={[styles.weekLayer, animated]}>
-    <Animated.View testID={`week-row-${offset}`} style={[styles.daysRow, collapse.weekRow]}>
-      {week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today} selected={item.dateId === selectedDateId}
-        presentation={presentation} onSelectDate={onSelectDate} />)}
-    </Animated.View>
+    style={[styles.daysRow, styles.weekLayer, weekCollapse.week, animated]}>
+    {week.days.map((item, index) => <DayPill key={item.dateId} item={item} letter={WEEK_LETTERS[index]} today={today} selected={item.dateId === selectedDateId}
+      presentation={presentation} onSelectDate={onSelectDate} />)}
   </Animated.View>;
 }
-/** Fixed-radius top/bottom caps + scaled straight middle keep 14dp corners circular and 1dp borders unscaled. */
-function PillSurface({ backgroundColor, borderColor, collapse }: { backgroundColor: string; borderColor: string; collapse: CollapsePresentation }) {
-  return <>
-    <View testID="pill-cap-top" style={[styles.pillCapTop, { backgroundColor, borderColor }]} />
-    <Animated.View testID="pill-middle" style={[styles.pillMiddle, { backgroundColor, borderColor }, collapse.pillMiddle]} />
-    <Animated.View testID="pill-cap-bottom" style={[styles.pillCapBottom, { backgroundColor, borderColor }, collapse.pillBottom]} />
-  </>;
-}
 /** One face of a day cell: the resting look or the selected (ink) look. */
-function DayFace({ item, letter: letterName, logged, future, inverted }: { item: Day; letter: string; logged: boolean; future: boolean; inverted: boolean }) {
+function DayFace({ item, letter: letterName, logged, future, inverted }: {
+  item: Day; letter: string; logged: boolean; future: boolean; inverted: boolean;
+}) {
   const theme = useTheme();
   const c = theme.colors;
   const ink = inverted ? c.onPrimary : future ? c.textSecondary : c.text;
-  const collapse = useContext(CollapseContext)!;
-  return <View style={styles.dayFace}>
-    <Animated.Text style={[theme.type.label, styles.dayLetterSlot, { color: ink }, collapse.letter]}>{letterName}</Animated.Text>
-    <Animated.Text style={[styles.dayNumberText, styles.dayNumberSlot, { color: ink }, collapse.number]}>{item.dayNumber}</Animated.Text>
-    <Animated.View style={[styles.mark, styles.dayMarkSlot, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty, opacity: inverted && !logged ? 0.35 : 1 }, collapse.mark]} />
-  </View>;
+  return <>
+    <Text style={[theme.type.label, styles.dayLetterText, { color: ink }]}>{letterName}</Text>
+    <Text style={[styles.dayNumberText, { color: ink }]}>{item.dayNumber}</Text>
+    <View style={[styles.mark, { backgroundColor: inverted ? c.onPrimary : logged ? c.text : c.barEmpty, opacity: inverted && !logged ? 0.35 : 1 }]} />
+  </>;
 }
-function DayPill({ item, letter, today, selected, presentation, onSelectDate }: { item: Day; letter: string; today: string; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void }) {
+function DayPill({ item, letter, today, selected, presentation, onSelectDate }: {
+  item: Day; letter: string; today: string; selected: boolean; presentation?: Presentation; onSelectDate: (date: string) => void;
+}) {
   const theme = useTheme();
-  const collapse = useContext(CollapseContext)!;
   const logged = useMealDay(item.dateId).foods.length > 0;
   const future = item.dateId > today;
   const date = parseDateId(item.dateId);
-  // The touch target is separate from the paint, so mirror its pressed feedback
-  // on the visual sibling without re-rendering or scaling its contents.
-  const pressedOpacity = useSharedValue(1);
-  const pressed = useAnimatedStyle(() => ({ opacity: pressedOpacity.value }));
-  return <View testID={`day-cell-${item.dateId}`} style={styles.dayCell}>
-    <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.dayLayer, pressed]}>
-      {presentation ? <ProgressDayPill day={dateIdToEpochDay(item.dateId)} presentation={presentation}
-        rest={<DayFace item={item} letter={letter} logged={logged} future={future} inverted={false} />}
-        active={<DayFace item={item} letter={letter} logged={logged} future={future} inverted />} />
-        : <>
-          <PillSurface backgroundColor={selected ? theme.colors.primary : 'transparent'} borderColor={selected ? theme.colors.primary : theme.colors.border} collapse={collapse} />
-          <DayFace item={item} letter={letter} logged={logged} future={future} inverted={selected} />
-        </>}
-    </Animated.View>
-    <DayTouch accessibilityRole="button" hitSlop={{ top: 4, bottom: 4 }}
-      accessibilityLabel={`${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()].toLocaleLowerCase('es')}${logged ? ', con registros' : ''}`}
-      accessibilityState={{ selected }} testID={`day-${item.dateId}`} onPress={() => onSelectDate(item.dateId)}
-      onPressIn={() => { pressedOpacity.value = withTiming(0.2, { duration: 150 }); }}
-      onPressOut={() => { pressedOpacity.value = withTiming(1, { duration: 250 }); }} style={[styles.dayLayer, collapse.touch]} />
-  </View>;
+  return <TouchableOpacity accessibilityRole="button" hitSlop={{ top: 4, bottom: 4 }}
+    accessibilityLabel={`${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()} de ${MONTH_NAMES[date.getUTCMonth()].toLocaleLowerCase('es')}${logged ? ', con registros' : ''}`}
+    accessibilityState={{ selected }} testID={`day-${item.dateId}`} onPress={() => onSelectDate(item.dateId)} style={styles.dayTouch}>
+    {presentation ? <ProgressDayPill day={dateIdToEpochDay(item.dateId)} presentation={presentation}
+      rest={<DayFace item={item} letter={letter} logged={logged} future={future} inverted={false} />}
+      active={<DayFace item={item} letter={letter} logged={logged} future={future} inverted />} />
+      : <View style={[styles.dayPill, { backgroundColor: selected ? theme.colors.primary : 'transparent', borderColor: selected ? theme.colors.primary : theme.colors.border }]}>
+        <DayFace item={item} letter={letter} logged={logged} future={future} inverted={selected} />
+      </View>}
+  </TouchableOpacity>;
 }
 function ProgressDayPill({ day, presentation, rest, active }: { day: number; presentation: Presentation; rest: React.ReactNode; active: React.ReactNode }) {
   const theme = useTheme();
-  const collapse = useContext(CollapseContext)!;
   const { position, weekOffset, weekPhase, selectedDay } = presentation;
-  const weight = useDerivedValue(() => Math.max(0, 1 - Math.abs(distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay))));
+  const weight = useDerivedValue(() => Math.max(0, 1 - Math.abs(distanceFromDay(day, position.value, weekOffset.value, weekPhase.value, selectedDay.value))));
   const fill = useAnimatedStyle(() => ({ opacity: weight.value }));
-  return <>
-    <PillSurface backgroundColor="transparent" borderColor={theme.colors.border} collapse={collapse} />
+  return <View style={[styles.dayPill, { borderColor: theme.colors.border }]}>
     {rest}
-    <Animated.View testID={`day-active-${day}`} style={[styles.dayLayer, fill]}>
-      <PillSurface backgroundColor={theme.colors.primary} borderColor={theme.colors.primary} collapse={collapse} />
-      {active}
-    </Animated.View>
-  </>;
+    <Animated.View testID={`day-active-${day}`} style={[styles.dayActive, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, fill]}>{active}</Animated.View>
+  </View>;
 }
 
 const styles = StyleSheet.create({
@@ -300,15 +334,10 @@ const styles = StyleSheet.create({
   subtitleContext: { fontSize: 14, lineHeight: 18, marginTop: 2 },
   calendarBtn: { width: 44, height: 44, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   daysRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 6 },
-  dayCell: { flex: 1, height: 60 },
-  dayLayer: { position: 'absolute', top: 0, left: 0, right: 0, height: 60 },
-  dayFace: { position: 'absolute', top: 0, left: 0, right: 0, height: 60, alignItems: 'center' },
-  dayLetterSlot: { position: 'absolute', top: 8, left: 0, right: 0, height: 16, textAlign: 'center' },
-  dayNumberText: { fontFamily: font.displaySmall, fontSize: 17, lineHeight: 20, fontVariant: ['tabular-nums'] },
-  dayNumberSlot: { position: 'absolute', top: 26, left: 0, right: 0, height: 20, textAlign: 'center' },
-  dayMarkSlot: { position: 'absolute', top: 48 },
+  dayTouch: { flex: 1 },
+  dayPill: { flex: 1, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 5, gap: 3, overflow: 'hidden' },
+  dayActive: { position: 'absolute', top: -1, bottom: -1, left: -1, right: -1, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 5, gap: 3, overflow: 'hidden' },
+  dayLetterText: { height: 16, lineHeight: 16, textAlign: 'center' },
+  dayNumberText: { fontFamily: font.displaySmall, fontSize: 17, lineHeight: 20, fontVariant: ['tabular-nums'], textAlign: 'center' },
   mark: { width: 18, height: 4, borderRadius: 2 },
-  pillCapTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 14, borderTopLeftRadius: 14, borderTopRightRadius: 14, borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 0 },
-  pillMiddle: { position: 'absolute', top: 14, left: 0, right: 0, height: 32, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 0, borderBottomWidth: 0 },
-  pillCapBottom: { position: 'absolute', top: 46, left: 0, right: 0, height: 14, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, borderBottomWidth: 1, borderLeftWidth: 1, borderRightWidth: 1, borderTopWidth: 0 },
 });

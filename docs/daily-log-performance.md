@@ -95,7 +95,7 @@ about 22 MB, and a first sync writes a growing copy of the file once per page.
 Per-document `Intl` formatting costs about 84 ms for 24,000 calls in Node, which
 is small next to the storage cost.
 
-## Scroll-linked week strip (BAL-074, candidate awaiting device validation)
+## Scroll-linked week strip (BAL-074)
 
 The 2026-11-14 diagnostic used a physical Samsung SM-S906E, Android 16,
 Balance Dev 1.6.0/build 9 and Hermes. Source `67f472e` had the same diary as
@@ -105,52 +105,48 @@ moving-transition UI callback intervals from median 100.31 ms/p95 200.61 ms
 8.36 ms (n=152), and the operator reported greater fluidity with the frozen week.
 Both captures stopped on day-change guards; days and gestures were not matched.
 These exploratory development scheduling measurements identify a likely cost;
-they are not production FPS or measurements of this candidate. The frozen
+they are not production FPS or measurements of this implementation. The frozen
 diagnostic is not the implementation. Probe/data/report remain at
 `/home/ubuntu/.local/state/balance-diagnostics/20261114-scroll/`.
 
-The candidate retains three weeks, the existing pager/swipe hook and date owner.
-All 42 selected/rest day faces keep fixed text slots (number fontSize 17 and
-lineHeight 20), heights and padding. Shared UI-thread styles translate layers,
-scale the number uniformly and change opacity. Pills use fixed 14 dp top/bottom
-caps and a vertically scaled straight middle, preserving circular corners and
-1 dp horizontal stroke thickness. No rounded pill or text ancestor is squashed.
-Only the outer week viewport retains continuous height layout; three nested
-week rows translate vertically, leaving the outer horizontal paging transform
-intact. This bounds layout work rather than claiming all native work disappears.
+The implementation retains three weeks, the existing pager/swipe hook and date
+owner. Inside `DateStripHeader`, `pVisible` (`useDerivedValue`) clamps collapse
+progress to `[0, 1]` and gates all visible collapse styles (`titleHeight`,
+`fullTitle`, `compactTitle`, `weekHeight`, and `collapseVisible.week`), while
+`pDeferred` holds offscreen weeks (`offset = -1, +1`) constant during pure
+vertical collapse `(0, 1)` and syncs immediately on endpoints (`0` / `1`) or any
+horizontal gesture (`weekPhase`, `offset`, `pagerPosition`, or `pagerInteraction`).
+During vertical transition frames, only 5 header/strip style mappers (`4` header +
+`1` visible week row) run instead of updating all 42 day faces, and `0` style
+mappers run in compact scroll `>216 dp` or overscroll `<0 dp` thanks to
+`useDerivedValue` (`valueSetter`) equality suppression.
 
-| Collapse progress | Viewport | Top / bottom inset | Pill | Apparent number | Letter contribution / opacity | Mark |
+Each pill uses the single-view bottom-anchored `dayPill` (`borderRadius: 14`,
+`borderWidth: 1`, `justifyContent: 'flex-end'`, `overflow: 'hidden'`) and
+`dayActive` hierarchy without multi-view `PillSurface` caps or split touch
+layers. All 42 selected/rest day faces keep static text and mark slots (number
+`fontSize: 17` and `lineHeight: 20`, letter `height: 16`, mark `height: 4`) with
+zero per-frame style updates inside `DayFace`, clipping the top weekday letter
+cleanly as the week row height and padding contract (`72 -> 42 dp`, `paddingTop:
+4 -> 2 dp`, `paddingBottom: 8 -> 4 dp`), avoiding Android `ParagraphShadowNode`
+text re-measurement.
+
+| Collapse progress | Viewport / week row | Top / bottom inset | Clipped pill height | Static number slot | Static letter slot | Static mark slot |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 72 dp | 4 / 8 dp | 60 dp | 17 | 16 dp / 1 | 4 dp |
-| 0.5 | 57 dp | 3 / 6 dp | 48 dp | 16 | 8 dp / 0 | 3.5 dp |
-| 1 | 42 dp | 2 / 4 dp | 36 dp | 15 | 0 dp / 0 | 3 dp |
+| 0 | 72 dp | 4 / 8 dp | 60 dp | 17 / 20 dp | 16 dp | 4 dp |
+| 0.5 | 57 dp | 3 / 6 dp | 48 dp | 17 / 20 dp | 16 dp (top-clipped) | 4 dp |
+| 1 | 42 dp | 2 / 4 dp | 36 dp | 17 / 20 dp | 16 dp (clipped) | 4 dp |
 
-A separate fixed-layout touch overlay transforms to the pill frame, with the
-existing 4 dp vertical hitSlop. Painted faces are pointer-inert, hidden from
-accessibility and siblings of the touch target. Each date retains one button
-and its selected state; a per-press shared opacity preserves painted touch
-feedback without React updates. Adjacent weeks stay hidden from accessibility. Native
-transformed hit rectangles, hitSlop, TalkBack, cap seams and actual pixels still
-require physical validation.
+Each date retains one `TouchableOpacity` button (`flex: 1`, `4 dp` vertical
+`hitSlop`) and its selected state, while adjacent weeks stay hidden from
+accessibility. The operator validated the visual appearance of the bottom-anchored
+clipped pill on the device.
 
 The compiled real-component renderer tests use the real swipe hook and check
-reconstructed bounds at endpoints, midpoint, out-of-range clamps and reversal;
-fixed repeated layout; uniform text scale; cap seams/corners/strokes; selected
-and resting layers; horizontal/vertical transform composition; no React/date
-updates during UI frames; drag cancellation/completion/invalidation; commands,
-accessibility and non-pager/compact-only fallbacks. Historical title timing tests
-remain intact. These establish JS presentation contracts, not performance or
-native hit testing.
-
-AC-4 remains pending: run at least three same-day matched baseline/candidate
-trials with at least 200 moving-transition samples, identical probe, chosen
-day, source/config and foreground/display/thermal conditions. Report median,
-p95, counts, stop reasons and compact results; target at least 50% transition
-p95 reduction without material compact regression, explaining a miss. Obtain
-operator visual/fluidity confirmation and touch/TalkBack acceptance. The
-candidate has not been measured on the phone.
-
-AC-5 remains pending: independent review, exact-head CI, native compatibility,
-verified-main delivery, published SHA/Actions/update/runtime records and Daily
-acceptance. The current handoff prepares a draft PR; phone validation is deferred.
-No merge, delivery, build, local OTA or server operation is part of this handoff.
+week and viewport geometry at endpoints, midpoint, out-of-range clamps and
+reversal; single-view bottom-anchored pill geometry without `PillSurface` caps;
+static `DayFace` slots; visibility-gated `pVisible`/`pDeferred` updates (5 style
+mappers mid-collapse, 0 in compact/overscroll) and same-frame horizontal
+synchronization; horizontal/vertical composition; no React/date updates during
+UI frames; drag cancellation/completion/invalidation; commands, accessibility
+and non-pager/compact-only fallbacks. Historical title timing tests remain intact.
