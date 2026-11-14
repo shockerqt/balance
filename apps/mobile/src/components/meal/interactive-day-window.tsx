@@ -10,13 +10,14 @@ type Window = { dateId: string; radius: number };
 type Acknowledgement = { dateId: string; revision: number };
 
 /** Fixed absolute calendar-day layout. React never handles drag frames. */
-export function InteractiveDayWindow({ dateId, revision, readRevision, position, interaction, active = true, onSettle, renderDay }: {
+export function InteractiveDayWindow({ dateId, revision, readRevision, position, interaction, active = true, scrollEnabled = true, onSettle, renderDay }: {
   dateId: string;
   revision: number;
   readRevision: () => number;
   position: SharedValue<number>;
   interaction: SharedValue<number>;
   active?: boolean;
+  scrollEnabled?: boolean;
   onSettle: (date: string, expectedRevision: number) => number | undefined;
   renderDay: (date: string) => React.ReactNode;
 }) {
@@ -37,8 +38,13 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   const center = dateIdToEpochDay(window.dateId);
   const lower = center - window.radius, upper = center + window.radius;
   const neighborsReady = window.radius > 0;
-  const dates = useMemo(() => Array.from({ length: window.radius * 2 + 1 }, (_, i) =>
-    shiftDateId(window.dateId, i - window.radius)), [window.dateId, window.radius]);
+  const slottedDates = useMemo(() => {
+    const list = Array.from({ length: window.radius * 2 + 1 }, (_, i) =>
+      shiftDateId(window.dateId, i - window.radius));
+    return list
+      .map(date => ({ date, slot: ((dateIdToEpochDay(date) % 5) + 5) % 5 }))
+      .sort((a, b) => a.slot - b.slot);
+  }, [window.dateId, window.radius]);
 
   const destination = useSharedValue(day);
   const dragOrigin = useSharedValue(day);
@@ -51,16 +57,16 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   const uiSession = useSharedValue(0);
   const commandSession = useRef(0);
   const gestureGeneration = useSharedValue(0);
-  const enabled = useSharedValue(active);
+  const enabled = useSharedValue(active && scrollEnabled);
   const dragging = useSharedValue(false);
   const waitingForPreparation = useSharedValue(false);
-  const latest = useRef({ dateId, revision, readRevision, active, onSettle });
+  const latest = useRef({ dateId, revision, readRevision, active, scrollEnabled, onSettle });
   const mounted = useRef(true);
 
-  useLayoutEffect(() => { latest.current = { dateId, revision, readRevision, active, onSettle }; });
+  useLayoutEffect(() => { latest.current = { dateId, revision, readRevision, active, scrollEnabled, onSettle }; });
 
   const prepareDestination = useCallback((target: number, token: number, session: number) => {
-    if (!mounted.current || session !== commandSession.current || token !== generation.value || !latest.current.active || interaction.value === 1) return;
+    if (!mounted.current || session !== commandSession.current || token !== generation.value || !latest.current.active || !latest.current.scrollEnabled || interaction.value === 1) return;
     const next = epochDayToDateId(target);
     setPrepared(previous => previous.dateId === next && previous.radius === PREPARED_RADIUS
       ? previous : { dateId: next, radius: PREPARED_RADIUS });
@@ -68,6 +74,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
 
   const reportEnd = useCallback((target: number, expectedRevision: number, token: number, session: number) => {
     if (!mounted.current || session !== commandSession.current || token !== generation.value ||
+        !latest.current.scrollEnabled ||
         expectedRevision !== latest.current.readRevision() ||
         !acceptDaySettle(expectedRevision, latest.current.revision, latest.current.active)) return;
     const next = epochDayToDateId(target);
@@ -134,7 +141,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       dragging.value = false;
       waitingForPreparation.value = false;
       interaction.value = 0;
-      enabled.value = isActive && ready;
+      enabled.value = isActive && ready && scrollEnabled;
     })(preserved, day, revision, active, neighborsReady, commandSession.current);
     if (preserved) return;
     if (externalCommand || previous.width !== width || previous.active !== active) {
@@ -147,19 +154,26 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   }, [day, revision, width, active]);
 
   useLayoutEffect(() => {
-    runOnUI((nextLower: number, nextUpper: number, isActive: boolean, ready: boolean) => {
+    runOnUI((nextLower: number, nextUpper: number, isActive: boolean, ready: boolean, isScrollEnabled: boolean) => {
       'worklet';
       lowerBound.value = nextLower;
       upperBound.value = nextUpper;
-      enabled.value = isActive && ready;
-      if (isActive && ready && waitingForPreparation.value && interaction.value === 2 && !dragging.value) {
+      if (!isScrollEnabled && enabled.value) {
+        generation.value += 1;
+        cancelAnimation(position);
+        dragging.value = false;
+        waitingForPreparation.value = false;
+        interaction.value = 0;
+      }
+      enabled.value = isActive && ready && isScrollEnabled;
+      if (isActive && ready && isScrollEnabled && waitingForPreparation.value && interaction.value === 2 && !dragging.value) {
         // A long JS stall can coalesce many releases. Reveal the prepared
         // destination before paint instead of moving through missing panes.
         if (position.value < nextLower || position.value > nextUpper) position.value = destination.value;
         animateToDestination(0);
       }
-    })(lower, upper, active, neighborsReady);
-  }, [active, animateToDestination, destination, dragging, enabled, interaction, lower, lowerBound, neighborsReady, position, upper, upperBound, waitingForPreparation]);
+    })(lower, upper, active, neighborsReady, scrollEnabled);
+  }, [active, animateToDestination, destination, dragging, enabled, generation, interaction, lower, lowerBound, neighborsReady, position, scrollEnabled, upper, upperBound, waitingForPreparation]);
   useEffect(() => {
     if (neighborsReady) return;
     const frame = requestAnimationFrame(() => setPrepared({ dateId, radius: PREPARED_RADIUS }));
@@ -171,7 +185,7 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
   }, [enabled, position]);
 
   const gesture = useMemo(() => Gesture.Pan()
-    .enabled(active).maxPointers(1).activeOffsetX([-16, 16]).failOffsetY([-12, 12])
+    .enabled(active && scrollEnabled).maxPointers(1).activeOffsetX([-16, 16]).failOffsetY([-12, 12])
     .onBegin(() => {
       gestureRevision.value = commandRevision.value;
       gestureGeneration.value = generation.value;
@@ -205,14 +219,14 @@ export function InteractiveDayWindow({ dateId, revision, readRevision, position,
       destination.value = gestureBase.value;
       animateToDestination(0);
     }), [active, animateToDestination, commandRevision, destination, dragOrigin, dragging, enabled,
-    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, uiSession, upperBound, waitingForPreparation, width]);
+    generation, gestureBase, gestureGeneration, gestureRevision, interaction, lowerBound, position, prepareDestination, scrollEnabled, uiSession, upperBound, waitingForPreparation, width]);
 
   return <GestureDetector gesture={gesture}>
     <View collapsable={false} style={styles.viewport} onLayout={event => {
       const measured = event.nativeEvent.layout.width;
       if (measured > 0) setWidth(measured);
     }}>
-      {dates.map(date => <DayPane key={date} dateId={date} active={active && date === dateId}
+      {slottedDates.map(({ date, slot }) => <DayPane key={slot} dateId={date} active={active && date === dateId}
         position={position} width={width} renderDay={renderDay} />)}
     </View>
   </GestureDetector>;

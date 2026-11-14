@@ -45,6 +45,8 @@ async function harness(renderDays = false) {
     './native-day-window': { NativeDayWindow: props => React.createElement('Pager', props, renderDays
       ? (renderDays === 'window' ? Array.from({ length: 15 }, (_, i) => dates.shiftDateId('2026-11-08', i - 7)) : [props.dateId])
         .map(day => React.createElement('Page', { key: day, date: day }, props.renderDay(day))) : null) },
+    './interactive-day-window': { InteractiveDayWindow: props => React.createElement('RingPager', props, props.renderDay(props.dateId)) },
+    './legend-day-window': { LegendDayWindow: props => React.createElement('LegendPager', props, props.renderDay(props.dateId)) },
     './meal-group-feed': { MealGroupFeed: props => { React.useImperativeHandle(props.ref, () => ({ resetScroll: () => resets.push(true) })); return React.createElement('Feed', props); } },
   };
   const { ReactNativeDiary } = compile('src/components/meal/react-native-diary.tsx', stubs);
@@ -195,5 +197,98 @@ test('compiled summary restores the historical quick fade and fixed clip without
   } finally { await h.close(); }
 });
 
+test('changing the weight of one date re-renders only that date subscriber via useWeightForDate', async () => {
+  const { createWeightDaySubscriptions, useWeightForDate, WeightProvider } = compile('src/hooks/use-weight-store.tsx', {
+    react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    '@/services/config': { API_BASE_URL: 'https://example.test/api' },
+    '@/services/auth/session-state': { authDataNamespace: () => 'guest' },
+    '@/hooks/use-auth': { useAuth: () => ({ user: null }) },
+    '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true }) },
+    '@/hooks/use-meal-store': { todayId: () => '2026-11-08' },
+    '@/services/storage': { storage: { getItem: async () => null, setItem: async () => {}, isDurableItem: () => true } },
+    '@/services/sync/sync-client': { collectionStorageKey: () => 'weights', syncClient: {
+      invalidateCollectionCheckpoint: async () => {}, reportLocalPersistenceError() {},
+      registerCollection: () => () => {}, enqueue: async () => {},
+    } },
+    '@/services/sync/types': local('./src/services/sync/types.ts'),
+    '@/services/weight/weight': local('./src/services/weight/weight.ts'),
+  });
+  const sub = createWeightDaySubscriptions({
+    '2026-11-08': { id: '2026-11-08', weightGrams: 70000, updatedAt: 1, _deleted: false },
+    '2026-11-09': { id: '2026-11-09', weightGrams: 70500, updatedAt: 1, _deleted: false },
+  });
+  let notified8 = 0, notified9 = 0;
+  sub.subscribe('2026-11-08', () => notified8++);
+  sub.subscribe('2026-11-09', () => notified9++);
+  sub.publish({
+    '2026-11-08': sub.get('2026-11-08'),
+    '2026-11-09': { id: '2026-11-09', weightGrams: 71000, updatedAt: 2, _deleted: false },
+  });
+  assert.equal(notified8, 0, 'untouched date does not notify');
+  assert.equal(notified9, 1, 'changed date notifies once');
+
+  const renders = { '2026-11-07': 0, '2026-11-08': 0, '2026-11-09': 0 };
+  let save;
+  const { useWeightStore } = compile('src/hooks/use-weight-store.tsx', {
+    react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    '@/services/config': { API_BASE_URL: 'https://example.test/api' },
+    '@/services/auth/session-state': { authDataNamespace: () => 'guest' },
+    '@/hooks/use-auth': { useAuth: () => ({ user: null }) },
+    '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true }) },
+    '@/hooks/use-meal-store': { todayId: () => '2026-11-10' },
+    '@/services/storage': { storage: { getItem: async () => null, setItem: async () => {}, isDurableItem: () => true } },
+    '@/services/sync/sync-client': { collectionStorageKey: () => 'weights', syncClient: {
+      invalidateCollectionCheckpoint: async () => {}, reportLocalPersistenceError() {},
+      registerCollection: () => () => {}, enqueue: async () => {},
+    } },
+    '@/services/sync/types': local('./src/services/sync/types.ts'),
+    '@/services/weight/weight': local('./src/services/weight/weight.ts'),
+  });
+  const weightMod = compile('src/hooks/use-weight-store.tsx', {
+    react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    '@/services/config': { API_BASE_URL: 'https://example.test/api' },
+    '@/services/auth/session-state': { authDataNamespace: () => 'guest' },
+    '@/hooks/use-auth': { useAuth: () => ({ user: null }) },
+    '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true }) },
+    '@/hooks/use-meal-store': { todayId: () => '2026-11-10' },
+    '@/services/storage': { storage: { getItem: async () => null, setItem: async () => {}, isDurableItem: () => true } },
+    '@/services/sync/sync-client': { collectionStorageKey: () => 'weights', syncClient: {
+      invalidateCollectionCheckpoint: async () => {}, reportLocalPersistenceError() {},
+      registerCollection: () => () => {}, enqueue: async () => {},
+    } },
+    '@/services/sync/types': local('./src/services/sync/types.ts'),
+    '@/services/weight/weight': local('./src/services/weight/weight.ts'),
+  });
+  const DayPage = React.memo(function DayPage({ dateId }) {
+    renders[dateId]++;
+    const w = weightMod.useWeightForDate(dateId);
+    return React.createElement('WeightCell', { dateId, grams: w?.weightGrams ?? null });
+  });
+  function Controller() {
+    save = weightMod.useWeightStore().saveWeight;
+    return null;
+  }
+  let tree;
+  await renderer.act(async () => {
+    tree = renderer.create(
+      React.createElement(weightMod.WeightProvider, null,
+        React.createElement(Controller),
+        React.createElement(DayPage, { dateId: '2026-11-07' }),
+        React.createElement(DayPage, { dateId: '2026-11-08' }),
+        React.createElement(DayPage, { dateId: '2026-11-09' })
+      )
+    );
+  });
+  const baseline = { ...renders };
+  await renderer.act(async () => {
+    assert.equal(save('2026-11-08', 72400), true);
+  });
+  assert.equal(renders['2026-11-07'], baseline['2026-11-07'], 'neighbour 2026-11-07 does not re-render');
+  assert.equal(renders['2026-11-09'], baseline['2026-11-09'], 'neighbour 2026-11-09 does not re-render');
+  assert.equal(renders['2026-11-08'], baseline['2026-11-08'] + 1, 'only the modified date 2026-11-08 re-renders');
+  await renderer.act(async () => tree.unmount());
+});
+
 // The existing test:feed/CI entry must also execute the restored feed regressions.
 require('./compact-diary.test.cjs');
+require('./daily-calorie-target.test.cjs');

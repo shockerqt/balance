@@ -78,16 +78,16 @@ function setup() {
     else { current = next; position.pending = null; }
   } });
   const interaction = { value: 0 };
-  let commits = 0, active = true;
+  let commits = 0, active = true, scrollEnabled = true;
   const settle = (target, revision) => {
     if (revision === nav.getRevision()) { nav.shift(dateIdToEpochDay(target) - dateIdToEpochDay(nav.get()), revision); return nav.getRevision(); }
   };
   function Host() {
     const date = useSyncExternalStore(nav.subscribe, nav.get, nav.get);
     return React.createElement(React.Profiler, { id: 'host', onRender: () => commits++ },
-      React.createElement(InteractiveDayWindow, { dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision, position, interaction, active, onSettle: settle, renderDay }));
+      React.createElement(InteractiveDayWindow, { dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision, position, interaction, active, scrollEnabled, onSettle: settle, renderDay }));
   }
-  return { nav, position, interaction, Host, commits: () => commits, blur: () => { active = false; }, focus: () => { active = true; } };
+  return { nav, position, interaction, Host, commits: () => commits, lock: () => { scrollEnabled = false; }, unlock: () => { scrollEnabled = true; }, blur: () => { active = false; }, focus: () => { active = true; } };
 }
 
 test('drag frames update translation with zero React commits; only completed settle changes the authority', async () => {
@@ -378,6 +378,40 @@ test('late bounds from the previous settled page do not restart the next valid s
   assert.equal(state.springs.length - springs, 2, 'two releases use exactly two springs');
   await act(() => { finish(app.position); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-08');
+  await act(() => tree.unmount());
+});
+
+test('5-slot modulo ring buffer recycles trailing pane in-place without unmounting any AnimatedView across swipes and respects scrollEnabled lock', async () => {
+  const app = setup(); let tree;
+  await act(() => { tree = create(React.createElement(app.Host)); });
+  const initialSlots = tree.root.findAllByType('AnimatedView');
+  assert.equal(initialSlots.length, 5);
+  const trailingBefore = pane(tree, '2026-11-04');
+  const visibleNext = pane(tree, '2026-11-07');
+  let g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+    finish(app.position); flushJS();
+  });
+  assert.equal(app.nav.get(), '2026-11-07');
+  const afterSlots = tree.root.findAllByType('AnimatedView');
+  assert.equal(afterSlots.length, 5);
+  for (let i = 0; i < 5; i++) {
+    assert.equal(afterSlots[i], initialSlots[i], `slot ${i} keeps its exact mounted AnimatedView instance`);
+  }
+  assert.equal(pane(tree, '2026-11-07'), visibleNext, 'visible page never unmounts');
+  assert.equal(pane(tree, '2026-11-09'), trailingBefore, 'trailing slot 2026-11-04 is recycled in-place for leading day 2026-11-09');
+  // Lock scrollEnabled during an in-flight gesture and verify it cancels settle.
+  g = state.gestures.at(-1).handlers;
+  await act(() => {
+    g.onBegin(); g.onStart(); g.onUpdate({ translationX: -200 });
+    g.onEnd({ translationX: -200, velocityX: 0 }, true);
+  });
+  app.lock();
+  await act(() => tree.update(React.createElement(app.Host)));
+  await act(() => flushJS());
+  assert.equal(app.nav.get(), '2026-11-07', 'locked pager rejects in-flight settle');
   await act(() => tree.unmount());
 });
 

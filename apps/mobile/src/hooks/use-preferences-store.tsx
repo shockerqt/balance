@@ -15,11 +15,20 @@ import { storage } from '@/services/storage';
 import { collectionStorageKey, syncClient } from '@/services/sync/sync-client';
 import { SyncDocument, UserPreferencesDoc, isUserPreferencesDoc } from '@/services/sync/types';
 
+export type DiaryPagerEngine = 'native' | 'ring' | 'legend';
+const DIARY_PAGER_ENGINE_KEY = '@balance_diary_pager_engine_v1';
+
+export function isDiaryPagerEngine(value: unknown): value is DiaryPagerEngine {
+  return value === 'native' || value === 'ring' || value === 'legend';
+}
+
 interface PreferencesContextValue {
   preferencesReady: boolean;
   weightTrackingEnabled: boolean;
   diaryMacrosEnabled: boolean;
   setDiaryMacrosEnabled: (enabled: boolean) => void;
+  diaryPagerEngine: DiaryPagerEngine;
+  setDiaryPagerEngine: (engine: DiaryPagerEngine) => void;
   dailyCalorieTarget: number;
   setDailyCalorieTarget: (calories: number) => boolean;
   syncError: string | null;
@@ -69,8 +78,22 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return persisted;
   }, [namespace]);
   const [preferencesReady, setPreferencesReady] = useState(false);
+  const [diaryPagerEngine, setDiaryPagerEngineState] = useState<DiaryPagerEngine>('native');
   const [syncError, setSyncError] = useState<string | null>(null);
   const enabled = document.preferences.weightTrackingEnabled !== false;
+
+  useEffect(() => {
+    let cancelled = false;
+    void storage
+      .getItem(DIARY_PAGER_ENGINE_KEY)
+      .then((raw) => {
+        if (!cancelled && isDiaryPagerEngine(raw)) setDiaryPagerEngineState(raw);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,18 +215,26 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [namespace, user?.id, persist]
   );
 
+  const setDiaryPagerEngine = useCallback((nextEngine: DiaryPagerEngine) => {
+    if (!isDiaryPagerEngine(nextEngine)) return;
+    setDiaryPagerEngineState(nextEngine);
+    void storage.setItem(DIARY_PAGER_ENGINE_KEY, nextEngine).catch(() => undefined);
+  }, []);
+
   const value = useMemo(
     () => ({
       preferencesReady,
       diaryMacrosEnabled: document.preferences.diaryMacrosEnabled === true,
       setDiaryMacrosEnabled,
+      diaryPagerEngine,
+      setDiaryPagerEngine,
       dailyCalorieTarget: resolveDailyCalorieTarget(document.preferences.dailyCalorieTarget),
       setDailyCalorieTarget,
       weightTrackingEnabled: enabled,
       syncError,
       setWeightTrackingEnabled,
     }),
-    [document.preferences.diaryMacrosEnabled, document.preferences.dailyCalorieTarget, enabled, preferencesReady, setDailyCalorieTarget, setDiaryMacrosEnabled, setWeightTrackingEnabled, syncError]
+    [diaryPagerEngine, document.preferences.diaryMacrosEnabled, document.preferences.dailyCalorieTarget, enabled, preferencesReady, setDailyCalorieTarget, setDiaryMacrosEnabled, setDiaryPagerEngine, setWeightTrackingEnabled, syncError]
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 };

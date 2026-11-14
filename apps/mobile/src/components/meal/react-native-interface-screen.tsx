@@ -57,8 +57,16 @@ function InterfaceSession() {
   };
   return <Screen edges={['top', 'bottom']}>
     <View style={{ flex: 1 }}>
-      {destination === 0 ? <Diary today={today} /> : destination === 1 ? <Measurements date={measurementDate} today={today} onDate={setMeasurementDate} /> : destination === 2 ?
-        <ReactNativeSummary onOpen={(selected, body) => { logsDateStore.set(selected); setMeasurementDate(selected); setDestination(body ? 1 : 0); }} /> : <Profile />}
+      <View
+        style={{ flex: 1, display: destination === 0 ? 'flex' : 'none' }}
+        pointerEvents={destination === 0 ? 'auto' : 'none'}
+        accessibilityElementsHidden={destination !== 0}
+        importantForAccessibility={destination === 0 ? 'auto' : 'no-hide-descendants'}
+      >
+        <Diary today={today} active={destination === 0} />
+      </View>
+      {destination === 1 ? <Measurements date={measurementDate} today={today} onDate={setMeasurementDate} /> : destination === 2 ?
+        <ReactNativeSummary onOpen={(selected, body) => { logsDateStore.set(selected); setMeasurementDate(selected); setDestination(body ? 1 : 0); }} /> : destination === 3 ? <Profile /> : null}
     </View>
     <QuickAddDock contextKey={`${target}:${destination}`} weightAvailable={weightAvailable} onFood={registerFood} onWeight={registerWeight}>
       {[0, 1, 2, 3].map(index => <TouchableOpacity key={index} accessibilityRole="tab" accessibilityLabel={destinations[index].title} accessibilityState={{ selected: destination === index }} onPress={() => setDestination(index)}
