@@ -1,3 +1,6 @@
+// Keep the cache properties on test:sync and mobile CI's existing entry.
+require('./chile-date-cache.test.cjs');
+
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const fs = require('node:fs');
@@ -6,6 +9,7 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const { createRequire } = require('node:module');
 const { performance } = require('node:perf_hooks');
+const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const local = createRequire(path.join(root, 'package.json'));
 const ts = local('typescript'), React = local('react'), renderer = local('react-test-renderer');
@@ -57,7 +61,19 @@ function disk() {
 
 // Recreate every application module on each launch; only physical backends and
 // the synthetic server survive. Storage, client and all four providers are real.
-function launch(physical, serverMeals = []) {
+function launch(physical, serverMeals = [], conversionSourceRef = null) {
+  // Opt-in benchmark reads immutable versions of the two conversion owners.
+  // No checkout/worktree is changed; all other owners and instrumentation stay
+  // identical. Only the dedicated boundary scenario passes this argument.
+  const conversionSources = new Map();
+  if (conversionSourceRef !== null) {
+    assert.match(conversionSourceRef, /^[0-9a-f]{40}$/, 'benchmark source must be an exact Git SHA');
+    for (const file of ['src/lib/dates.ts', 'src/services/sync/adapters.ts']) {
+      conversionSources.set(path.join(root, file), execFileSync('git', ['show', `${conversionSourceRef}:apps/mobile/${file}`], {
+        cwd: path.resolve(root, '../..'), encoding: 'utf8',
+      }));
+    }
+  }
   const modules = new Map(), sockets = [], server = { userPreferences: [{ id: '1', preferences: { weightTrackingEnabled: true }, updatedAt: 1000, _deleted: false }], mealTemplates: [], mealLogs: serverMeals, weightLogs: [] };
   const timers = new Map();
   let timerId = 0;
@@ -81,9 +97,28 @@ function launch(physical, serverMeals = []) {
     }
   };
   let user = { id: 1 }, focused = true, dailyFocused = true, view, stores = {}, backs = 0;
-  const metrics = { nativeSerializations: 0, formatterConstructions: 0, displayCalculations: 0 };
+  const metrics = { nativeSerializations: 0, formatterConstructions: 0, displayCalculations: 0,
+    intlFormatCalls: 0, intlPartsCalls: 0, intlDataCalls: 0, intlHousekeepingCalls: 0 };
+  let convertingDocument = false;
+  const inDocument = callback => (...args) => {
+    const previous = convertingDocument;
+    convertingDocument = true;
+    try { return callback(...args); } finally { convertingDocument = previous; }
+  };
   const countedIntl = Object.create(Intl);
-  countedIntl.DateTimeFormat = function (...args) { metrics.formatterConstructions++; return new Intl.DateTimeFormat(...args); };
+  countedIntl.DateTimeFormat = function (...args) {
+    metrics.formatterConstructions++;
+    const formatter = new Intl.DateTimeFormat(...args);
+    return new Proxy(formatter, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'format' || key === 'formatToParts') return (...values) => {
+        metrics[key === 'format' ? 'intlFormatCalls' : 'intlPartsCalls']++;
+        metrics[convertingDocument ? 'intlDataCalls' : 'intlHousekeepingCalls']++;
+        return value.apply(target, values);
+      };
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+  };
   const countedJSON = { parse: JSON.parse, stringify(value, ...args) {
     if (value?.days && String(value.session).startsWith('daily-')) metrics.nativeSerializations++;
     return JSON.stringify(value, ...args);
@@ -126,10 +161,13 @@ function launch(physical, serverMeals = []) {
       if (name.startsWith('.')) return load(path.resolve(path.dirname(full), name));
       return local(name);
     };
-    const code = ts.transpileModule(fs.readFileSync(full, 'utf8'), { fileName: full, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+    const code = ts.transpileModule(conversionSources.get(full) ?? fs.readFileSync(full, 'utf8'), { fileName: full, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
     vm.runInNewContext(code, { module, exports: module.exports, require: requireFrom, WebSocket: Socket, console, __DEV__: false, Intl: countedIntl, JSON: countedJSON,
       setTimeout: schedule, clearTimeout: id => timers.delete(id), setInterval: () => 1, clearInterval() {}, setImmediate, URL, TextEncoder, TextDecoder }, { filename: full });
-    if (full.endsWith('/sync/adapters.ts')) { const original = module.exports.logToLoggedFood; module.exports.logToLoggedFood = (...args) => { metrics.displayCalculations++; return original(...args); }; }
+    // Export wrappers identify actual document conversion; todayId's lexical
+    // toDateId call stays outside that context and is counted as housekeeping.
+    if (full.endsWith('/lib/dates.ts')) module.exports.toDateId = inDocument(module.exports.toDateId);
+    if (full.endsWith('/sync/adapters.ts')) { const original = module.exports.logToLoggedFood; module.exports.logToLoggedFood = inDocument((...args) => { metrics.displayCalculations++; return original(...args); }); }
     return module.exports;
   }
   const storage = load(path.join(root, 'src/services/storage.ts')).storage;
@@ -420,7 +458,7 @@ test('12k history advances 240 unique pages with actual owners and a retained na
     const checkpointIds = frames.map(f => f.checkpoint?.id ?? 'initial');
     assert.equal(new Set(checkpointIds).size, checkpointIds.length, 'no replay of a completed frontier');
     assert.equal(frames.slice(0, 240).length, 240);
-    assert.equal(app.metrics.formatterConstructions, 2, 'date and time formatters are constant per fresh runtime');
+    assert.equal(app.metrics.formatterConstructions, 1, 'contemporary date and time share one formatter per fresh runtime');
     assert.ok(app.metrics.displayCalculations <= 12003, 'unchanged canonical documents are adapted once');
     await app.setDailyFocus(true);
     const data = JSON.parse(app.dailyProps().data);
@@ -446,8 +484,56 @@ test('12k history advances 240 unique pages with actual owners and a retained na
   } finally { await app.close(); }
 });
 
+const metricDelta = (after, before) => Object.fromEntries(Object.keys(after).map(key => [key, after[key] - before[key]]));
+
+test('12k production conversion boundary with cold-data then warm-module date and adapter passes', async t => {
+  const history = representativeHistory();
+  const source = process.env.BALANCE_CONVERSION_BENCH_REF ?? null;
+  const app = launch(disk(), [], source);
+  try {
+    const dates = app.load(path.join(root, 'src/lib/dates.ts'));
+    const adapter = app.load(path.join(root, 'src/services/sync/adapters.ts'));
+    const measure = () => {
+      const before = { ...app.metrics };
+      let checksum = 0;
+      const start = performance.now();
+      for (const document of history) {
+        const dateId = dates.toDateId(new Date(document.consumedAt));
+        const food = adapter.logToLoggedFood(document);
+        checksum += dateId.charCodeAt(9) + food.time.charCodeAt(4) + food.calories;
+      }
+      const ms = performance.now() - start;
+      const intl = metricDelta(app.metrics, before);
+      assert.equal(intl.displayCalculations, 12000, 'actual adapter executes once per input document');
+      return { ms, intl, checksum };
+    };
+    const cold = measure(), warm = measure();
+    assert.equal(cold.checksum, warm.checksum);
+    assert.ok(Number.isFinite(cold.checksum));
+    t.diagnostic(JSON.stringify({ scenario: 'conversion-boundary', source: source ?? 'worktree',
+      runtime: process.version, icu: process.versions.icu, arch: process.arch, documents: history.length,
+      distinctHours: new Set(history.map(document => Math.floor(document.consumedAt / 3_600_000))).size,
+      cold, warm, formatterConstructions: app.metrics.formatterConstructions,
+      limits: 'Actual date/adapter boundary; excludes projector/storage/React; only changed documents need conversion in retained projector; no Hermes or phone timing',
+    }));
+  } finally { await app.close(); }
+});
+
 test('cold start from a 12k durable cache: hydration, first day and one local mutation', { timeout: 180000 }, async t => {
   const history = representativeHistory();
+  // An independent fresh application runtime gives this first projection a
+  // cold module cache. The later projection deliberately measures a warm one.
+  const cold = launch(disk());
+  let coldProjectionMs, coldProjectionIntl;
+  try {
+    const store = cold.load(path.join(root, 'src/hooks/use-meal-store.tsx'));
+    const before = { ...cold.metrics };
+    const start = performance.now();
+    const days = store.createMealDayProjector()(history);
+    coldProjectionMs = performance.now() - start;
+    coldProjectionIntl = metricDelta(cold.metrics, before);
+    assert.equal(Object.values(days).reduce((total, day) => total + day.foods.length, 0), 12000);
+  } finally { await cold.close(); }
   const physical = disk();
   const setup = launch(physical);
   try {
@@ -464,6 +550,7 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
 
   const app = launch(physical);
   try {
+    const beforeHydrate = { ...app.metrics };
     const hydrateStart = performance.now();
     await app.mount();
     let hydrateIterations = 0;
@@ -474,6 +561,7 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
       await app.runDeferred();
     }
     const hydrateMs = performance.now() - hydrateStart;
+    const hydrateIntl = metricDelta(app.metrics, beforeHydrate);
     assert.equal(app.stores.meals.mealDocuments.length, 12000);
 
     const dates = app.load(path.join(root, 'src/lib/dates.ts'));
@@ -481,11 +569,13 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
     const targetDate = dates.toDateId(new Date(mostRecentDoc.consumedAt));
 
     // The provider projects inside render, so hydrateMs already includes it.
-    // Time the complete first projection separately with a fresh projector.
+    // A fresh projector after hydration has a warm date module cache.
     const store = app.load(path.join(root, 'src/hooks/use-meal-store.tsx'));
+    const beforeProjection = { ...app.metrics };
     const projectionStart = performance.now();
     const projected = store.createMealDayProjector()(app.stores.meals.mealDocuments);
     const projectionMs = performance.now() - projectionStart;
+    const projectionIntl = metricDelta(app.metrics, beforeProjection);
     const day = projected[targetDate];
     assert.ok(day && day.foods && day.foods.length > 0, 'Most recent day has foods');
 
@@ -525,8 +615,10 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
       runtime: process.version,
       arch: process.arch,
       documents: 12000,
-      hydrateMs,
-      projectionMs,
+      hydrateMs, hydrateIntl,
+      coldProjectionMs, coldProjectionIntl,
+      projectionMs, projectionIntl,
+      projectionCache: 'coldProjection uses a fresh module runtime; projection uses hydration-warmed modules',
       mutationMs,
       mutationWriteBytes,
       cacheBytes,

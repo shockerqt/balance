@@ -7,6 +7,7 @@ import type {
   NutritionSnapshot,
 } from './types';
 import { parseFoodPortion } from '@/lib/food-portions';
+import { chileTimeString } from '@/lib/dates';
 import { scaleNutrition } from '@balance/domain';
 
 export interface LibraryFoodAdapter {
@@ -35,11 +36,9 @@ export function templateToLibraryFood(doc: MealTemplateDoc, frequency = 0): Libr
   };
 }
 
-let chileTimeFormatter: Intl.DateTimeFormat | undefined;
 function timeInChile(epochMs: number): string {
   try {
-    chileTimeFormatter ??= new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Santiago', hour: '2-digit', minute: '2-digit', hour12: false });
-    return chileTimeFormatter.format(new Date(epochMs));
+    return chileTimeString(epochMs);
   } catch {
     const date = new Date(epochMs);
     return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
