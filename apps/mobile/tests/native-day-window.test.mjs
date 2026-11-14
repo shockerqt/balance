@@ -8,7 +8,7 @@ import { createLogNavigation } from '../src/lib/log-navigation.ts';
 import { dateIdToEpochDay } from '../src/lib/dates.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const state = globalThis.__nativeWindowTest = { js: [], frames: new Map(), nextFrame: 0, width: 400 };
+const state = globalThis.__nativeWindowTest = { js: [], frames: new Map(), nextFrame: 0, width: 400, setPageCalls: [] };
 const originalRAF = globalThis.requestAnimationFrame, originalCancel = globalThis.cancelAnimationFrame;
 globalThis.requestAnimationFrame = fn => { const id = ++state.nextFrame; state.frames.set(id, fn); return id; };
 globalThis.cancelAnimationFrame = id => state.frames.delete(id);
@@ -28,8 +28,14 @@ const hooks = registerHooks({
     `);
     if (url === 'mock:react-native-pager-view') return result(`export default 'RawPager';`);
     if (url === 'mock:react-native-reanimated') return result(`
-      import { useRef } from 'react';
-      export default { createAnimatedComponent: () => 'NativePager' };
+      import React, { useRef, forwardRef, useImperativeHandle } from 'react';
+      const NativePager = forwardRef((props, ref) => {
+        useImperativeHandle(ref, () => ({
+          setPageWithoutAnimation: index => globalThis.__nativeWindowTest.setPageCalls.push(index),
+        }), []);
+        return React.createElement('NativePager', props, props.children);
+      });
+      export default { createAnimatedComponent: () => NativePager };
       export const runOnUI = fn => (...args) => fn(...args);
       export const runOnJS = fn => (...args) => globalThis.__nativeWindowTest.js.push(() => fn(...args));
       export const useEvent = fn => fn;
@@ -41,7 +47,8 @@ const hooks = registerHooks({
 const { NativeDayWindow } = await import('../src/components/meal/native-day-window.tsx');
 const renderDay = dateId => React.createElement('Day', { dateId });
 const flushJS = () => { for (const fn of state.js.splice(0)) fn(); };
-const flushFrames = () => { for (const [id, fn] of [...state.frames]) { state.frames.delete(id); fn(); } };
+const flushOneFrame = () => { for (const [id, fn] of [...state.frames]) { state.frames.delete(id); fn(); } };
+const flushFrames = () => { while (state.frames.size > 0) flushOneFrame(); };
 const pager = tree => tree.root.findByType('NativePager');
 const selected = (p, index) => p.props.onPageSelected({ nativeEvent: { position: index } });
 const phase = (p, value) => p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } });
@@ -65,11 +72,52 @@ function setup() {
 async function mount(app) {
   let tree;
   await act(() => { tree = create(React.createElement(app.Host)); });
-  assert.equal(tree.root.findAllByType('Day').length, 1, 'initial commit mounts target content first');
+  assert.deepEqual(
+    tree.root.findAllByType('Day').map(d => d.props.dateId),
+    ['2026-11-06', '2026-11-07', '2026-11-08'],
+    'initial commit mounts only the selected day and its two immediate neighbours'
+  );
   await act(() => { selected(pager(tree), 7); flushFrames(); });
   assert.equal(tree.root.findAllByType('Day').length, 15);
   return tree;
 }
+
+test('on first render only selected day and two neighbours mount; further days prepare one per idle frame and never during a drag', async () => {
+  const app = setup();
+  let tree;
+  try {
+    await act(() => { tree = create(React.createElement(app.Host)); });
+    const p = pager(tree);
+    assert.equal(tree.root.findAllByType('Day').length, 3);
+    await act(() => flushOneFrame());
+    assert.equal(tree.root.findAllByType('Day').length, 4, 'prepares exactly one additional day per idle frame');
+    await act(() => flushOneFrame());
+    assert.equal(tree.root.findAllByType('Day').length, 5, 'prepares one more day on the next idle frame');
+    await act(() => {
+      phase(p, 'dragging');
+      scroll(p, 7, 0.25);
+      flushOneFrame();
+      flushOneFrame();
+    });
+    assert.equal(tree.root.findAllByType('Day').length, 5, 'never prepares further days during a drag');
+    await act(() => {
+      phase(p, 'settling');
+      flushOneFrame();
+    });
+    assert.equal(tree.root.findAllByType('Day').length, 5, 'never prepares further days while settling');
+    await act(() => {
+      selected(p, 7);
+      phase(p, 'idle');
+      flushJS();
+    });
+    await act(() => flushOneFrame());
+    assert.equal(tree.root.findAllByType('Day').length, 6, 'resumes one-at-a-time preparation once idle');
+    await act(() => flushFrames());
+    assert.equal(tree.root.findAllByType('Day').length, 15);
+  } finally {
+    if (tree) await act(() => tree.unmount());
+  }
+});
 
 test('native scroll frames and selected events do not commit React or change the date before idle', async () => {
   const app = setup(), tree = await mount(app), p = pager(tree);
@@ -95,7 +143,7 @@ test('native swipes and immediate reversal never wait for neighbor layout or rea
   try {
     await act(() => { tree = create(React.createElement(app.Host)); });
     const p = pager(tree);
-    assert.equal(tree.root.findAllByType('Day').length, 1, 'neighbor content has not even been prepared');
+    assert.equal(tree.root.findAllByType('Day').length, 3, 'only immediate neighbors are prepared on first render');
     assert.equal(p.props.scrollEnabled, true, 'native swipe permission is already enabled before any layout callback');
     await act(() => selected(p, 7));
     for (const [index, date] of [[8, '2026-11-08'], [9, '2026-11-09'], [8, '2026-11-08']]) {
@@ -151,12 +199,17 @@ test('calendar jumps, blur/return and resize discard callbacks from old native s
   await act(() => { phase(old, 'dragging'); phase(old, 'settling'); selected(old, 8); phase(old, 'idle'); });
   await act(() => app.nav.set('2040-01-01'));
   assert.notEqual(pager(tree), old);
-  assert.equal(tree.root.findAllByType('Day').length, 1);
+  assert.equal(tree.root.findAllByType('Day').length, 3);
   assert.equal(app.position.value, dateIdToEpochDay('2040-01-01'));
   await act(() => flushJS());
   assert.equal(app.nav.get(), '2040-01-01');
+  const jumpedPager = pager(tree);
+  const visibleDayBeforeBlur = tree.root.findAllByType('Day').find(d => d.props.dateId === '2040-01-01');
+  await act(() => { phase(jumpedPager, 'dragging'); phase(jumpedPager, 'settling'); selected(jumpedPager, 8); phase(jumpedPager, 'idle'); });
   app.blur(); await act(() => tree.update(React.createElement(app.Host)));
   app.focus(); await act(() => tree.update(React.createElement(app.Host)));
+  const visibleDayAfterFocus = tree.root.findAllByType('Day').find(d => d.props.dateId === '2040-01-01');
+  assert.equal(visibleDayAfterFocus, visibleDayBeforeBlur, 'blur and focus keep the visible page mounted');
   await act(() => {
     oldProps.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'dragging' } });
     oldProps.onPageSelected({ nativeEvent: { position: 9 } });
@@ -171,14 +224,19 @@ test('calendar jumps, blur/return and resize discard callbacks from old native s
   await act(() => tree.unmount());
 });
 
-test('window edges rebase only after settling, preserving the selected date and rejecting the old view', async () => {
-  const app = setup(), tree = await mount(app), old = pager(tree);
-  await act(() => { phase(old, 'dragging'); phase(old, 'settling'); selected(old, 13); });
-  assert.equal(pager(tree), old);
-  await act(() => { phase(old, 'idle'); flushJS(); });
+test('crossing the window edge rebases only after settling without unmounting the visible page', async () => {
+  const app = setup(), tree = await mount(app), p = pager(tree);
+  const visibleBefore = tree.root.findAllByType('Day').find(d => d.props.dateId === '2026-11-13');
+  assert.ok(visibleBefore, 'target edge day is already prepared before settling');
+  state.setPageCalls.length = 0;
+  await act(() => { phase(p, 'dragging'); phase(p, 'settling'); selected(p, 13); });
+  assert.equal(pager(tree), p);
+  await act(() => { phase(p, 'idle'); flushJS(); });
   assert.equal(app.nav.get(), '2026-11-13');
-  assert.notEqual(pager(tree), old);
-  assert.equal(pager(tree).props.initialPage, 7);
+  assert.equal(pager(tree), p, 'window edge rebase preserves the mounted native pager');
+  const visibleAfter = tree.root.findAllByType('Day').find(d => d.props.dateId === '2026-11-13');
+  assert.equal(visibleAfter, visibleBefore, 'crossing the window edge does not unmount the visible page');
+  assert.deepEqual(state.setPageCalls, [7], 'centers the native pager index without animation');
   assert.equal(app.position.value, dateIdToEpochDay('2026-11-13'));
   await act(() => tree.unmount());
 });

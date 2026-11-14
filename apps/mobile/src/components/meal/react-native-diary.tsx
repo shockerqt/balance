@@ -12,13 +12,20 @@ import { currentTimeString, dateIdToEpochDay, todayId } from '@/lib/dates';
 import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
 import { NativeDayWindow } from './native-day-window';
+import { InteractiveDayWindow } from './interactive-day-window';
+import { LegendDayWindow } from './legend-day-window';
 import { MealGroupFeed } from './meal-group-feed';
 import type { HourRailFeedHandle } from './hour-rail-feed';
 
-export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
-  const active = useIsFocused();
+export function ReactNativeDiary({ today = todayId(), active: tabActive = true }: { today?: string; active?: boolean }) {
+  const routeFocused = useIsFocused();
+  const active = routeFocused && tabActive;
   const [date, setDate] = useLogsSelectedDate();
   const revision = useLogsDateRevision();
+  const preference = usePreferencesStore();
+  const targetCalories = preference.dailyCalorieTarget ?? 2200;
+  const showMacros = preference.diaryMacrosEnabled === true;
+  const engine = preference.diaryPagerEngine ?? 'native';
   const [lockedDate, setLockedDate] = useState<string | null>(null);
   const headerScroll = useSharedValue(0);
   const activeDay = useSharedValue(dateIdToEpochDay(date));
@@ -37,17 +44,47 @@ export function ReactNativeDiary({ today = todayId() }: { today?: string }) {
   const selectionChanged = useCallback((day: string, selected: boolean) => {
     if (logsDateStore.get() === day) setLockedDate(selected ? day : null);
   }, []);
-  const renderDay = useCallback((day: string) => <DiaryDay date={day} today={today} onSelection={selectionChanged} headerScroll={headerScroll} activeDay={activeDay} />, [selectionChanged, today, headerScroll, activeDay]);
+  const renderDay = useCallback(
+    (day: string) => (
+      <DiaryDay
+        date={day}
+        today={today}
+        targetCalories={targetCalories}
+        showMacros={showMacros}
+        onSelection={selectionChanged}
+        headerScroll={headerScroll}
+        activeDay={activeDay}
+      />
+    ),
+    [selectionChanged, today, targetCalories, showMacros, headerScroll, activeDay]
+  );
+  const Pager = engine === 'ring' ? InteractiveDayWindow : engine === 'legend' ? LegendDayWindow : NativeDayWindow;
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
     <DateStripHeader compact={compact} collapseScroll={headerScroll} selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
     </Animated.View>
-    <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
+    <Pager dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
   </View>;
 }
 
-const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, headerScroll, activeDay }: { date: string; today: string; headerScroll: SharedValue<number>; activeDay: SharedValue<number>; onSelection: (date: string, selected: boolean) => void }) {
+const DiaryDay = React.memo(function DiaryDay({
+  date,
+  today,
+  targetCalories,
+  showMacros,
+  onSelection,
+  headerScroll,
+  activeDay,
+}: {
+  date: string;
+  today: string;
+  targetCalories: number;
+  showMacros: boolean;
+  headerScroll: SharedValue<number>;
+  activeDay: SharedValue<number>;
+  onSelection: (date: string, selected: boolean) => void;
+}) {
   const router = useRouter();
   const scrollOffset = useSharedValue(0);
   const dayNumber = dateIdToEpochDay(date);
@@ -71,16 +108,16 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
   const focused = useRef(false);
   useLayoutEffect(() => {
     scrollOffset.value = 0;
+    setCompact(false);
     feed.current?.resetScroll();
   }, [date, scrollOffset]);
-  const preference = usePreferencesStore();
   const live = () => focused.current && logsDateStore.get() === date;
   useFocusEffect(useCallback(() => {
     focused.current = true;
     return () => { focused.current = false; selection.clear(); onSelection(date, false); };
   }, [date, onSelection, selection.clear]));
   useEffect(() => logsDateStore.subscribe(() => {
-    if (logsDateStore.get() === date) { scrollOffset.value = 0; feed.current?.resetScroll(); }
+    if (logsDateStore.get() === date) { scrollOffset.value = 0; setCompact(false); feed.current?.resetScroll(); }
     else selection.clear();
   }), [date, selection.clear, scrollOffset]);
   useEffect(() => {
@@ -126,17 +163,17 @@ const DiaryDay = React.memo(function DiaryDay({ date, today, onSelection, header
     <Animated.View style={[{ position: 'absolute', left: 0, right: 0, zIndex: 4, overflow: 'hidden' }, summaryStyle]}>
     <Animated.View pointerEvents={compact ? 'none' : 'auto'} accessibilityElementsHidden={compact}
       importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={expandedSummaryStyle}>
-      <StickyMacroHeader {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
+      <StickyMacroHeader {...log} targetCalories={targetCalories} foods={log.foods}
         onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     </Animated.View>
     <Animated.View pointerEvents={compact ? 'auto' : 'none'} accessibilityElementsHidden={!compact}
       importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'}
       style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, compactSummaryStyle]}>
-      <StickyMacroHeader compact {...log} targetCalories={preference.dailyCalorieTarget} foods={log.foods}
+      <StickyMacroHeader compact {...log} targetCalories={targetCalories} foods={log.foods}
         onPress={() => { if (live() && !selection.isSelectionMode) router.push({ pathname: '/day-nutrition', params: { dateId: date } }); }} />
     </Animated.View>
     </Animated.View>
-    <MealGroupFeed scrollOffset={scrollOffset} showMacros={preference.diaryMacrosEnabled} ref={feed} foods={log.foods} empty={empty}
+    <MealGroupFeed scrollOffset={scrollOffset} showMacros={showMacros} ref={feed} foods={log.foods} empty={empty}
       onSelectFood={openEdit} onAddAtHour={openSearch} isSelectionMode={selection.isSelectionMode} selectedFoodIds={selection.selectedIds}
       onLongPressFood={food => { if (live()) selection.startFromFood(food); }}
       onLongPressGroup={ids => { if (live()) selection.startFromGroup(ids); }}

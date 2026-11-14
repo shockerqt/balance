@@ -36,10 +36,12 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
   if (session.dateId !== dateId || session.revision !== revision || session.active !== active || session.width !== width) {
     const own = acknowledgement.current?.dateId === dateId && acknowledgement.current.revision === revision
       && session.active === active && session.width === width;
+    const focusOnly = session.dateId === dateId && session.revision === revision && session.width === width;
+    const keepSurface = own || focusOnly;
     // Adjust before children commit: external jumps create a fresh native view
     // at the target, never a command animating through intermediate days.
-    setSession({ dateId, revision, active, width, baseDate: own ? session.baseDate : dateId,
-      id: own ? session.id : session.id + 1 });
+    setSession({ dateId, revision, active, width, baseDate: keepSurface ? session.baseDate : dateId,
+      id: keepSurface ? session.id : session.id + 1 });
   }
   useLayoutEffect(() => {
     live.current = { ...props, active };
@@ -71,75 +73,158 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
       tracePager('rejected', { index, expected: pending.revision, revision: accepted, reason: 'delegate-rejected' });
       return;
     }
-    // Keep native indices stable for ordinary navigation. Only a window edge
-    // rebases, after settling; this known visual-risk case needs phone review.
+    // Rebase baseDate at the window edge without changing `id` so the visible
+    // `<View key={date}>` page stays mounted while centering the window.
     if (index <= 1 || index >= PAGE_COUNT - 2) {
-      setSession(previous => ({ ...previous, dateId: next, revision: accepted, baseDate: next, id: previous.id + 1 }));
+      setSession(previous => ({ ...previous, dateId: next, revision: accepted, baseDate: next }));
     }
     return accepted;
   }, [session.baseDate]);
 
-  if (!active) return <View style={styles.fill}>{props.renderDay(dateId)}</View>;
   return <NativeSurface key={session.id} baseDate={session.baseDate} surface={session.id}
     revision={revision} selectedDate={dateId} position={props.position} interaction={props.interaction}
-    onSettle={settle} readRevision={props.readRevision} renderDay={props.renderDay} scrollEnabled={props.scrollEnabled !== false} />;
+    active={active} onSettle={settle} readRevision={props.readRevision} renderDay={props.renderDay}
+    scrollEnabled={active && props.scrollEnabled !== false} />;
 }
 
-const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, revision, selectedDate, position, interaction, onSettle, readRevision, renderDay, scrollEnabled }: {
+const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, revision, selectedDate, position, interaction, active, onSettle, readRevision, renderDay, scrollEnabled }: {
   baseDate: string;
   surface: number;
   revision: number;
   selectedDate: string;
   position: SharedValue<number>;
   interaction: SharedValue<number>;
+  active: boolean;
   onSettle: (index: number, revision: number, surface: number) => number | undefined;
   readRevision: () => number;
   renderDay: (date: string) => React.ReactNode;
   scrollEnabled: boolean;
 }) {
   const firstDay = dateIdToEpochDay(baseDate) - RADIUS;
-  const [prepared, setPrepared] = useState(false);
-  const enabled = useSharedValue(true);
-  // Discrete native events belong to PagerView's ordinary JS callback contract.
-  // Do not depend on receipt/order of a separate UI scroll-state worklet to
-  // accept onPageSelected. Intermediate scroll states may be absent/coalesced.
+  const pagerRef = useRef<PagerView | null>(null);
+  const [mountedRange, setMountedRange] = useState<{ min: number; max: number }>(() => ({
+    min: RADIUS - 1,
+    max: RADIUS + 1,
+  }));
+  const rangeRef = useRef(mountedRange);
+  const prevBaseDateRef = useRef(baseDate);
+  if (prevBaseDateRef.current !== baseDate) {
+    prevBaseDateRef.current = baseDate;
+    const resetRange = { min: RADIUS - 1, max: RADIUS + 1 };
+    rangeRef.current = resetRange;
+    setMountedRange(resetRange);
+  } else {
+    rangeRef.current = mountedRange;
+  }
+  const preloadFrameRef = useRef<number | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const cancelIdlePreload = useCallback(() => {
+    if (preloadFrameRef.current !== null) {
+      cancelAnimationFrame(preloadFrameRef.current);
+      preloadFrameRef.current = null;
+    }
+  }, []);
+
+  const enabled = useSharedValue(active);
   const motion = useRef({ index: RADIUS, acknowledged: RADIUS, revision,
     expectedRevision: revision, generation: 0, idleSequence: 0, phase: 'idle', initialized: false, mounted: true });
   const latest = useRef({ onSettle, readRevision });
+
+  const scheduleIdlePreload = useCallback(() => {
+    if (preloadFrameRef.current !== null || !activeRef.current) return;
+    const step = () => {
+      preloadFrameRef.current = null;
+      if (!motion.current.mounted || motion.current.phase !== 'idle' || !activeRef.current) return;
+      const center = motion.current.index;
+      const { min, max } = rangeRef.current;
+      if (min > 0 || max < PAGE_COUNT - 1) {
+        const distLeft = center - min;
+        const distRight = max - center;
+        const expandLeft = min > 0 && (max >= PAGE_COUNT - 1 || distLeft <= distRight);
+        const next = expandLeft ? { min: min - 1, max } : { min, max: max + 1 };
+        rangeRef.current = next;
+        setMountedRange(next);
+        if (next.min > 0 || next.max < PAGE_COUNT - 1) {
+          preloadFrameRef.current = requestAnimationFrame(step);
+        }
+      }
+    };
+    preloadFrameRef.current = requestAnimationFrame(step);
+  }, []);
+
   useLayoutEffect(() => { latest.current = { onSettle, readRevision }; }, [onSettle, readRevision]);
   useLayoutEffect(() => {
     motion.current.mounted = true;
-    enabled.value = true;
+    enabled.value = active;
     position.value = firstDay + RADIUS;
     interaction.value = 0;
     tracePager('mount', { index: RADIUS, revision: motion.current.revision });
-    return () => { motion.current.mounted = false; motion.current.generation++; enabled.value = false; tracePager('unmount'); };
-  }, [enabled, firstDay, interaction, position]);
+    return () => {
+      motion.current.mounted = false;
+      motion.current.generation++;
+      enabled.value = false;
+      cancelIdlePreload();
+      tracePager('unmount');
+    };
+  }, [cancelIdlePreload, enabled, firstDay, interaction, position]);
+
+  const appliedBaseDateRef = useRef(baseDate);
+  useLayoutEffect(() => {
+    if (appliedBaseDateRef.current !== baseDate) {
+      appliedBaseDateRef.current = baseDate;
+      motion.current.index = RADIUS;
+      motion.current.acknowledged = RADIUS;
+      motion.current.generation++;
+      motion.current.phase = 'idle';
+      position.value = firstDay + RADIUS;
+      interaction.value = 0;
+      pagerRef.current?.setPageWithoutAnimation?.(RADIUS);
+      scheduleIdlePreload();
+    }
+  }, [baseDate, firstDay, interaction, position, scheduleIdlePreload]);
+
+  const prevActiveRef = useRef(active);
+  useLayoutEffect(() => {
+    if (prevActiveRef.current !== active) {
+      prevActiveRef.current = active;
+      motion.current.generation++;
+      motion.current.phase = 'idle';
+      enabled.value = active;
+      interaction.value = 0;
+      position.value = dateIdToEpochDay(selectedDate);
+      if (!active) cancelIdlePreload();
+      else scheduleIdlePreload();
+    }
+  }, [active, cancelIdlePreload, enabled, interaction, position, scheduleIdlePreload, selectedDate]);
+
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      if (motion.current.mounted && motion.current.phase === 'idle') setPrepared(true);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, []);
+    if (active) scheduleIdlePreload();
+    return () => cancelIdlePreload();
+  }, [active, cancelIdlePreload, scheduleIdlePreload]);
 
   const reportIdle = useCallback((expectedRevision: number, token: number, idleSequence: number) => {
     const current = motion.current;
-    // Read selection after the batch: a coalesced idle event can occupy an
-    // earlier dispatch slot than the non-coalescing selected-page event.
     const index = current.index;
-    if (!current.mounted || current.generation !== token || current.phase !== 'idle' ||
+    if (!current.mounted || !activeRef.current || current.generation !== token || current.phase !== 'idle' ||
         current.idleSequence !== idleSequence || current.revision !== expectedRevision ||
         latest.current.readRevision() !== expectedRevision || current.acknowledged === index) {
       tracePager(current.acknowledged === index ? 'skip' : 'rejected', { index, expected: expectedRevision, revision: latest.current.readRevision(), reason:
-        !current.mounted ? 'unmounted' : current.generation !== token ? 'new-gesture' : current.phase !== 'idle' ? 'not-idle' :
+        !current.mounted ? 'unmounted' : !activeRef.current ? 'inactive' : current.generation !== token ? 'new-gesture' : current.phase !== 'idle' ? 'not-idle' :
           current.idleSequence !== idleSequence ? 'new-idle' : current.revision !== expectedRevision || latest.current.readRevision() !== expectedRevision ? 'revision' : 'same-index' });
+      scheduleIdlePreload();
       return;
     }
-    setPrepared(true);
+    const nextMin = Math.max(0, Math.min(rangeRef.current.min, index - 1));
+    const nextMax = Math.min(PAGE_COUNT - 1, Math.max(rangeRef.current.max, index + 1));
+    if (nextMin !== rangeRef.current.min || nextMax !== rangeRef.current.max) {
+      const nextRange = { min: nextMin, max: nextMax };
+      rangeRef.current = nextRange;
+      setMountedRange(nextRange);
+    }
     const accepted = latest.current.onSettle(index, expectedRevision, surface);
     if (accepted === undefined) return;
-    // Apply own acknowledgements immediately, even before React commits props:
-    // a next native gesture can already be queued in this same event batch.
     current.revision = accepted;
     current.expectedRevision = accepted;
     const previousIndex = current.acknowledged;
@@ -148,16 +233,14 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     runOnUI((settledIndex: number, acknowledgedIndex: number) => {
       'worklet';
       if (!enabled.value) return;
-      // Reconcile a missing/rounded final frame without pulling the marker
-      // back if the UI is already following a newer native gesture.
       if (Math.abs(position.value - firstDay - acknowledgedIndex) < 0.001 ||
           Math.abs(position.value - firstDay - settledIndex) < 0.001) position.value = firstDay + settledIndex;
     })(index, previousIndex);
-  }, [enabled, firstDay, position, surface]);
+    scheduleIdlePreload();
+  }, [enabled, firstDay, position, scheduleIdlePreload, surface]);
 
   useLayoutEffect(() => {
     const current = motion.current;
-    // Never regress an immediate own acknowledgement to older batched props.
     if (revision < current.revision) return;
     current.revision = revision;
     current.expectedRevision = revision;
@@ -172,8 +255,6 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     })(phase);
   }, [enabled, interaction]);
 
-  // Only per-frame position uses a worklet; it never waits for a JS movement
-  // flag and never renders React. The native pager still owns the actual motion.
   const pageScroll = useEvent<PagerViewOnPageScrollEvent>(event => {
     'worklet';
     if (enabled.value) position.value = firstDay + event.position + event.offset;
@@ -183,13 +264,12 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     const index = event?.nativeEvent?.position;
     tracePager('selected', { index });
     if (index === undefined) { tracePager('rejected', { reason: 'selected-shape' }); return; }
-    if (!current.mounted || latest.current.readRevision() !== current.revision ||
+    if (!current.mounted || !activeRef.current || latest.current.readRevision() !== current.revision ||
         !Number.isInteger(index) || index < 0 || index >= PAGE_COUNT) {
       tracePager('rejected', { index, expected: current.revision, revision: latest.current.readRevision(), reason:
-        !current.mounted ? 'unmounted' : latest.current.readRevision() !== current.revision ? 'revision' : 'invalid-index' });
+        !current.mounted ? 'unmounted' : !activeRef.current ? 'inactive' : latest.current.readRevision() !== current.revision ? 'revision' : 'invalid-index' });
       return;
     }
-    // Ignore the native attachment's placeholder selection before initialPage.
     if (!current.initialized && index !== RADIUS) { tracePager('skip', { index, reason: 'await-initial-page' }); return; }
     current.initialized = true;
     current.index = index;
@@ -199,17 +279,19 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     const phase = event?.nativeEvent?.pageScrollState;
     tracePager('state', { phase: phase === 'idle' || phase === 'dragging' || phase === 'settling' ? phase : 'missing' });
     if (phase === undefined) { tracePager('rejected', { reason: 'state-shape' }); return; }
-    if (!current.mounted || latest.current.readRevision() !== current.revision) {
-      tracePager('rejected', { expected: current.revision, revision: latest.current.readRevision(), reason: !current.mounted ? 'unmounted' : 'revision' });
+    if (!current.mounted || !activeRef.current || latest.current.readRevision() !== current.revision) {
+      tracePager('rejected', { expected: current.revision, revision: latest.current.readRevision(), reason: !current.mounted ? 'unmounted' : !activeRef.current ? 'inactive' : 'revision' });
       return;
     }
     if (phase === 'dragging') {
+      cancelIdlePreload();
       current.generation++;
       current.expectedRevision = current.revision;
       current.initialized = true;
       current.phase = phase;
       updatePresentation(1);
     } else if (phase === 'settling') {
+      cancelIdlePreload();
       if (current.phase === 'idle') {
         current.generation++;
         current.expectedRevision = current.revision;
@@ -222,21 +304,19 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       const { expectedRevision, generation } = current;
       const idleSequence = ++current.idleSequence;
       tracePager('queued', { index: current.index, expected: expectedRevision });
-      // Let the current native event batch finish before committing: a newer
-      // drag/selection, external command or blur invalidates this pending idle.
       runOnJS(reportIdle)(expectedRevision, generation, idleSequence);
     }
-  }, [reportIdle, updatePresentation]);
+  }, [cancelIdlePreload, reportIdle, updatePresentation]);
 
   const dates = useMemo(() => Array.from({ length: PAGE_COUNT }, (_, i) => shiftDateId(baseDate, i - RADIUS)), [baseDate]);
-  return <AnimatedPager style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
+  return <AnimatedPager ref={pagerRef} style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
     scrollEnabled={scrollEnabled}
     orientation="horizontal" layoutDirection="ltr" overScrollMode="never"
     onPageScroll={pageScroll} onPageSelected={pageSelected} onPageScrollStateChanged={pageState}>
-    {dates.map(date => <View key={date} collapsable={false} style={styles.page}
+    {dates.map((date, pageIndex) => <View key={date} collapsable={false} style={styles.page}
       accessibilityElementsHidden={date !== selectedDate}
       importantForAccessibility={date === selectedDate ? 'auto' : 'no-hide-descendants'}>
-      <NativeContent dateId={date} prepared={prepared || date === baseDate} renderDay={renderDay} />
+      <NativeContent dateId={date} prepared={pageIndex >= mountedRange.min && pageIndex <= mountedRange.max} renderDay={renderDay} />
     </View>)}
   </AnimatedPager>;
 });

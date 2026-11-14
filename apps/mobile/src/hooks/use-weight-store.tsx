@@ -5,9 +5,11 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
@@ -25,6 +27,32 @@ interface WeightContextValue {
 }
 
 const WeightContext = createContext<WeightContextValue | undefined>(undefined);
+const WeightDayContext = createContext<ReturnType<typeof createWeightDaySubscriptions> | undefined>(undefined);
+
+export function createWeightDaySubscriptions(initial: Record<string, WeightLogDoc> = {}) {
+  let weights = initial;
+  const listeners = new Map<string, Set<() => void>>();
+  return {
+    get: (dateId: string): WeightLogDoc | undefined => weights[dateId],
+    subscribe: (dateId: string, listener: () => void) => {
+      const bucket = listeners.get(dateId) ?? new Set<() => void>();
+      bucket.add(listener);
+      listeners.set(dateId, bucket);
+      return () => {
+        bucket.delete(listener);
+        if (!bucket.size) listeners.delete(dateId);
+      };
+    },
+    publish: (next: Record<string, WeightLogDoc>) => {
+      if (next === weights) return;
+      const old = weights;
+      weights = next;
+      for (const [dateId, bucket] of listeners) {
+        if (old[dateId] !== next[dateId]) bucket.forEach((listener) => listener());
+      }
+    },
+  };
+}
 
 export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -170,15 +198,34 @@ export const WeightProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     () => Object.fromEntries(logs.filter((doc) => !doc._deleted).map((doc) => [doc.id, doc])),
     [logs]
   );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const daySubscriptions = useMemo(() => createWeightDaySubscriptions(weightsByDate), [namespace]);
+  useLayoutEffect(() => {
+    daySubscriptions.publish(weightsByDate);
+  }, [daySubscriptions, weightsByDate]);
   const value = useMemo(
     () => ({ weightsByDate, syncError, saveWeight, deleteWeight }),
     [weightsByDate, syncError, saveWeight, deleteWeight]
   );
-  return <WeightContext.Provider value={value}>{children}</WeightContext.Provider>;
+  return (
+    <WeightDayContext.Provider value={daySubscriptions}>
+      <WeightContext.Provider value={value}>{children}</WeightContext.Provider>
+    </WeightDayContext.Provider>
+  );
 };
 
 export function useWeightStore(): WeightContextValue {
   const context = useContext(WeightContext);
   if (!context) throw new Error('useWeightStore debe usarse dentro de WeightProvider');
   return context;
+}
+
+export function useWeightForDate(dateId: string): WeightLogDoc | undefined {
+  const store = useContext(WeightDayContext);
+  const subscribe = useCallback(
+    (listener: () => void) => (store ? store.subscribe(dateId, listener) : () => {}),
+    [store, dateId]
+  );
+  const getSnapshot = useCallback(() => store?.get(dateId), [store, dateId]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
