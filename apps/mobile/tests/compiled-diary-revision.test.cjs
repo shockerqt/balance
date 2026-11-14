@@ -289,6 +289,75 @@ test('changing the weight of one date re-renders only that date subscriber via u
   await renderer.act(async () => tree.unmount());
 });
 
+test('production-compiled NativeDayWindow prepares pages on selected without idle and preserves visible Day across rebase', async () => {
+  const raf = global.requestAnimationFrame, cancel = global.cancelAnimationFrame;
+  const frames = new Map(), js = [];
+  let nextFrame = 0;
+  global.requestAnimationFrame = fn => { const id = ++nextFrame; frames.set(id, fn); return id; };
+  global.cancelAnimationFrame = id => frames.delete(id);
+  const PagerHost = React.forwardRef((props, ref) => {
+    React.useImperativeHandle(ref, () => ({ setPageWithoutAnimation() {} }), []);
+    return React.createElement('NativePager', props, props.children);
+  });
+  const { NativeDayWindow, NATIVE_WINDOW_RADIUS: C } = compile('src/components/meal/native-day-window.tsx', {
+    react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    'react-native': { View: host('View'), StyleSheet: { create: value => value }, useWindowDimensions: () => ({ width: 400 }) },
+    'react-native-pager-view': { __esModule: true, default: PagerHost },
+    'react-native-reanimated': {
+      __esModule: true,
+      default: { createAnimatedComponent: () => PagerHost },
+      useSharedValue: initial => React.useRef({ value: initial }).current,
+      useEvent: handler => handler,
+      runOnUI: fn => (...args) => fn(...args),
+      runOnJS: fn => (...args) => js.push(() => fn(...args)),
+    },
+    '../../lib/dates': dates,
+    '../../dev/native-pager-status': local('./src/dev/native-pager-status.ts'),
+  });
+  const nav = navigation.createLogNavigation('2026-11-07');
+  const position = { value: dates.dateIdToEpochDay(nav.get()) }, interaction = { value: 0 };
+  const renderDay = dateId => React.createElement('CompiledDay', { dateId });
+  function Host() {
+    const date = React.useSyncExternalStore(nav.subscribe, nav.get, nav.get);
+    return React.createElement(NativeDayWindow, {
+      dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision,
+      position, interaction, renderDay,
+      onSettle: (next, expected) => { if (expected !== nav.getRevision()) return; nav.set(next); return nav.getRevision(); },
+    });
+  }
+  let tree;
+  try {
+    await renderer.act(async () => { tree = renderer.create(React.createElement(Host)); });
+    const p = tree.root.findByType('NativePager');
+    assert.deepEqual(tree.root.findAllByType('CompiledDay').map(d => d.props.dateId), ['2026-11-06', '2026-11-07', '2026-11-08']);
+    await renderer.act(async () => {
+      p.props.onPageSelected({ nativeEvent: { position: C } });
+      p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'dragging' } });
+      p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'settling' } });
+      p.props.onPageSelected({ nativeEvent: { position: C + 1 } });
+      p.props.onPageSelected({ nativeEvent: { position: C + 2 } });
+    });
+    const mounted = tree.root.findAllByType('CompiledDay').map(d => d.props.dateId);
+    assert.ok(mounted.includes('2026-11-09') && mounted.includes('2026-11-11'), 'compiled component prepares target ± 2 before idle');
+    assert.equal(nav.get(), '2026-11-07');
+    await renderer.act(async () => {
+      p.props.onPageSelected({ nativeEvent: { position: C + 26 } });
+    });
+    const edgeBefore = tree.root.findAllByType('CompiledDay').find(d => d.props.dateId === '2026-12-03');
+    assert.ok(edgeBefore, 'edge day is prepared on selected');
+    await renderer.act(async () => {
+      p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: 'idle' } });
+      for (const fn of js.splice(0)) fn();
+    });
+    assert.equal(nav.get(), '2026-12-03');
+    const edgeAfter = tree.root.findAllByType('CompiledDay').find(d => d.props.dateId === '2026-12-03');
+    assert.equal(edgeAfter, edgeBefore, 'compiled rebase keeps visible Day instance mounted');
+  } finally {
+    if (tree) await renderer.act(async () => tree.unmount());
+    global.requestAnimationFrame = raf; global.cancelAnimationFrame = cancel;
+  }
+});
+
 // The existing test:feed/CI entry must also execute the restored feed regressions.
 require('./compact-diary.test.cjs');
 require('./daily-calorie-target.test.cjs');

@@ -2,12 +2,21 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import PagerView, { type PagerViewOnPageScrollEvent, type PagerViewOnPageSelectedEvent, type PageScrollStateChangedNativeEvent } from 'react-native-pager-view';
 import Animated, { runOnJS, runOnUI, useEvent, useSharedValue, type SharedValue } from 'react-native-reanimated';
-import { dateIdToEpochDay, epochDayToDateId, shiftDateId } from '../../lib/dates';
+import { dateIdToEpochDay, epochDayToDateId } from '../../lib/dates';
 import { recordNativePagerEvent as tracePager } from '../../dev/native-pager-status';
 
 const AnimatedPager = Animated.createAnimatedComponent(PagerView);
-const RADIUS = 7;
+export const NATIVE_WINDOW_RADIUS = 30;
+const RADIUS = NATIVE_WINDOW_RADIUS;
 const PAGE_COUNT = RADIUS * 2 + 1;
+const EDGE_MARGIN = 4;
+const INITIAL_RADIUS = 1;
+const ACTIVE_TARGET_RADIUS = 2;
+const IDLE_PRELOAD_RADIUS = 4;
+const RETENTION_TARGET = IDLE_PRELOAD_RADIUS * 2 + 1;
+const CENTER_PAIR_KEY = RADIUS * PAGE_COUNT + RADIUS;
+const SCROLL_EPSILON = 1e-4;
+
 type Command = { dateId: string; revision: number; active: boolean; width: number };
 type Session = Command & { baseDate: string; id: number };
 
@@ -22,6 +31,22 @@ type Props = {
   onSettle: (date: string, expectedRevision: number) => number | undefined;
   renderDay: (date: string) => React.ReactNode;
 };
+
+function createInitialPreparedDays(centerDay: number): ReadonlySet<number> {
+  const next = new Set<number>();
+  for (let offset = -INITIAL_RADIUS; offset <= INITIAL_RADIUS; offset++) {
+    next.add(centerDay + offset);
+  }
+  return next;
+}
+
+function setsEqual(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
 
 /** Android owns touch arbitration, fling and snapping. */
 export function NativeDayWindow({ active = true, ...props }: Props) {
@@ -73,9 +98,9 @@ export function NativeDayWindow({ active = true, ...props }: Props) {
       tracePager('rejected', { index, expected: pending.revision, revision: accepted, reason: 'delegate-rejected' });
       return;
     }
-    // Rebase baseDate at the window edge without changing `id` so the visible
+    // Rebase baseDate near the window edge without changing `id` so the visible
     // `<View key={date}>` page stays mounted while centering the window.
-    if (index <= 1 || index >= PAGE_COUNT - 2) {
+    if (index <= EDGE_MARGIN || index >= PAGE_COUNT - 1 - EDGE_MARGIN) {
       setSession(previous => ({ ...previous, dateId: next, revision: accepted, baseDate: next }));
     }
     return accepted;
@@ -101,24 +126,12 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   scrollEnabled: boolean;
 }) {
   const firstDay = dateIdToEpochDay(baseDate) - RADIUS;
+  const firstDayRef = useRef(firstDay);
   const pagerRef = useRef<PagerView | null>(null);
-  const [mountedRange, setMountedRange] = useState<{ min: number; max: number }>(() => ({
-    min: RADIUS - 1,
-    max: RADIUS + 1,
-  }));
-  const rangeRef = useRef(mountedRange);
-  const prevBaseDateRef = useRef(baseDate);
-  if (prevBaseDateRef.current !== baseDate) {
-    prevBaseDateRef.current = baseDate;
-    const resetRange = { min: RADIUS - 1, max: RADIUS + 1 };
-    rangeRef.current = resetRange;
-    setMountedRange(resetRange);
-  } else {
-    rangeRef.current = mountedRange;
-  }
+  const [preparedDays, setPreparedDays] = useState<ReadonlySet<number>>(() => createInitialPreparedDays(firstDay + RADIUS));
+  const preparedDaysRef = useRef<ReadonlySet<number>>(preparedDays);
   const preloadFrameRef = useRef<number | null>(null);
   const activeRef = useRef(active);
-  activeRef.current = active;
 
   const cancelIdlePreload = useCallback(() => {
     if (preloadFrameRef.current !== null) {
@@ -128,37 +141,167 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   }, []);
 
   const enabled = useSharedValue(active);
-  const motion = useRef({ index: RADIUS, acknowledged: RADIUS, revision,
-    expectedRevision: revision, generation: 0, idleSequence: 0, phase: 'idle', initialized: false, mounted: true });
+  const firstDayShared = useSharedValue(firstDay);
+  const baseVersionShared = useSharedValue(0);
+  const rebasingFromShared = useSharedValue(-1);
+  const lastVisiblePair = useSharedValue(CENTER_PAIR_KEY);
+
+  const motion = useRef({
+    index: RADIUS,
+    acknowledged: RADIUS,
+    visMin: RADIUS,
+    visMax: RADIUS,
+    baseVersion: 0,
+    rebasingFrom: null as number | null,
+    revision,
+    expectedRevision: revision,
+    generation: 0,
+    idleSequence: 0,
+    phase: 'idle',
+    initialized: false,
+    mounted: true,
+  });
   const latest = useRef({ onSettle, readRevision });
 
+  const applyPreparedSet = useCallback((required: ReadonlySet<number>, anchorDay: number, minDay: number, maxDay: number, forceRangeClamp = false) => {
+    const currentSet = preparedDaysRef.current;
+    if (!forceRangeClamp) {
+      let allPresent = true;
+      for (const day of required) {
+        if (!currentSet.has(day)) {
+          allPresent = false;
+          break;
+        }
+      }
+      if (allPresent) return;
+    }
+    const next = new Set<number>();
+    for (const day of required) {
+      if (day >= minDay && day <= maxDay) next.add(day);
+    }
+    const retained: number[] = [];
+    for (const day of currentSet) {
+      if (day >= minDay && day <= maxDay && !next.has(day)) {
+        retained.push(day);
+      }
+    }
+    if (next.size < RETENTION_TARGET && retained.length > 0) {
+      retained.sort((a, b) => Math.abs(a - anchorDay) - Math.abs(b - anchorDay));
+      for (const day of retained) {
+        if (next.size >= RETENTION_TARGET) break;
+        next.add(day);
+      }
+    }
+    if (setsEqual(currentSet, next)) return;
+    preparedDaysRef.current = next;
+    setPreparedDays(next);
+  }, []);
+
+  const prepareTargetNeighborhood = useCallback((targetIndex: number) => {
+    const fDay = firstDayRef.current;
+    const lDay = fDay + PAGE_COUNT - 1;
+    const targetDay = fDay + targetIndex;
+    const required = new Set<number>();
+    for (let d = Math.max(fDay, targetDay - ACTIVE_TARGET_RADIUS); d <= Math.min(lDay, targetDay + ACTIVE_TARGET_RADIUS); d++) {
+      required.add(d);
+    }
+    const visMinDay = fDay + Math.max(0, Math.min(PAGE_COUNT - 1, motion.current.visMin));
+    const visMaxDay = fDay + Math.max(0, Math.min(PAGE_COUNT - 1, motion.current.visMax));
+    for (let d = visMinDay; d <= visMaxDay; d++) {
+      required.add(d);
+    }
+    applyPreparedSet(required, targetDay, fDay, lDay);
+  }, [applyPreparedSet]);
+
   const scheduleIdlePreload = useCallback(() => {
-    if (preloadFrameRef.current !== null || !activeRef.current) return;
+    if (!motion.current.mounted || preloadFrameRef.current !== null || !activeRef.current) return;
     const step = () => {
       preloadFrameRef.current = null;
       if (!motion.current.mounted || motion.current.phase !== 'idle' || !activeRef.current) return;
-      const center = motion.current.index;
-      const { min, max } = rangeRef.current;
-      if (min > 0 || max < PAGE_COUNT - 1) {
-        const distLeft = center - min;
-        const distRight = max - center;
-        const expandLeft = min > 0 && (max >= PAGE_COUNT - 1 || distLeft <= distRight);
-        const next = expandLeft ? { min: min - 1, max } : { min, max: max + 1 };
-        rangeRef.current = next;
-        setMountedRange(next);
-        if (next.min > 0 || next.max < PAGE_COUNT - 1) {
+      const fDay = firstDayRef.current;
+      const lDay = fDay + PAGE_COUNT - 1;
+      const centerDay = fDay + motion.current.index;
+      const idleMin = Math.max(fDay, centerDay - IDLE_PRELOAD_RADIUS);
+      const idleMax = Math.min(lDay, centerDay + IDLE_PRELOAD_RADIUS);
+      const currentSet = preparedDaysRef.current;
+
+      let missingDay: number | null = null;
+      if (centerDay >= idleMin && centerDay <= idleMax && !currentSet.has(centerDay)) {
+        missingDay = centerDay;
+      } else {
+        for (let dist = 1; dist <= IDLE_PRELOAD_RADIUS; dist++) {
+          const left = centerDay - dist;
+          const right = centerDay + dist;
+          if (left >= idleMin && !currentSet.has(left)) {
+            missingDay = left;
+            break;
+          }
+          if (right <= idleMax && !currentSet.has(right)) {
+            missingDay = right;
+            break;
+          }
+        }
+      }
+
+      if (missingDay !== null) {
+        const next = new Set<number>();
+        for (const day of currentSet) {
+          if (day >= fDay && day <= lDay) next.add(day);
+        }
+        next.add(missingDay);
+        if (next.size > RETENTION_TARGET) {
+          const removable = [...next]
+            .filter(day => day < idleMin || day > idleMax)
+            .sort((a, b) => Math.abs(b - centerDay) - Math.abs(a - centerDay));
+          for (const day of removable) {
+            if (next.size <= RETENTION_TARGET) break;
+            next.delete(day);
+          }
+        }
+        if (!setsEqual(currentSet, next)) {
+          preparedDaysRef.current = next;
+          setPreparedDays(next);
+        }
+        let stillNeedsWork = next.size > RETENTION_TARGET;
+        if (!stillNeedsWork) {
+          for (let d = idleMin; d <= idleMax; d++) {
+            if (!next.has(d)) {
+              stillNeedsWork = true;
+              break;
+            }
+          }
+        }
+        if (stillNeedsWork) {
           preloadFrameRef.current = requestAnimationFrame(step);
+        }
+        return;
+      }
+
+      if (currentSet.size > RETENTION_TARGET) {
+        const next = new Set<number>();
+        for (let d = idleMin; d <= idleMax; d++) {
+          if (currentSet.has(d)) next.add(d);
+        }
+        if (!setsEqual(currentSet, next)) {
+          preparedDaysRef.current = next;
+          setPreparedDays(next);
         }
       }
     };
     preloadFrameRef.current = requestAnimationFrame(step);
   }, []);
 
-  useLayoutEffect(() => { latest.current = { onSettle, readRevision }; }, [onSettle, readRevision]);
   useLayoutEffect(() => {
+    latest.current = { onSettle, readRevision };
+    firstDayRef.current = firstDay;
+    activeRef.current = active;
+  }, [active, firstDay, onSettle, readRevision]);
+  useLayoutEffect(() => {
+    const initialFirstDay = firstDayRef.current;
     motion.current.mounted = true;
-    enabled.value = active;
-    position.value = firstDay + RADIUS;
+    enabled.value = activeRef.current;
+    firstDayShared.value = initialFirstDay;
+    position.value = initialFirstDay + RADIUS;
     interaction.value = 0;
     tracePager('mount', { index: RADIUS, revision: motion.current.revision });
     return () => {
@@ -168,22 +311,40 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       cancelIdlePreload();
       tracePager('unmount');
     };
-  }, [cancelIdlePreload, enabled, firstDay, interaction, position]);
+  }, [cancelIdlePreload, enabled, firstDayShared, interaction, position]);
 
   const appliedBaseDateRef = useRef(baseDate);
   useLayoutEffect(() => {
     if (appliedBaseDateRef.current !== baseDate) {
       appliedBaseDateRef.current = baseDate;
+      cancelIdlePreload();
+      const oldIndex = motion.current.index;
+      const nextBaseVersion = ++motion.current.baseVersion;
+      motion.current.rebasingFrom = oldIndex !== RADIUS ? oldIndex : null;
       motion.current.index = RADIUS;
       motion.current.acknowledged = RADIUS;
+      motion.current.visMin = RADIUS;
+      motion.current.visMax = RADIUS;
       motion.current.generation++;
       motion.current.phase = 'idle';
+      firstDayShared.value = firstDay;
+      baseVersionShared.value = nextBaseVersion;
+      rebasingFromShared.value = oldIndex !== RADIUS ? oldIndex : -1;
+      lastVisiblePair.value = CENTER_PAIR_KEY;
       position.value = firstDay + RADIUS;
       interaction.value = 0;
+
+      const lDay = firstDay + PAGE_COUNT - 1;
+      const centerDay = firstDay + RADIUS;
+      const required = new Set<number>();
+      for (let d = Math.max(firstDay, centerDay - ACTIVE_TARGET_RADIUS); d <= Math.min(lDay, centerDay + ACTIVE_TARGET_RADIUS); d++) {
+        required.add(d);
+      }
+      applyPreparedSet(required, centerDay, firstDay, lDay, true);
       pagerRef.current?.setPageWithoutAnimation?.(RADIUS);
       scheduleIdlePreload();
     }
-  }, [baseDate, firstDay, interaction, position, scheduleIdlePreload]);
+  }, [applyPreparedSet, baseDate, baseVersionShared, cancelIdlePreload, firstDay, firstDayShared, interaction, lastVisiblePair, position, rebasingFromShared, scheduleIdlePreload]);
 
   const prevActiveRef = useRef(active);
   useLayoutEffect(() => {
@@ -216,13 +377,7 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       scheduleIdlePreload();
       return;
     }
-    const nextMin = Math.max(0, Math.min(rangeRef.current.min, index - 1));
-    const nextMax = Math.min(PAGE_COUNT - 1, Math.max(rangeRef.current.max, index + 1));
-    if (nextMin !== rangeRef.current.min || nextMax !== rangeRef.current.max) {
-      const nextRange = { min: nextMin, max: nextMax };
-      rangeRef.current = nextRange;
-      setMountedRange(nextRange);
-    }
+    prepareTargetNeighborhood(index);
     const accepted = latest.current.onSettle(index, expectedRevision, surface);
     if (accepted === undefined) return;
     current.revision = accepted;
@@ -230,14 +385,15 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     const previousIndex = current.acknowledged;
     current.acknowledged = index;
     tracePager('accepted', { index, revision: accepted });
-    runOnUI((settledIndex: number, acknowledgedIndex: number) => {
+    const fDay = firstDayRef.current;
+    runOnUI((settledIndex: number, acknowledgedIndex: number, baseFirstDay: number) => {
       'worklet';
       if (!enabled.value) return;
-      if (Math.abs(position.value - firstDay - acknowledgedIndex) < 0.001 ||
-          Math.abs(position.value - firstDay - settledIndex) < 0.001) position.value = firstDay + settledIndex;
-    })(index, previousIndex);
+      if (Math.abs(position.value - baseFirstDay - acknowledgedIndex) < 0.001 ||
+          Math.abs(position.value - baseFirstDay - settledIndex) < 0.001) position.value = baseFirstDay + settledIndex;
+    })(index, previousIndex, fDay);
     scheduleIdlePreload();
-  }, [enabled, firstDay, position, scheduleIdlePreload, surface]);
+  }, [enabled, position, prepareTargetNeighborhood, scheduleIdlePreload, surface]);
 
   useLayoutEffect(() => {
     const current = motion.current;
@@ -255,10 +411,53 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     })(phase);
   }, [enabled, interaction]);
 
+  const clearRebasingFilter = useCallback((baseVersion: number) => {
+    if (motion.current.mounted && motion.current.baseVersion === baseVersion) {
+      motion.current.rebasingFrom = null;
+    }
+  }, []);
+
+  const handleVisiblePair = useCallback((visMin: number, visMax: number, baseVersion: number) => {
+    const current = motion.current;
+    if (!current.mounted || !activeRef.current || baseVersion !== current.baseVersion || current.rebasingFrom !== null) {
+      return;
+    }
+    current.visMin = visMin;
+    current.visMax = visMax;
+    const fDay = firstDayRef.current;
+    const lDay = fDay + PAGE_COUNT - 1;
+    const targetDay = fDay + current.index;
+    const required = new Set<number>();
+    for (let d = Math.max(fDay, targetDay - ACTIVE_TARGET_RADIUS); d <= Math.min(lDay, targetDay + ACTIVE_TARGET_RADIUS); d++) {
+      required.add(d);
+    }
+    for (let i = Math.max(0, visMin - 1); i <= Math.min(PAGE_COUNT - 1, visMax + 1); i++) {
+      required.add(fDay + i);
+    }
+    const anchorIndex = visMax > current.index ? visMax : visMin < current.index ? visMin : current.index;
+    applyPreparedSet(required, fDay + anchorIndex, fDay, lDay);
+  }, [applyPreparedSet]);
+
   const pageScroll = useEvent<PagerViewOnPageScrollEvent>(event => {
     'worklet';
-    if (enabled.value) position.value = firstDay + event.position + event.offset;
+    if (!enabled.value) return;
+    const raw = event.position + event.offset;
+    const rebasingFrom = rebasingFromShared.value;
+    if (rebasingFrom >= 0) {
+      if (Math.abs(raw - rebasingFrom) < 1.5 && Math.abs(raw - RADIUS) > 1.5) return;
+      rebasingFromShared.value = -1;
+      runOnJS(clearRebasingFilter)(baseVersionShared.value);
+    }
+    position.value = firstDayShared.value + raw;
+    const visMin = Math.max(0, Math.min(PAGE_COUNT - 1, Math.floor(raw + SCROLL_EPSILON)));
+    const visMax = Math.max(0, Math.min(PAGE_COUNT - 1, Math.ceil(raw - SCROLL_EPSILON)));
+    const pairKey = visMin * PAGE_COUNT + visMax;
+    if (pairKey !== lastVisiblePair.value) {
+      lastVisiblePair.value = pairKey;
+      runOnJS(handleVisiblePair)(visMin, visMax, baseVersionShared.value);
+    }
   }, ['onPageScroll']);
+
   const pageSelected = useCallback((event: PagerViewOnPageSelectedEvent) => {
     const current = motion.current;
     const index = event?.nativeEvent?.position;
@@ -270,10 +469,25 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
         !current.mounted ? 'unmounted' : !activeRef.current ? 'inactive' : latest.current.readRevision() !== current.revision ? 'revision' : 'invalid-index' });
       return;
     }
+    if (current.rebasingFrom !== null) {
+      if (index === current.rebasingFrom) {
+        tracePager('skip', { index, reason: 'await-initial-page' });
+        return;
+      }
+      current.rebasingFrom = null;
+      rebasingFromShared.value = -1;
+    }
     if (!current.initialized && index !== RADIUS) { tracePager('skip', { index, reason: 'await-initial-page' }); return; }
+    const isInitialCenterAck = !current.initialized && index === RADIUS && current.phase === 'idle';
     current.initialized = true;
     current.index = index;
-  }, []);
+    current.visMin = index;
+    current.visMax = index;
+    if (!isInitialCenterAck) {
+      prepareTargetNeighborhood(index);
+    }
+  }, [prepareTargetNeighborhood, rebasingFromShared]);
+
   const pageState = useCallback((event: PageScrollStateChangedNativeEvent) => {
     const current = motion.current;
     const phase = event?.nativeEvent?.pageScrollState;
@@ -285,6 +499,8 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     }
     if (phase === 'dragging') {
       cancelIdlePreload();
+      current.rebasingFrom = null;
+      rebasingFromShared.value = -1;
       current.generation++;
       current.expectedRevision = current.revision;
       current.initialized = true;
@@ -306,17 +522,23 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       tracePager('queued', { index: current.index, expected: expectedRevision });
       runOnJS(reportIdle)(expectedRevision, generation, idleSequence);
     }
-  }, [cancelIdlePreload, reportIdle, updatePresentation]);
+  }, [cancelIdlePreload, rebasingFromShared, reportIdle, updatePresentation]);
 
-  const dates = useMemo(() => Array.from({ length: PAGE_COUNT }, (_, i) => shiftDateId(baseDate, i - RADIUS)), [baseDate]);
+  const pages = useMemo(
+    () => Array.from({ length: PAGE_COUNT }, (_, i) => {
+      const epochDay = firstDay + i;
+      return { date: epochDayToDateId(epochDay), epochDay };
+    }),
+    [firstDay],
+  );
   return <AnimatedPager ref={pagerRef} style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
     scrollEnabled={scrollEnabled}
     orientation="horizontal" layoutDirection="ltr" overScrollMode="never"
     onPageScroll={pageScroll} onPageSelected={pageSelected} onPageScrollStateChanged={pageState}>
-    {dates.map((date, pageIndex) => <View key={date} collapsable={false} style={styles.page}
+    {pages.map(({ date, epochDay }) => <View key={date} collapsable={false} style={styles.page}
       accessibilityElementsHidden={date !== selectedDate}
       importantForAccessibility={date === selectedDate ? 'auto' : 'no-hide-descendants'}>
-      <NativeContent dateId={date} prepared={pageIndex >= mountedRange.min && pageIndex <= mountedRange.max} renderDay={renderDay} />
+      <NativeContent dateId={date} prepared={preparedDays.has(epochDay)} renderDay={renderDay} />
     </View>)}
   </AnimatedPager>;
 });
