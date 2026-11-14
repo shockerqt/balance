@@ -1,3 +1,5 @@
+// Keep the editorial route and its event races in the existing native-daily CI entry.
+require('./weight-entry-editorial.test.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
