@@ -133,6 +133,7 @@ async function harness(initial = '2026-12-06', staticMode = false, withCollapse 
     commits: () => commits,
     gesture: () => gestures.at(-1).handlers,
     async frames(values) { await renderer.act(async () => { for (const value of values) position.value = dates.dateIdToEpochDay(initial)+value; }); },
+    async reactToPosition(value) { await renderer.act(async () => { position.value = dates.dateIdToEpochDay(initial)+value; for (const run of reactions) run(); }); },
     async moveContent(value) { await renderer.act(async () => { interaction.value = value; for (const run of reactions) run(); }); },
     async begin() { await renderer.act(async () => { const g = gestures.at(-1).handlers; g.onBegin(); g.onStart(); }); },
     async drag(x) { await renderer.act(async () => gestures.at(-1).handlers.onUpdate({ translationX: x })); },
@@ -672,4 +673,47 @@ test('non-pager and compact-only fallbacks use the same fixed face and clipped v
       assert.equal(h.nav.get(), '2026-12-04');
     } finally { await h.close(); }
   }
+});
+
+
+test('bounded header windows follow chained pager travel without confirming dates', async () => {
+  const initial = '2026-12-28', h = await harness(initial);
+  try {
+    await h.moveContent(1);
+    for (const offset of [...Array.from({ length: 30 }, (_, i) => i + 1), ...Array.from({ length: 60 }, (_, i) => 29 - i)]) {
+      await h.reactToPosition(offset); await h.flush();
+      const date = dates.shiftDateId(initial, offset);
+      const labels = h.tree.root.findAllByType('AnimatedView').filter(n => n.props.testID?.startsWith('date-label-expanded-'));
+      assert.equal(labels.length, 15);
+      assert.equal(h.style(labels.find(n => n.props.testID === 'date-label-expanded-'+date)).opacity, 1);
+      const week = h.weeks().find(n => h.style(n).transform[0].translateX === 0);
+      assert.ok(week, 'a rendered week remains in the viewport');
+      assert.ok(week.findAllByType('Button').some(n => n.props.testID === 'day-'+date));
+      assert.equal(h.weeks().length, 3);
+      assert.equal(h.nav.get(), initial); assert.equal(h.nav.getRevision(), 0);
+    }
+    const commits = h.commits();
+    for (const offset of [-30.1, -30.2, -30.5]) { await h.reactToPosition(offset); await h.flush(); }
+    assert.equal(h.commits(), commits, 'fractional frames within headroom do not commit React');
+    const labels = h.tree.root.findAllByType('AnimatedView');
+    assert.equal(h.style(labels.find(n => n.props.testID === 'date-label-expanded-'+dates.shiftDateId(initial, -30))).opacity, 0.5);
+  } finally { await h.close(); }
+});
+
+test('queued visual window updates use current position and reject external jumps, blur and unmount', async () => {
+  const h = await harness('2026-12-28');
+  try {
+    await h.reactToPosition(4);
+    await h.frames([20]); await h.flush();
+    assert.ok(h.day('2027-01-17'));
+    await h.reactToPosition(24);
+    await h.jump('2025-02-03'); await h.flush();
+    assert.ok(h.day('2025-02-03')); assert.equal(h.nav.getRevision(), 1);
+    await h.jump('2026-12-28'); await h.flush();
+    assert.ok(h.day('2026-12-28'), 'returning to an earlier canonical date does not revive its old visual anchor');
+    const commits = h.commits();
+    await h.reactToPosition(8); await h.blur(); await h.flush();
+    assert.equal(h.commits(), commits + 1, 'blur rejects the queued reanchor');
+    await h.focus(); await h.reactToPosition(12); await h.close(); await h.flush();
+  } finally { if (h.tree.toJSON() !== null) await h.close(); }
 });
