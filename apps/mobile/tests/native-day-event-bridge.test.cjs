@@ -31,13 +31,12 @@ const reanimated = {
         // Match Reanimated's native PropsFilter seam: a worklet handler becomes
         // a dummy JS listener. Discrete date updates must use real JS callbacks.
         forwarded[key] = () => {};
-        worklets[key] = event => value.testWorklet({ eventName: key, ...event });
+        worklets[key] = value.testWorklet;
       } else forwarded[key] = value;
     }
     return React.createElement(Component, { ...forwarded, testWorklets: worklets });
   } },
   useSharedValue: value => React.useRef({ value }).current,
-  useAnimatedRef: () => React.useRef(null), useAnimatedProps: read => ({ read }), useFrameCallback() {}, dispatchCommand() {},
   useEvent: handler => ({ testWorklet: handler }),
   runOnUI: fn => (...args) => fn(...args),
   runOnJS: fn => (...args) => queued.push(() => fn(...args)),
@@ -47,7 +46,6 @@ const { NativeDayWindow } = compile(path.join(root, 'src/components/meal/native-
   'react-native-pager-view': { __esModule: true, default: PagerView },
   'react-native-reanimated': reanimated, '../../lib/dates': dates,
   '../../dev/native-pager-status': local('./src/dev/native-pager-status.ts'),
-  '../../lib/diary-presentation': local('./src/lib/diary-presentation.ts'),
 });
 
 test('installed PagerView callback forwarding keeps visible day, header/week and authority synchronized without JS scroll-frame handlers', async () => {
@@ -66,8 +64,8 @@ test('installed PagerView callback forwarding keeps visible day, header/week and
         React.createElement(NativeDayWindow, { dateId: date, revision: nav.getRevision(), readRevision: nav.getRevision, position, interaction, renderDay,
           onSettle: (next, expected) => { if (expected !== nav.getRevision()) return; nav.set(next); return nav.getRevision(); } })));
   }
-  const selected = (p, index) => { p.props.testWorklets.onPageScroll({ eventName:'onPageSelected', position:index }); p.props.onPageSelected({ nativeEvent: { position: index } }); };
-  const phase = (p, value) => { p.props.testWorklets.onPageScroll({ eventName:'onPageScrollStateChanged', pageScrollState:value }); p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } }); };
+  const selected = (p, index) => p.props.onPageSelected({ nativeEvent: { position: index } });
+  const phase = (p, value) => p.props.onPageScrollStateChanged({ nativeEvent: { pageScrollState: value } });
   const flush = () => { for (const fn of queued.splice(0)) fn(); };
   try {
     await renderer.act(async () => { tree = renderer.create(React.createElement(Host)); });

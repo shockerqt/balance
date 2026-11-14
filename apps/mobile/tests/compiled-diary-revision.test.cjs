@@ -5,6 +5,7 @@ const React = local('react'), renderer = local('react-test-renderer'), babel = l
 const dates = local('./src/lib/dates.ts'), navigation = local('./src/lib/log-navigation.ts');
 global.IS_REACT_ACT_ENVIRONMENT = true;
 const host = name => props => React.createElement(name, props, props.children);
+const animatedParent = node => { let parent = node.parent; while (parent && parent.type !== 'AnimatedView') parent = parent.parent; return parent; };
 // Use Expo's production preset and the React Compiler enabled by app.json.
 // A TS-only renderer cannot catch memoization of imperative external-store reads.
 function compile(file, stubs) {
@@ -39,26 +40,24 @@ async function harness(renderDays = false) {
     '@/components/ui': { Button: host('Button'), Card: host('Card'), Text: host('Text') },
     '@/components/weight/daily-weight-row': { DailyWeightRow: host('DailyWeightRow') }, '@/hooks/use-meal-store': { useMealDay: () => log, useMealActions: () => ({ deleteMultipleFoods() {} }) }, '@/hooks/use-preferences-store': { usePreferencesStore: () => ({ preferencesReady: true, weightTrackingEnabled: true, diaryMacrosEnabled: false }) },
     '@/hooks/use-weight-store': { useWeightStore: () => ({ weightsByDate: {} }) }, '@/hooks/use-food-selection': { useFoodSelection: () => selection }, '@/hooks/use-logs-date': hooks, '@/lib/dates': dates,
-    '@/lib/diary-presentation': local('./src/lib/diary-presentation.ts'),
-    '@/dev/native-pager-status': local('./src/dev/native-pager-status.ts'),
-    './date-strip-header': { DateStripHeader: props => React.createElement('Header', { date: props.selectedDateId, week: dates.getMondayDateId(props.selectedDateId) }) },
+    './date-strip-header': { DateStripHeader: props => React.createElement('Header', { ...props, date: props.selectedDateId, week: dates.getMondayDateId(props.selectedDateId) }) },
     './sticky-macro-header': { StickyMacroHeader: host('Summary') },
-    './native-day-window': { NativeDayWindow: props => React.createElement('Pager', props,
-      (renderDays === 'window' ? Array.from({ length: 15 }, (_, i) => dates.shiftDateId('2026-11-08', i - 7)) : [props.dateId])
-        .map(day => React.cloneElement(props.renderDay(day), { key: day }))) },
+    './native-day-window': { NativeDayWindow: props => React.createElement('Pager', props, renderDays
+      ? (renderDays === 'window' ? Array.from({ length: 15 }, (_, i) => dates.shiftDateId('2026-11-08', i - 7)) : [props.dateId])
+        .map(day => React.createElement('Page', { key: day, date: day }, props.renderDay(day))) : null) },
     './meal-group-feed': { MealGroupFeed: props => { React.useImperativeHandle(props.ref, () => ({ resetScroll: () => resets.push(true) })); return React.createElement('Feed', props); } },
   };
   const { ReactNativeDiary } = compile('src/components/meal/react-native-diary.tsx', stubs);
   let tree; await renderer.act(async () => { tree = renderer.create(React.createElement(React.Profiler, { id: 'diary', onRender: () => commits++ }, React.createElement(ReactNativeDiary, { today: '2026-11-08' }))); });
-  return { tree, shared, pushes, resets, food, commits: () => commits,
-    async frame(offset) { await renderer.act(async () => {
-      tree.root.findAllByType('Feed').find(n => n.props.dayNumber === dates.dateIdToEpochDay(hooks.logsDateStore.get())).props.scrollOffset.value = offset;
+  const feed = (day = hooks.logsDateStore.get()) => tree.root.findAllByType('Page').find(node => node.props.date === day).findByType('Feed');
+  return { tree, shared, pushes, resets, food, feed, commits: () => commits,
+    async frame(offset, day) { await renderer.act(async () => {
+      feed(day).props.scrollOffset.value = offset;
       for (let pass = 0; pass < 2; pass++) for (const r of [...reactions]) {
         const next = r.prepare();
         if (JSON.stringify(next) !== JSON.stringify(r.previous)) { const previous = r.previous; r.previous = next; r.react(next, previous); }
       }
-    }); }, nav: hooks.logsDateStore, pager: () => tree.root.findByType('Pager').props,
-    header: () => tree.root.findAllByType('Header').find(n => n.props.date === hooks.logsDateStore.get()).props,
+    }); }, nav: hooks.logsDateStore, pager: () => tree.root.findByType('Pager').props, header: () => tree.root.findByType('Header').props,
     async swipe(next) { await renderer.act(async () => { const p = tree.root.findByType('Pager').props; p.onSettle(next, p.revision); }); },
     async close() { await renderer.act(async () => tree.unmount()); },
   };
@@ -73,27 +72,38 @@ test('production-compiled diary advances both date and live revision on consecut
   } finally { await h.close(); }
 });
 
-test('compiled complete page compositions keep at most three headers and do not reset source on canonical acknowledgement', async () => {
+test('compiled full day window keeps one clipped global header outside every native page', async () => {
   const h = await harness('window');
   try {
-    const feed = day => h.tree.root.findAllByType('Feed').find(n => n.props.dayNumber === dates.dateIdToEpochDay(day));
-    assert.equal(h.tree.root.findAllByType('Feed').length, 15, 'feed mount ownership remains unchanged');
-    assert.equal(h.tree.root.findAllByType('Header').length, 3);
-    await h.frame(216);
-    const source = feed('2026-11-08');
-    h.pager().position.value = dates.dateIdToEpochDay('2026-11-08') + .5;
-    assert.equal(source.props.scrollOffset.value, 216);
-    assert.equal(feed('2026-11-09').props.scrollOffset.value, 0);
+    const headers = h.tree.root.findAllByType('Header');
+    assert.equal(headers.length, 1);
+    assert.equal(h.tree.root.findAllByType('Page').length, 15);
+    assert.ok(h.tree.root.findAllByType('Page').every(page => page.findAllByType('Header').length === 0));
+    let parent = headers[0].parent;
+    while (parent) { assert.notEqual(parent.type, 'Pager'); parent = parent.parent; }
+    const clip = animatedParent(headers[0]);
+    assert.equal(clip.props.style[0].position, 'absolute');
+    assert.equal(clip.props.style[0].overflow, 'hidden');
+    assert.equal(clip.props.style[1].read().height, 136);
+    assert.equal(h.header().pagerPosition, h.pager().position);
+    assert.equal(h.header().pagerInteraction, h.pager().interaction);
+    const source = h.feed();
+    await h.frame(54);
+    assert.equal(h.header().collapseScroll.value, 54);
+    assert.equal(clip.props.style[1].read().height, 121.5);
+    await h.frame(160, '2026-11-09');
+    assert.equal(h.header().collapseScroll.value, 54, 'offscreen scroll never owns the global header');
     await h.swipe('2026-11-09');
-    assert.equal(h.tree.root.findAllByType('Header').length, 3);
-    assert.equal(feed('2026-11-08').props.scrollOffset.value, 216,
-      'canonical JS acknowledgement does not reset a page; the actual native offscreen cleanup owns that');
+    assert.equal(h.tree.root.findAllByType('Header').length, 1);
+    assert.equal(h.header().date, '2026-11-09');
+    assert.equal(h.header().collapseScroll.value, 0);
+    assert.equal(h.feed().props.scrollOffset.value, 0, 'the canonical destination retains the earlier scroll reset owner');
+    assert.equal(h.pager().scrollEnabled, true);
     const before = h.pushes.length;
     await renderer.act(async () => source.props.onSelectFood(h.food));
-    assert.equal(h.pushes.length, before, 'old visible/action callback cannot edit the confirmed destination');
-    await renderer.act(async () => feed('2026-11-09').props.onSelectFood(h.food));
-    assert.equal(h.pushes.at(-1).params.dateId, '2026-11-09');
-    assert.equal(h.resets.length, 0);
+    assert.equal(h.pushes.length, before, 'an old day callback cannot edit the canonical destination');
+    await renderer.act(async () => h.feed().props.onSelectFood(h.food));
+    assert.deepEqual(h.pushes.pop(), { pathname: '/food-edit', params: { dateId: '2026-11-09', foodId: 'food-1' } });
   } finally { await h.close(); }
 });
 
@@ -116,7 +126,7 @@ test('production-compiled away-and-back calendar commands update the revision ev
   } finally { await h.close(); }
 });
 
-test('compiled local diary keeps 1/3 geometry, omits weight, edits food and creates a new day at zero without a reset command', async () => {
+test('compiled diary keeps 1/3 geometry, omits weight, edits food and resets after date change', async () => {
   const h = await harness(true);
   try {
     assert.equal(h.tree.root.findAllByType('DailyWeightRow').length, 0);
@@ -124,22 +134,18 @@ test('compiled local diary keeps 1/3 geometry, omits weight, edits food and crea
     const summary = h.tree.root.findAllByType('AnimatedView')[1];
     const expanded = header.props.style[1].read().height + summary.props.style[1].read().height;
     const feed = h.tree.root.findByType('Feed');
-    feed.props.scrollOffset.value = 216;
+    h.shared[0].value = 216; feed.props.scrollOffset.value = 216;
     const compact = header.props.style[1].read().height + summary.props.style[1].read().height;
     assert.equal(expanded, 324); assert.equal(compact, 108); assert.ok(compact <= expanded / 3);
     await renderer.act(async () => feed.props.onSelectFood(h.food));
     assert.deepEqual(h.pushes.pop(), { pathname: '/food-edit', params: { dateId: '2026-11-08', foodId: 'food-1' } });
     await h.swipe('2026-11-09'); await h.swipe('2026-11-08');
     assert.equal(h.tree.root.findByType('Feed').props.scrollOffset.value, 0);
-    assert.equal(h.resets.length, 0, 'canonical acknowledgement does not command a visible reset');
+    assert.ok(h.resets.length > 0);
   } finally { await h.close(); }
 });
 
-// Existing test:feed and CI explicitly execute this entry. Keep the composed
-// installed-core/event contract suite registered without editing npm or CI.
-require('./diary-presentation.test.cjs');
-
-test('compiled diary retains one summary action and continuous frames do not commit React', async () => {
+test('compiled diary hides clipped summary from TalkBack and continuous frames do not commit React', async () => {
   const h = await harness(true);
   try {
     await h.frame(10); await h.frame(20);
@@ -147,10 +153,47 @@ test('compiled diary retains one summary action and continuous frames do not com
     for (const offset of [30, 40, 50, 60]) await h.frame(offset);
     assert.equal(h.commits(), commits, 'continuous scroll within a mode must stay on UI thread');
     const expanded = h.tree.root.findAllByType('Summary').find(n => !n.props.compact);
-    assert.equal(h.tree.root.findAllByType('Summary').length, 1);
-    await renderer.act(async () => expanded.props.onPress());
-    assert.equal(h.pushes.at(-1).params.dateId, '2026-11-08');
+    const accessibleParent = node => { while (node && node.props.accessibilityElementsHidden === undefined) node = node.parent; return node; };
+    assert.equal(accessibleParent(expanded).props.accessibilityElementsHidden, true);
+    assert.equal(accessibleParent(expanded).props.importantForAccessibility, 'no-hide-descendants');
+    const compact = h.tree.root.findAllByType('Summary').find(n => n.props.compact);
+    assert.equal(accessibleParent(compact).props.accessibilityElementsHidden, false);
+    assert.equal(accessibleParent(compact).props.pointerEvents, 'auto');
     await h.frame(0);
-    assert.equal(h.tree.root.findAllByType('Summary').length, 1);
+    assert.equal(accessibleParent(expanded).props.accessibilityElementsHidden, false);
+    assert.equal(accessibleParent(expanded).props.pointerEvents, 'auto');
+    await h.frame(1);
+    assert.equal(accessibleParent(expanded).props.accessibilityElementsHidden, true);
+    assert.equal(accessibleParent(compact).props.pointerEvents, 'auto');
+    assert.equal(h.header().compact, false, 'the header retains its separate 108dp handoff');
+    await h.frame(108);
+    assert.equal(h.header().compact, true);
+    await renderer.act(async () => compact.props.onPress());
+    assert.deepEqual(h.pushes.pop(), { pathname: '/day-nutrition', params: { dateId: '2026-11-08' } });
+    await h.frame(0);
+    assert.equal(accessibleParent(h.tree.root.findAllByType('Summary').find(n => !n.props.compact)).props.accessibilityElementsHidden, false);
   } finally { await h.close(); }
 });
+
+test('compiled summary restores the historical quick fade and fixed clip without a new lift', async () => {
+  const h = await harness(true);
+  const face = compact => animatedParent(h.tree.root.findAllByType('Summary').find(n => !!n.props.compact === compact));
+  try {
+    for (const [offset, fullAlpha, compactAlpha] of [[0, 1, 0], [36, .5, 0], [54, .25, 0], [72, 0, 1 / 9], [108, 0, 1 / 3], [216, 0, 1]]) {
+      await h.frame(offset);
+      const p = Math.min(1, Math.max(0, offset / 216));
+      const expanded = face(false).props.style.read();
+      const compact = face(true).props.style[1].read();
+      assert.ok(Math.abs(expanded.opacity - fullAlpha) < 1e-12);
+      assert.ok(Math.abs(compact.opacity - compactAlpha) < 1e-12);
+      assert.equal(expanded.transform, undefined, 'the historical summary face has no translation');
+      const clip = animatedParent(face(false));
+      assert.equal(clip.props.style[0].overflow, 'hidden');
+      assert.equal(clip.props.style[1].read().top, 136 - 58 * p);
+      assert.equal(clip.props.style[1].read().height, 188 - 158 * p);
+    }
+  } finally { await h.close(); }
+});
+
+// The existing test:feed/CI entry must also execute the restored feed regressions.
+require('./compact-diary.test.cjs');

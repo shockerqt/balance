@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import PagerView, { type PagerViewOnPageScrollEvent, type PagerViewOnPageSelectedEvent, type PageScrollStateChangedNativeEvent } from 'react-native-pager-view';
-import Animated, { dispatchCommand, runOnJS, runOnUI, useAnimatedProps, useAnimatedRef, useEvent, useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Animated, { runOnJS, runOnUI, useEvent, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { dateIdToEpochDay, epochDayToDateId, shiftDateId } from '../../lib/dates';
-import { recordNativePagerEvent as tracePager, recordDiaryFrameIntervals, subscribeDiaryPresentationTrace } from '../../dev/native-pager-status';
-import { createDiaryMotion, observePagerMotion, preparedNeighbors, type DiaryPagePresentation } from '../../lib/diary-presentation';
+import { recordNativePagerEvent as tracePager } from '../../dev/native-pager-status';
 
 const AnimatedPager = Animated.createAnimatedComponent(PagerView);
 const RADIUS = 7;
@@ -21,7 +20,7 @@ type Props = {
   active?: boolean;
   scrollEnabled?: boolean;
   onSettle: (date: string, expectedRevision: number) => number | undefined;
-  renderDay: (date: string, presentation?: DiaryPagePresentation) => React.ReactNode;
+  renderDay: (date: string) => React.ReactNode;
 };
 
 /** Android owns touch arbitration, fling and snapping. */
@@ -95,43 +94,12 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   interaction: SharedValue<number>;
   onSettle: (index: number, revision: number, surface: number) => number | undefined;
   readRevision: () => number;
-  renderDay: Props['renderDay'];
+  renderDay: (date: string) => React.ReactNode;
   scrollEnabled: boolean;
 }) {
   const firstDay = dateIdToEpochDay(baseDate) - RADIUS;
-  const pagerRef = useAnimatedRef<PagerView>();
   const [prepared, setPrepared] = useState(false);
   const enabled = useSharedValue(true);
-  const motionUI = useSharedValue(createDiaryMotion(firstDay + RADIUS, surface));
-  const readyUI = useSharedValue<Record<string, boolean>>({});
-  const headerTouchUI = useSharedValue(false);
-  const allowedUI = useSharedValue(scrollEnabled);
-  const traceFrames = useSharedValue(false);
-  const frameIntervals = useSharedValue<number[]>([]);
-  useEffect(() => subscribeDiaryPresentationTrace(enabled => {
-    runOnUI((next: boolean) => {
-      'worklet';
-      traceFrames.value = next;
-      if (next) frameIntervals.value = [];
-      else if (frameIntervals.value.length) runOnJS(recordDiaryFrameIntervals)(frameIntervals.value);
-    })(enabled);
-  }), [frameIntervals, traceFrames]);
-  useFrameCallback(frame => {
-    if (traceFrames.value && frame.timeSincePreviousFrame !== null)
-      frameIntervals.value = [...frameIntervals.value.slice(-239), frame.timeSincePreviousFrame];
-  });
-  useLayoutEffect(() => { allowedUI.value = scrollEnabled; }, [allowedUI, scrollEnabled]);
-  const headerTouch = useCallback((down: boolean) => {
-    'worklet';
-    if (!enabled.value) return;
-    headerTouchUI.value = down;
-    dispatchCommand(pagerRef, 'setScrollEnabledImperatively', [!down && allowedUI.value && preparedNeighbors(motionUI.value.visual, readyUI.value)]);
-  }, [allowedUI, enabled, headerTouchUI, motionUI, pagerRef, readyUI]);
-  const presentation = useMemo<DiaryPagePresentation>(() => ({ motion: motionUI, ready: readyUI, interaction, headerTouch }),
-    [headerTouch, interaction, motionUI, readyUI]);
-  const pagerProps = useAnimatedProps(() => ({
-    scrollEnabled: allowedUI.value && !headerTouchUI.value && preparedNeighbors(motionUI.value.visual, readyUI.value),
-  }));
   // Discrete native events belong to PagerView's ordinary JS callback contract.
   // Do not depend on receipt/order of a separate UI scroll-state worklet to
   // accept onPageSelected. Intermediate scroll states may be absent/coalesced.
@@ -142,14 +110,10 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
   useLayoutEffect(() => {
     motion.current.mounted = true;
     enabled.value = true;
-    motionUI.value = { ...motionUI.value, enabled: true };
     position.value = firstDay + RADIUS;
     interaction.value = 0;
     tracePager('mount', { index: RADIUS, revision: motion.current.revision });
-    return () => {
-      motion.current.mounted = false; motion.current.generation++; enabled.value = false;
-      motionUI.value = { ...motionUI.value, enabled: false }; tracePager('unmount');
-    };
+    return () => { motion.current.mounted = false; motion.current.generation++; enabled.value = false; tracePager('unmount'); };
   }, [enabled, firstDay, interaction, position]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -200,32 +164,20 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
     current.acknowledged = dateIdToEpochDay(selectedDate) - firstDay;
   }, [firstDay, revision, selectedDate]);
 
+  const updatePresentation = useCallback((phase: number) => {
+    runOnUI((nextPhase: number) => {
+      'worklet';
+      if (!enabled.value) return;
+      interaction.value = nextPhase;
+    })(phase);
+  }, [enabled, interaction]);
+
   // Only per-frame position uses a worklet; it never waits for a JS movement
   // flag and never renders React. The native pager still owns the actual motion.
-  const pageScroll = useEvent<{ nativeEvent: PagerViewOnPageScrollEvent['nativeEvent'] & { pageScrollState?: string } }>(event => {
+  const pageScroll = useEvent<PagerViewOnPageScrollEvent>(event => {
     'worklet';
-    if (!enabled.value) return;
-    const previous = motionUI.value;
-    let next = previous;
-    if (event.eventName.endsWith('onPageScrollStateChanged')) {
-      const phase = event.pageScrollState;
-      if (phase !== 'idle' && phase !== 'dragging' && phase !== 'settling') return;
-      const value = phase === 'idle' ? 0 : phase === 'dragging' ? 1 : 2;
-      interaction.value = value;
-      next = observePagerMotion(previous, 'state', value);
-    } else if (event.eventName.endsWith('onPageSelected')) {
-      next = observePagerMotion(previous, 'selected', firstDay + event.position);
-    } else {
-      position.value = firstDay + event.position + event.offset;
-      next = observePagerMotion(previous, 'scroll', position.value);
-    }
-    if (next.visual !== previous.visual) {
-      // Invalidate the outgoing page before publishing visual idle. A reversal
-      // stays gated until its native/core/committed range all return to zero.
-      readyUI.value = { ...readyUI.value, [String(previous.visual)]: false };
-    }
-    motionUI.value = next;
-  }, ['onPageScroll', 'onPageSelected', 'onPageScrollStateChanged']);
+    if (enabled.value) position.value = firstDay + event.position + event.offset;
+  }, ['onPageScroll']);
   const pageSelected = useCallback((event: PagerViewOnPageSelectedEvent) => {
     const current = motion.current;
     const index = event?.nativeEvent?.position;
@@ -256,14 +208,17 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       current.expectedRevision = current.revision;
       current.initialized = true;
       current.phase = phase;
+      updatePresentation(1);
     } else if (phase === 'settling') {
       if (current.phase === 'idle') {
         current.generation++;
         current.expectedRevision = current.revision;
       }
       current.phase = phase;
+      updatePresentation(2);
     } else if (phase === 'idle') {
       current.phase = phase;
+      updatePresentation(0);
       const { expectedRevision, generation } = current;
       const idleSequence = ++current.idleSequence;
       tracePager('queued', { index: current.index, expected: expectedRevision });
@@ -271,24 +226,24 @@ const NativeSurface = React.memo(function NativeSurface({ baseDate, surface, rev
       // drag/selection, external command or blur invalidates this pending idle.
       runOnJS(reportIdle)(expectedRevision, generation, idleSequence);
     }
-  }, [reportIdle]);
+  }, [reportIdle, updatePresentation]);
 
   const dates = useMemo(() => Array.from({ length: PAGE_COUNT }, (_, i) => shiftDateId(baseDate, i - RADIUS)), [baseDate]);
-  return <AnimatedPager ref={pagerRef} animatedProps={pagerProps} style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
+  return <AnimatedPager style={styles.fill} initialPage={RADIUS} offscreenPageLimit={1}
     scrollEnabled={scrollEnabled}
     orientation="horizontal" layoutDirection="ltr" overScrollMode="never"
     onPageScroll={pageScroll} onPageSelected={pageSelected} onPageScrollStateChanged={pageState}>
     {dates.map(date => <View key={date} collapsable={false} style={styles.page}
       accessibilityElementsHidden={date !== selectedDate}
       importantForAccessibility={date === selectedDate ? 'auto' : 'no-hide-descendants'}>
-      <NativeContent dateId={date} prepared={prepared || date === baseDate} renderDay={renderDay} presentation={presentation} />
+      <NativeContent dateId={date} prepared={prepared || date === baseDate} renderDay={renderDay} />
     </View>)}
   </AnimatedPager>;
 });
 
-const NativeContent = React.memo(function NativeContent({ dateId, prepared, renderDay, presentation }: {
-  dateId: string; prepared: boolean; renderDay: Props['renderDay']; presentation: DiaryPagePresentation;
+const NativeContent = React.memo(function NativeContent({ dateId, prepared, renderDay }: {
+  dateId: string; prepared: boolean; renderDay: Props['renderDay'];
 }) {
-  return useMemo(() => prepared ? renderDay(dateId, presentation) : null, [dateId, prepared, presentation, renderDay]);
+  return useMemo(() => prepared ? renderDay(dateId) : null, [dateId, prepared, renderDay]);
 });
 const styles = StyleSheet.create({ fill: { flex: 1 }, page: { width: '100%', height: '100%' } });

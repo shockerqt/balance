@@ -11,7 +11,6 @@ function load() {
   const stubs = { react: React, 'react/jsx-runtime': local('react/jsx-runtime'), 'react-native': { StyleSheet: { create: x => x }, TouchableOpacity: host('Touch'), View: host('View') },
     '@/hooks/use-meal-store': {}, '@/components/ui': { ProgressBar: host('Bar'), Text: host('Text') }, '@/theme': { useTheme: () => ({ colors }) },
     '@/lib/nutrition': local('./src/lib/nutrition.ts') };
-  stubs['react-native-reanimated'] = { __esModule: true, default: { View: host('AnimatedView') }, useAnimatedStyle: read => ({ read }) };
   m.require = n => { if (n in stubs) return stubs[n]; throw Error('Unexpected ' + n); };
   m._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, file);
   return m.exports.StickyMacroHeader;
