@@ -3,10 +3,9 @@
 
    Dos caminos distintos, y la diferencia importa para el rendimiento:
 
-   - Pasar de un instante real a día calendario chileno necesita la zona
-     horaria, o sea `Intl`. Ese formateador se construye una sola vez y se
-     reutiliza: crearlo en cada llamada costaba unas treinta veces más y se
-     hacía decenas de veces por render.
+   - Pasar de un instante real a día calendario chileno usa un desfase por
+     hora UTC, compartido por fecha y hora. Intl resuelve cada hora nueva;
+     las conversiones repetidas son aritméticas y la caché está acotada.
    - Mover, alinear o enumerar dateIds no necesita zona horaria. Se hace con
      aritmética sobre mediodía UTC, sin tocar `Intl`. Chile va de UTC-4 a
      UTC-3, así que el mediodía UTC cae entre las 08:00 y las 09:00 del mismo
@@ -14,8 +13,19 @@
 
 const CHILE_TIME_ZONE = 'America/Santiago';
 
-/** Único formateador del módulo. Perezoso, para no pagarlo al importar. */
+/** Formateadores perezosos; el de hora solo conserva el camino histórico. */
 let chileFormatter: Intl.DateTimeFormat | null = null;
+let historicalTimeFormatter: Intl.DateTimeFormat | null = null;
+const MS_PER_HOUR = 3_600_000;
+const OFFSET_CACHE_END = Date.UTC(2100, 0, 1);
+const OFFSET_CACHE_LIMIT = 16_384;
+// Santiago's transitions from 1970 through 2099 fall on UTC-hour boundaries.
+// Intl's runtime timezone data remains authoritative; no DST dates/offsets are
+// hardcoded. Earlier offsets can contain seconds, so retain direct Intl there.
+// FIFO bounds runtime memory; an evicted hour may need another Intl conversion.
+const chileOffsets = new Map<number, number>();
+
+type ChileDateParts = { year: number; month: number; day: number; hour: number; minute: number };
 
 function getChileFormatter(): Intl.DateTimeFormat {
   chileFormatter ??= new Intl.DateTimeFormat('en-US', {
@@ -30,24 +40,54 @@ function getChileFormatter(): Intl.DateTimeFormat {
   return chileFormatter;
 }
 
-export function chileDateParts(epochMs: number): {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-} {
-  const parts = getChileFormatter().formatToParts(new Date(epochMs));
-  const values = Object.fromEntries(
-    parts.filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)])
-  );
-  return {
-    year: values.year,
-    month: values.month,
-    day: values.day,
-    hour: values.hour,
-    minute: values.minute,
-  };
+function directChileDateParts(date: Date): ChileDateParts {
+  const parts = getChileFormatter().formatToParts(date);
+  const values: Record<string, number> = {};
+  for (const part of parts) if (part.type !== 'literal') values[part.type] = Number(part.value);
+  return { year: values.year, month: values.month, day: values.day, hour: values.hour, minute: values.minute };
+}
+
+function cacheableChileInstant(epochMs: number): boolean {
+  return epochMs >= 0 && epochMs < OFFSET_CACHE_END;
+}
+
+function cachedChileOffset(timestamp: number): number {
+  const hour = Math.floor(timestamp / MS_PER_HOUR);
+  let offset = chileOffsets.get(hour);
+  if (offset === undefined) {
+    const hourStart = hour * MS_PER_HOUR;
+    const p = directChileDateParts(new Date(hourStart));
+    offset = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - hourStart;
+    if (chileOffsets.size === OFFSET_CACHE_LIMIT) chileOffsets.delete(chileOffsets.keys().next().value!);
+    chileOffsets.set(hour, offset);
+  }
+  return offset;
+}
+
+export function chileDateParts(epochMs: number): ChileDateParts {
+  // Date applies TimeClip before the offset is added. In particular, fractional
+  // milliseconds near epoch zero must not round a shifted negative timestamp
+  // into the following minute.
+  const instant = new Date(epochMs);
+  const timestamp = instant.getTime();
+  if (!cacheableChileInstant(timestamp)) return directChileDateParts(instant);
+  const local = new Date(timestamp + cachedChileOffset(timestamp));
+  return { year: local.getUTCFullYear(), month: local.getUTCMonth() + 1, day: local.getUTCDate(),
+    hour: local.getUTCHours(), minute: local.getUTCMinutes() };
+}
+
+/** Shared displayed time; out-of-range instants retain the adapter's locale. */
+export function chileTimeString(epochMs: number): string {
+  const timestamp = Math.trunc(epochMs);
+  if (cacheableChileInstant(timestamp)) {
+    const localMinute = Math.floor((timestamp + cachedChileOffset(timestamp)) / 60_000);
+    const minuteOfDay = ((localMinute % 1440) + 1440) % 1440;
+    return `${String(Math.floor(minuteOfDay / 60)).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`;
+  }
+  historicalTimeFormatter ??= new Intl.DateTimeFormat('en-GB', {
+    timeZone: CHILE_TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return historicalTimeFormatter.format(new Date(epochMs));
 }
 
 /** Formatea un año/mes/día ya resuelto como dateId. */
