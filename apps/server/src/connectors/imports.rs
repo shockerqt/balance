@@ -686,6 +686,7 @@ mod tests {
                 canonical_quantity: 100.0,
             }],
             chilean_seals: vec![],
+            brand: None,
             category: None,
             typical_time: Some("08:00".into()),
         }

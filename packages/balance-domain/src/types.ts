@@ -83,6 +83,7 @@ export interface MealTemplateDetails {
   nutritionPer100: Nutrition;
   portions: PortionDefinition[];
   chileanSeals?: string[];
+  brand?: string | null;
   category?: string | null;
   typicalTime?: string | null;
 }
@@ -101,6 +102,7 @@ export interface NutritionSnapshot {
   schemaVersion: 2;
   canonicalUnit: CanonicalUnit;
   nutritionPer100: Nutrition;
+  brand?: string | null;
 }
 
 export interface PortionSnapshot {

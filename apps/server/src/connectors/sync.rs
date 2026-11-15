@@ -8,6 +8,38 @@ use uuid::Uuid;
 use crate::shared::error::AppError;
 
 pub const FOOD_SCHEMA_VERSION: i32 = 2;
+pub const MAX_BRAND_CHARS: usize = 120;
+
+fn normalize_optional_brand(brand: Option<String>) -> Option<String> {
+    brand.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
+}
+
+fn deserialize_optional_brand<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(normalize_optional_brand(Option::<String>::deserialize(
+        deserializer,
+    )?))
+}
+
+fn validate_optional_brand(brand: Option<&str>) -> Result<(), AppError> {
+    if let Some(brand) = brand
+        && brand.trim().chars().count() > MAX_BRAND_CHARS
+    {
+        return Err(AppError::BadRequest(format!(
+            "brand must not exceed {MAX_BRAND_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
 
 pub const EXTENDED_NUTRIENT_KEYS: &[&str] = &[
     "alcoholG",
@@ -103,6 +135,12 @@ pub struct FoodDetails {
     pub portions: Vec<PortionDefinition>,
     #[serde(default)]
     pub chilean_seals: Vec<String>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_brand",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub brand: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +153,12 @@ pub struct NutritionSnapshot {
     pub schema_version: i32,
     pub canonical_unit: CanonicalUnit,
     pub nutrition_per100: NutritionValues,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_brand",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub brand: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -208,6 +252,10 @@ impl MealLogEntry {
 }
 
 impl FoodDetails {
+    pub fn normalize(&mut self) {
+        self.brand = normalize_optional_brand(self.brand.take());
+    }
+
     pub fn validate(&self) -> Result<(), AppError> {
         if self.schema_version != FOOD_SCHEMA_VERSION {
             return Err(AppError::BadRequest(
@@ -215,6 +263,7 @@ impl FoodDetails {
             ));
         }
         self.nutrition_per100.validate()?;
+        validate_optional_brand(self.brand.as_deref())?;
         let mut ids = std::collections::HashSet::new();
         for portion in &self.portions {
             portion.validate()?;
@@ -234,6 +283,7 @@ impl FoodDetails {
             schema_version: self.schema_version,
             canonical_unit: self.canonical_unit,
             nutrition_per100: self.nutrition_per100.clone(),
+            brand: normalize_optional_brand(self.brand.clone()),
         }
     }
 
@@ -275,6 +325,7 @@ impl NutritionSnapshot {
                 "Unsupported nutrition snapshot schema version".into(),
             ));
         }
+        validate_optional_brand(self.brand.as_deref())?;
         self.nutrition_per100.validate()
     }
 }
@@ -1081,6 +1132,8 @@ impl SyncDatasource {
         if name.is_empty() {
             return Err(AppError::BadRequest("name cannot be empty".into()));
         }
+        let mut details = details.clone();
+        details.normalize();
         details.validate()?;
 
         let duplicate = sqlx::query_scalar::<_, Uuid>(
@@ -1106,8 +1159,8 @@ impl SyncDatasource {
             ));
         }
 
-        let details_json =
-            serde_json::to_value(details).map_err(|error| AppError::Internal(error.to_string()))?;
+        let details_json = serde_json::to_value(&details)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
         let result = sqlx::query(
             r#"
             INSERT INTO meal_templates
@@ -1667,6 +1720,7 @@ mod tests {
                 },
             ],
             chilean_seals: vec![],
+            brand: None,
             category: None,
             typical_time: None,
         };
@@ -1793,6 +1847,7 @@ mod tests {
             },
             portions: vec![],
             chilean_seals: vec![],
+            brand: None,
             category: Some("fruit".into()),
             typical_time: None,
         };
@@ -2306,5 +2361,114 @@ mod copy_tests {
             serde_json::to_value(foreign_destination_before).unwrap()
         );
         cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[test]
+    fn food_details_and_snapshot_brand_serde_normalization_and_validation() {
+        let legacy_details: FoodDetails = serde_json::from_value(json!({
+            "schemaVersion": FOOD_SCHEMA_VERSION,
+            "canonicalUnit": "g",
+            "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+            "portions": []
+        }))
+        .unwrap();
+        assert_eq!(legacy_details.brand, None);
+        legacy_details.validate().unwrap();
+        let legacy_json = serde_json::to_value(&legacy_details).unwrap();
+        assert!(legacy_json.get("brand").is_none());
+        assert_eq!(legacy_details.snapshot().brand, None);
+
+        let trimmed_details: FoodDetails = serde_json::from_value(json!({
+            "schemaVersion": FOOD_SCHEMA_VERSION,
+            "canonicalUnit": "g",
+            "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+            "portions": [],
+            "brand": "  Soprole  "
+        }))
+        .unwrap();
+        assert_eq!(trimmed_details.brand.as_deref(), Some("Soprole"));
+        trimmed_details.validate().unwrap();
+        assert_eq!(
+            serde_json::to_value(&trimmed_details).unwrap()["brand"],
+            json!("Soprole")
+        );
+        let snapshot = trimmed_details.snapshot();
+        assert_eq!(snapshot.brand.as_deref(), Some("Soprole"));
+        assert_eq!(
+            serde_json::to_value(&snapshot).unwrap()["brand"],
+            json!("Soprole")
+        );
+
+        let blank_details: FoodDetails = serde_json::from_value(json!({
+            "schemaVersion": FOOD_SCHEMA_VERSION,
+            "canonicalUnit": "g",
+            "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+            "portions": [],
+            "brand": "   "
+        }))
+        .unwrap();
+        assert_eq!(blank_details.brand, None);
+        assert!(
+            serde_json::to_value(&blank_details)
+                .unwrap()
+                .get("brand")
+                .is_none()
+        );
+
+        let null_snapshot: NutritionSnapshot = serde_json::from_value(json!({
+            "schemaVersion": FOOD_SCHEMA_VERSION,
+            "canonicalUnit": "g",
+            "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+            "brand": null
+        }))
+        .unwrap();
+        assert_eq!(null_snapshot.brand, None);
+        assert!(
+            serde_json::to_value(&null_snapshot)
+                .unwrap()
+                .get("brand")
+                .is_none()
+        );
+
+        assert!(
+            serde_json::from_value::<FoodDetails>(json!({
+                "schemaVersion": FOOD_SCHEMA_VERSION,
+                "canonicalUnit": "g",
+                "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+                "portions": [],
+                "unknownField": true
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<NutritionSnapshot>(json!({
+                "schemaVersion": FOOD_SCHEMA_VERSION,
+                "canonicalUnit": "g",
+                "nutritionPer100": { "calories": 100.0, "protein": 10.0, "carbs": 20.0, "fat": 5.0 },
+                "unknownField": true
+            }))
+            .is_err()
+        );
+
+        let max_brand = "á".repeat(MAX_BRAND_CHARS);
+        let mut exact_max_details = legacy_details.clone();
+        exact_max_details.brand = Some(format!("  {max_brand}  "));
+        exact_max_details.normalize();
+        exact_max_details.validate().unwrap();
+        assert_eq!(exact_max_details.brand.as_deref(), Some(max_brand.as_str()));
+
+        let mut too_long_details = legacy_details;
+        too_long_details.brand = Some("a".repeat(MAX_BRAND_CHARS + 1));
+        assert!(matches!(
+            too_long_details.validate(),
+            Err(AppError::BadRequest(_))
+        ));
+
+        let mut too_long_snapshot = null_snapshot;
+        too_long_snapshot.brand = Some("a".repeat(MAX_BRAND_CHARS + 1));
+        assert!(matches!(
+            too_long_snapshot.validate(),
+            Err(AppError::BadRequest(_))
+        ));
     }
 }

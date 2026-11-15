@@ -384,6 +384,7 @@ async fn call_tool(
                     })
                     .collect(),
                 chilean_seals: args.chilean_seals,
+                brand: None,
                 category: args.category,
                 typical_time: args.typical_time,
             };
