@@ -56,7 +56,7 @@
     "test:sync": "tsx --test tests/sync-status*.test.* tests/sync-durability*.test.* tests/storage-durability.test.cjs tests/sync-durable-restart.test.cjs tests/native-offline-save-lifecycle.test.cjs tests/sync-large-history-performance.test.cjs tests/sync-copy-batch-lifecycle.test.cjs",
     "test:auth": "node --experimental-strip-types --test tests/auth-session-state.test.mjs tests/auth-browser-logout.test.mjs tests/auth-callback-routes.test.mjs tests/auth-offline-native-save.test.cjs",
     "test:navigation": "tsx --test tests/log-navigation.test.mjs tests/log-performance.test.mjs",
-    "test:dates": "node --experimental-strip-types --test tests/dates-navigation.test.mjs",
+    "test:dates": "node --experimental-strip-types --test tests/dates-navigation.test.mjs && tsx --test tests/date-time-picker.test.cjs",
     "test:domain": "tsx --test tests/shared-domain.test.mjs",
     "test:food-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/food-library-documents.test.mjs",
     "test:macrofactor": "tsx --test tests/macro-factor-import.test.mjs",

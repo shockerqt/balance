@@ -278,6 +278,42 @@ export function currentTimeString(): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
+/** Converts a "YYYY-MM-DD" string to a device-local Date (noon to avoid DST midnight edge cases). */
+export function dateIdToLocalDate(dateId: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateId)) {
+    const [year, month, day] = dateId.split('-').map(Number);
+    const candidate = new Date(year, month - 1, day, 12, 0, 0, 0);
+    if (candidate.getFullYear() === year && candidate.getMonth() === month - 1 && candidate.getDate() === day) {
+      return candidate;
+    }
+  }
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+}
+
+/** Formats a device-local Date as "YYYY-MM-DD". */
+export function localDateToDateId(date: Date): string {
+  return formatDateId(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+/** Converts an "HH:mm" string to a device-local Date on today's calendar day. */
+export function timeStringToLocalDate(timeStr: string, fallbackTime = '08:30'): Date {
+  const parse = (value: string): [number, number] | null => {
+    const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2])];
+  };
+  const [hour, minute] = parse(timeStr) ?? parse(fallbackTime) ?? [8, 30];
+  const d = new Date();
+  d.setHours(hour, minute, 0, 0);
+  return d;
+}
+
+/** Formats a device-local Date as "HH:mm". */
+export function localDateToTimeString(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 function chileOffsetAt(epochMs: number): number {
   const p = chileDateParts(epochMs);
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - epochMs;

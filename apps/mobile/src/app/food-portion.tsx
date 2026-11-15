@@ -6,7 +6,7 @@ import { useMealStore } from '@/hooks/use-meal-store';
 import { parsePortion, scaleMacros } from '@/lib/portion';
 import { todayId } from '@/lib/dates';
 import { MacroSummary } from '@/components/food-search/macro-summary';
-import { Button, Sheet, Text } from '@/components/ui';
+import { Button, DateTimePickerField, Sheet, Text } from '@/components/ui';
 import { makeStyles, useTheme } from '@/theme';
 
 /* Ajuste de porcion. El escalado vive en lib/portion (probable por
@@ -105,12 +105,11 @@ export default function FoodPortionScreen() {
           <Text variant="label" tone="muted">
             HORA DE CONSUMO
           </Text>
-          <TextInput
-            style={styles.timeInput}
+          <DateTimePickerField
+            mode="time"
             value={time}
-            onChangeText={setTime}
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
+            onChange={setTime}
+            accessibilityLabel="Hora de consumo"
           />
         </View>
 
@@ -135,17 +134,6 @@ const useStyles = makeStyles((t) => ({
     color: t.colors.text,
     fontSize: 32,
     fontWeight: '800',
-    paddingVertical: t.space.md,
-    paddingHorizontal: t.space.lg,
-    borderRadius: t.radius.md,
-    borderWidth: t.border.hairline,
-    borderColor: t.colors.border,
-    backgroundColor: t.colors.surfaceRaised,
-  },
-  timeInput: {
-    color: t.colors.text,
-    fontSize: 16,
-    fontWeight: '600',
     paddingVertical: t.space.md,
     paddingHorizontal: t.space.lg,
     borderRadius: t.radius.md,

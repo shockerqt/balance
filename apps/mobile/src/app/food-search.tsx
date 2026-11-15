@@ -3,6 +3,7 @@ import { View, TextInput, TouchableOpacity, ScrollView, Platform } from 'react-n
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFoodLibraryStore, LibraryFoodItem } from '@/hooks/use-food-library-store';
 import { useMealStore, LoggedFoodItem, todayId } from '@/hooks/use-meal-store';
+import { localDateToTimeString, timeStringToLocalDate } from '@/lib/dates';
 import { makeStyles, useTheme } from '@/theme';
 import { Button, Icon, Input, Sheet, Text } from '@/components/ui';
 import { LibraryFoodRow } from '@/components/food-search/library-food-row';
@@ -36,16 +37,6 @@ interface StagedDraftItem {
 
 const AVAILABLE_UNITS = ['g', 'un', 'cc', 'porción', 'taza'];
 
-// Helper to convert "HH:MM" string to a Date object
-const timeStrToDate = (timeStr: string): Date => {
-  const d = new Date();
-  const parts = timeStr.split(':');
-  if (parts.length === 2) {
-    d.setHours(parseInt(parts[0], 10) || 8, parseInt(parts[1], 10) || 30, 0, 0);
-  }
-  return d;
-};
-
 export function FoodSearchScreen() {
   const theme = useTheme();
   const styles = useStyles();
@@ -76,9 +67,7 @@ export function FoodSearchScreen() {
       setShowAndroidTimePicker(false);
     }
     if (date) {
-      const h = String(date.getHours()).padStart(2, '0');
-      const m = String(date.getMinutes()).padStart(2, '0');
-      setSelectedTime(`${h}:${m}`);
+      setSelectedTime(localDateToTimeString(date));
     }
   };
 
@@ -172,7 +161,7 @@ export function FoodSearchScreen() {
   };
 
   const stagedCount = stagedItems.length;
-  const currentDateObj = timeStrToDate(selectedTime);
+  const currentDateObj = timeStringToLocalDate(selectedTime);
 
   return (
     <Sheet
