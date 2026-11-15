@@ -31,13 +31,30 @@ export default function SettingsScreen() {
   const [calorieDraft, setCalorieDraft] = useState(String(dailyCalorieTarget));
   const [calorieDirty, setCalorieDirty] = useState(false);
   const [calorieError, setCalorieError] = useState<string | null>(null);
+  const [calorieSaved, setCalorieSaved] = useState(false);
+  const calorieSavedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearCalorieSavedTimer = () => {
+    if (calorieSavedTimer.current) {
+      clearTimeout(calorieSavedTimer.current);
+      calorieSavedTimer.current = null;
+    }
+  };
+  useEffect(() => clearCalorieSavedTimer, []);
   useEffect(() => { if (!calorieDirty) setCalorieDraft(String(dailyCalorieTarget)); }, [dailyCalorieTarget, calorieDirty]);
   const saveCalorieTarget = () => {
     const raw = calorieDraft.trim();
     if (!/^\d+$/.test(raw) || !setDailyCalorieTarget(Number(raw))) {
+      clearCalorieSavedTimer();
+      setCalorieSaved(false);
       setCalorieError('Ingresa un entero entre 500 y 10000 kcal.'); return;
     }
     setCalorieDirty(false); setCalorieError(null);
+    clearCalorieSavedTimer();
+    setCalorieSaved(true);
+    calorieSavedTimer.current = setTimeout(() => {
+      setCalorieSaved(false);
+      calorieSavedTimer.current = null;
+    }, 3000);
   };
 
   const logoutPending = useRef(false);
@@ -108,9 +125,16 @@ export default function SettingsScreen() {
           <Text variant="title" accessibilityRole="header">Meta diaria</Text>
           <Input accessibilityLabel="Meta diaria de calorías" keyboardType="number-pad" maxLength={5}
             editable={preferencesReady} value={calorieDraft}
-            onChangeText={value => { setCalorieDraft(value); setCalorieDirty(true); setCalorieError(null); }} />
+            onChangeText={value => {
+              setCalorieDraft(value);
+              setCalorieDirty(true);
+              setCalorieError(null);
+              clearCalorieSavedTimer();
+              setCalorieSaved(false);
+            }} />
           <Text variant="caption" tone="secondary">kcal por día</Text>
           {calorieError ? <Text tone="danger" accessibilityRole="alert">{calorieError}</Text> : null}
+          {calorieSaved ? <Text tone="accent" accessibilityLiveRegion="polite">Meta guardada</Text> : null}
           <Button title="Guardar meta" disabled={!preferencesReady} onPress={saveCalorieTarget} />
         </View>
 
