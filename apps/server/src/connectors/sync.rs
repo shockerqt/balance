@@ -21,7 +21,9 @@ fn normalize_optional_brand(brand: Option<String>) -> Option<String> {
     })
 }
 
-fn deserialize_optional_brand<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+pub(crate) fn deserialize_optional_brand<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -30,7 +32,7 @@ where
     )?))
 }
 
-fn validate_optional_brand(brand: Option<&str>) -> Result<(), AppError> {
+pub(crate) fn validate_optional_brand(brand: Option<&str>) -> Result<(), AppError> {
     if let Some(brand) = brand
         && brand.trim().chars().count() > MAX_BRAND_CHARS
     {
@@ -1097,13 +1099,20 @@ impl SyncDatasource {
             FROM meal_templates
             WHERE deleted_at IS NULL
               AND (user_id = $1 OR is_official = TRUE)
-              AND name ILIKE $2 ESCAPE '\'
+              AND (
+                    name ILIKE $2 ESCAPE '\'
+                 OR COALESCE(details->>'brand', '') ILIKE $2 ESCAPE '\'
+              )
               AND (
                     $3 = 'all'
                  OR ($3 = 'personal' AND user_id = $1 AND is_official = FALSE)
                  OR ($3 = 'official' AND is_official = TRUE)
               )
-            ORDER BY CASE WHEN lower(name) = lower($4) THEN 0 ELSE 1 END,
+            ORDER BY CASE
+                         WHEN lower(name) = lower($4) THEN 0
+                         WHEN lower(COALESCE(details->>'brand', '')) = lower($4) THEN 1
+                         ELSE 2
+                     END,
                      is_official DESC,
                      name ASC,
                      id ASC
