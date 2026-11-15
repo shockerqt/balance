@@ -63,8 +63,6 @@ async function harness(populated, initialDoc) {
     './native/interface-contract':{createInterfaceDaysProjector:()=>()=>({})},
     './date-strip-header':{DateStripHeader:host('DateHeader')},'./sticky-macro-header':{StickyMacroHeader:host('DiaryCalories')},
     './native-day-window':{NativeDayWindow:props=>React.createElement('NativePager',props,props.renderDay(props.dateId))},
-    './interactive-day-window':{InteractiveDayWindow:props=>React.createElement('RingPager',props,props.renderDay(props.dateId))},
-    './legend-day-window':{LegendDayWindow:props=>React.createElement('LegendPager',props,props.renderDay(props.dateId))},
     './meal-group-feed':{MealGroupFeed:host('Feed')},
   };
   const Settings=load('src/app/settings.tsx',stubs).default;
@@ -122,20 +120,10 @@ test('macros switch and calorie target coexist without overwriting either prefer
   }finally{await h.close();}
 });
 
-test('Settings Deslizamiento de días selector switches ReactNativeDiary between native, ring and legend engines',async()=>{
+test('ReactNativeDiary renders NativeDayWindow by default and Settings omits Deslizamiento de días selector',async()=>{
   const h=await harness(true);try{
     assert.equal(h.tree.root.findAllByType('NativePager').length,1);
-    const selectBtn=()=>h.tree.root.findAllByType('TouchableOpacity').find(n=>n.props.accessibilityLabel==='Deslizamiento de días');
-    await renderer.act(async()=>selectBtn().props.onPress());
-    const ringItem=h.tree.root.findAllByType('TouchableOpacity').find(n=>n.props.accessibilityLabel==='UI Ring Buffer (5 vistas recicladas)');
-    await renderer.act(async()=>ringItem.props.onPress());
-    assert.equal(h.prefs().diaryPagerEngine,'ring');
-    assert.equal(h.tree.root.findAllByType('RingPager').length,1);
-    await renderer.act(async()=>selectBtn().props.onPress());
-    const legendItem=h.tree.root.findAllByType('TouchableOpacity').find(n=>n.props.accessibilityLabel==='LegendList horizontal (reciclado)');
-    await renderer.act(async()=>legendItem.props.onPress());
-    assert.equal(h.prefs().diaryPagerEngine,'legend');
-    assert.equal(h.tree.root.findAllByType('LegendPager').length,1);
+    assert.equal(h.tree.root.findAllByType('TouchableOpacity').some(n=>n.props.accessibilityLabel==='Deslizamiento de días'),false);
   }finally{await h.close();}
 });
 

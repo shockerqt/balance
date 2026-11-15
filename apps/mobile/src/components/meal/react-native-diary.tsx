@@ -12,8 +12,6 @@ import { currentTimeString, dateIdToEpochDay, todayId } from '@/lib/dates';
 import { DateStripHeader } from './date-strip-header';
 import { StickyMacroHeader } from './sticky-macro-header';
 import { NativeDayWindow } from './native-day-window';
-import { InteractiveDayWindow } from './interactive-day-window';
-import { LegendDayWindow } from './legend-day-window';
 import { MealGroupFeed } from './meal-group-feed';
 import type { HourRailFeedHandle } from './hour-rail-feed';
 
@@ -25,7 +23,6 @@ export function ReactNativeDiary({ today = todayId(), active: tabActive = true }
   const preference = usePreferencesStore();
   const targetCalories = preference.dailyCalorieTarget ?? 2200;
   const showMacros = preference.diaryMacrosEnabled === true;
-  const engine = preference.diaryPagerEngine ?? 'native';
   const [lockedDate, setLockedDate] = useState<string | null>(null);
   const headerScroll = useSharedValue(0);
   const activeDay = useSharedValue(dateIdToEpochDay(date));
@@ -58,12 +55,11 @@ export function ReactNativeDiary({ today = todayId(), active: tabActive = true }
     ),
     [selectionChanged, today, targetCalories, showMacros, headerScroll, activeDay]
   );
-  const Pager = engine === 'ring' ? InteractiveDayWindow : engine === 'legend' ? LegendDayWindow : NativeDayWindow;
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
     <DateStripHeader compact={compact} collapseScroll={headerScroll} selectedDateId={date} onSelectDate={setDate} onShiftDate={logsDateStore.shift} pagerPosition={position} pagerInteraction={interaction} active={active} />
     </Animated.View>
-    <Pager dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
+    <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
   </View>;
 }
