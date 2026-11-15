@@ -40,12 +40,15 @@ function caloriesOf(draft: Draft) {
   const quantity = decimal(draft.quantity, true) ?? 0;
   return draft.template.details.nutritionPer100.calories * canonical(draft.template, draft.portionId, quantity) / 100;
 }
+function formatRowNutrition(basis: string, n: MealTemplateDoc['details']['nutritionPer100'], canonicalAmount: number) {
+  const factor = canonicalAmount / 100;
+  return `${basis} · ${formatCalories(n.calories * factor)} kcal · ${formatMacroGrams(n.protein * factor)} P · ${formatMacroGrams(n.carbs * factor)} C · ${formatMacroGrams(n.fat * factor)} G`;
+}
 function describe(template: MealTemplateDoc) {
   const portion = template.details.portions[0];
   const amount = portion ? portion.canonicalQuantity : 100;
-  const n = template.details.nutritionPer100;
   const basis = portion ? `${formatMacroGrams(portion.portionQuantity)} ${portion.name}` : `100 ${template.details.canonicalUnit}`;
-  return `${basis} · ${formatCalories(n.calories * amount / 100)} kcal · ${formatMacroGrams(n.protein * amount / 100)} g proteína`;
+  return formatRowNutrition(basis, template.details.nutritionPer100, amount);
 }
 
 function FoodEntrySession() {
@@ -213,7 +216,11 @@ function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
         <Text variant="bodyStrong" numberOfLines={1} style={draft ? { fontFamily: font.semibold } : null}>
           {template.name}{brand ? ` · ${brand}` : ''}
         </Text>
-        <Text variant="caption" tone="secondary" numberOfLines={1}>{draft ? `${formatMacroGrams(amount)} ${portion?.name ?? template.details.canonicalUnit} · ${formatCalories(caloriesOf(draft))} kcal · ${formatMacroGrams(template.details.nutritionPer100.protein * canonical(template, draft.portionId, amount) / 100)} g proteína` : describe(template)}</Text>
+        <Text variant="caption" tone="secondary" numberOfLines={2} style={styles.macros}>
+          {draft
+            ? formatRowNutrition(`${formatMacroGrams(amount)} ${portion?.name ?? template.details.canonicalUnit}`, template.details.nutritionPer100, canonical(template, draft.portionId, amount))
+            : describe(template)}
+        </Text>
       </View>
       {toggleButton}
     </View>
@@ -257,10 +264,11 @@ const useStyles = makeStyles((t) => ({
   chipText: { fontSize: 14 },
   listContent: { paddingHorizontal: t.space.xl, paddingTop: 14, paddingBottom: t.space.xl, gap: 6 },
   list: { backgroundColor: t.colors.surface, borderWidth: t.border.hairline, borderColor: t.colors.border, borderRadius: t.radius.lg, paddingHorizontal: 14 },
-  row: { minHeight: 60, justifyContent: 'center' },
+  row: { minHeight: 60, justifyContent: 'center', paddingVertical: t.space.sm },
   rowSelected: { paddingVertical: t.space.md, gap: t.space.md },
   divider: { borderTopWidth: t.border.hairline, borderTopColor: t.colors.track },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: t.space.md },
+  macros: { fontVariant: ['tabular-nums'] },
   toggle: { width: 44, height: 44, borderRadius: t.radius.md, borderWidth: t.border.hairline, borderColor: t.colors.lineStrong, alignItems: 'center', justifyContent: 'center' },
   toggleOn: { backgroundColor: t.colors.primary, borderColor: t.colors.primary },
   quantityRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },

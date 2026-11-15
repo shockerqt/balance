@@ -262,11 +262,13 @@ test('RN selection expands in matching order and hidden drafts retain quantity, 
   try {
     await h.changeTemplates([yogur,pan,template]);
     assert.deepEqual(h.rowActions(),['Agregar Avena','Agregar Pan','Agregar Yogur']);
+    assert.ok(h.text().includes('1 taza · 304 kcal · 10,4 P · 51,2 C · 5,6 G'));
+    assert.ok(h.text().includes('100 g · 380 kcal · 13 P · 64 C · 7 G'));
     await h.press('Agregar Pan'); await h.press('Más Pan');
     assert.deepEqual(h.rowActions(),['Agregar Avena','Quitar Pan','Agregar Yogur']);
-    assert.ok(h.text().includes('110 g · 418 kcal · 14,3 g proteína'));
+    assert.ok(h.text().includes('110 g · 418 kcal · 14,3 P · 70,4 C · 7,7 G'));
     await h.press('Agregar Yogur'); await h.type('Cantidad de Yogur','1,5');
-    assert.ok(h.text().includes('1,5 taza · 456 kcal · 15,6 g proteína'));
+    assert.ok(h.text().includes('1,5 taza · 456 kcal · 15,6 P · 76,8 C · 8,4 G'));
     await h.type('Buscar alimento','Avena');
     assert.deepEqual(h.rowActions(),['Agregar Avena']);
     assert.ok(h.text().includes('2 alimentos')); assert.ok(h.text().includes('874 kcal a las 08:15'));
