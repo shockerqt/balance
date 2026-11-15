@@ -4,7 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useIsFocused } from 'expo-router/react-navigation';
 import Animated, { useAnimatedStyle, useAnimatedReaction, runOnJS, type SharedValue, useSharedValue } from 'react-native-reanimated';
 import { Button, Card, Text } from '@/components/ui';
-import { useMealActions, useMealDay, type LoggedFoodItem } from '@/hooks/use-meal-store';
+import { useMealActions, useMealDay, useMealHydrated, type LoggedFoodItem } from '@/hooks/use-meal-store';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { useFoodSelection } from '@/hooks/use-food-selection';
 import { logsDateStore, useLogsDateRevision, useLogsSelectedDate } from '@/hooks/use-logs-date';
@@ -96,6 +96,7 @@ const DiaryDay = React.memo(function DiaryDay({
     return { top: 136 - 58 * p, height: 188 - 158 * p };
   });
   const log = useMealDay(date);
+  const hydrated = useMealHydrated();
   const currentLog = useRef(log);
   useLayoutEffect(() => { currentLog.current = log; }, [log]);
   const { deleteMultipleFoods } = useMealActions();
@@ -155,6 +156,38 @@ const DiaryDay = React.memo(function DiaryDay({
     <Text variant="heading">{future ? 'Este día todavía no llega' : 'Sin registros este día'}</Text>
     <Text tone="secondary" style={{ fontSize: 14, textAlign: 'center' }}>{future ? 'Puedes planificar comidas con el botón +.' : 'Agrega lo que comiste con el botón +.'}</Text>
   </Card>, [future]);
+  if (!hydrated) {
+    return (
+      <View
+        accessibilityRole="progressbar"
+        accessibilityLabel="Cargando registros del día"
+        accessibilityState={{ busy: true }}
+        style={{ flex: 1, paddingTop: 136, paddingHorizontal: 20, gap: 14 }}
+      >
+        <Card padding="md" style={{ gap: 12 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <Card raised padding="none" bordered={false} radius="sm" style={{ width: 96, height: 28 }} />
+            <Card raised padding="none" bordered={false} radius="sm" style={{ width: 72, height: 20 }} />
+          </View>
+          <Card raised padding="none" bordered={false} radius="pill" style={{ height: 10, width: '100%' }} />
+          <View style={{ flexDirection: 'row', gap: 14 }}>
+            <Card raised padding="none" bordered={false} radius="sm" style={{ flex: 1, height: 34 }} />
+            <Card raised padding="none" bordered={false} radius="sm" style={{ flex: 1, height: 34 }} />
+            <Card raised padding="none" bordered={false} radius="sm" style={{ flex: 1, height: 34 }} />
+          </View>
+        </Card>
+        <Card padding="md" style={{ gap: 10 }}>
+          <Card raised padding="none" bordered={false} radius="sm" style={{ width: '42%', height: 14 }} />
+          <Card raised padding="none" bordered={false} radius="sm" style={{ width: '85%', height: 18 }} />
+          <Card raised padding="none" bordered={false} radius="sm" style={{ width: '68%', height: 14 }} />
+        </Card>
+        <Card padding="md" style={{ gap: 10 }}>
+          <Card raised padding="none" bordered={false} radius="sm" style={{ width: '36%', height: 14 }} />
+          <Card raised padding="none" bordered={false} radius="sm" style={{ width: '78%', height: 18 }} />
+        </Card>
+      </View>
+    );
+  }
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', left: 0, right: 0, zIndex: 4, overflow: 'hidden' }, summaryStyle]}>
     <Animated.View pointerEvents={compact ? 'none' : 'auto'} accessibilityElementsHidden={compact}

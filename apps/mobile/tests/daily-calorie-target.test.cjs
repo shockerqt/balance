@@ -50,7 +50,7 @@ async function harness(populated, initialDoc) {
     'react-native-reanimated':{__esModule:true,default:{View:host('AnimatedView')},useSharedValue:v=>React.useRef({value:v}).current,useAnimatedStyle:fn=>fn(),useAnimatedReaction(){},runOnJS:fn=>fn},
     '@/components/ui':ui,'@/hooks/use-preferences-store':preferences,
     '@/hooks/use-auth':{useAuth:()=>({isGuest:true})},
-    '@/hooks/use-meal-store':{useMealDay:()=>day,useMealActions:()=>({}),useMealStore:()=>({dayLogs,mealDocuments:[]}),emptyDayLog:local('./src/lib/meal-day-projection.ts').emptyDayLog,sumDay:local('./src/lib/nutrition.ts').sumNutrition},
+    '@/hooks/use-meal-store':{useMealDay:()=>day,useMealActions:()=>({}),useMealHydrated:()=>true,useMealStore:()=>({dayLogs,mealDocuments:[],hydrated:true}),emptyDayLog:local('./src/lib/meal-day-projection.ts').emptyDayLog,sumDay:local('./src/lib/nutrition.ts').sumNutrition},
     '@/hooks/use-weight-store':{useWeightStore:()=>({weightsByDate:{}})},'@/hooks/use-food-selection':{useFoodSelection:()=>selection},
     '@/hooks/use-logs-date':{logsDateStore:nav,useLogsSelectedDate:()=>[today,()=>{}],useLogsDateRevision:()=>0},
     '@/components/weight/daily-weight-row':{DailyWeightRow:host('WeightRow')},
