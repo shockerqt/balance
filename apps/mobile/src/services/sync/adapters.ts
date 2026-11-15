@@ -11,22 +11,29 @@ import { chileTimeString } from '@/lib/dates';
 import { scaleNutrition } from '@balance/domain';
 
 export interface LibraryFoodAdapter {
-  id: string; name: string; portion: string; calories: number; protein: number; carbs: number; fat: number;
+  id: string; name: string; brand?: string; portion: string; calories: number; protein: number; carbs: number; fat: number;
   fiber?: number; sodiumMg?: number; cholesterolMg?: number; typicalTime: string; chileanSeals?: string[];
   category?: string; isOfficial?: boolean; updatedAt?: number;
 }
 
 export interface LoggedFoodAdapter {
-  id: string; templateId?: string; name: string; portion: string; calories: number; protein: number; carbs: number; fat: number;
+  id: string; templateId?: string; name: string; brand?: string; portion: string; calories: number; protein: number; carbs: number; fat: number;
   fiber?: number; time: string; chileanSeals?: string[];
+}
+
+export function normalizeBrand(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export const formatPortion = (amount: number, unit: CanonicalUnit) => `${amount}${unit}`;
 
 export function templateToLibraryFood(doc: MealTemplateDoc, frequency = 0): LibraryFoodAdapter & { frequency: number } {
   const n = doc.details.nutritionPer100;
+  const brand = normalizeBrand(doc.details.brand);
   return {
-    id: doc.id, name: doc.name, portion: formatPortion(100, doc.details.canonicalUnit),
+    id: doc.id, name: doc.name, ...(brand ? { brand } : {}), portion: formatPortion(100, doc.details.canonicalUnit),
     calories: n.calories, protein: n.protein, carbs: n.carbs, fat: n.fat,
     fiber: n.fiber == null ? undefined : n.fiber, sodiumMg: n.sodiumMg == null ? undefined : n.sodiumMg,
     cholesterolMg: n.cholesterolMg == null ? undefined : n.cholesterolMg,
@@ -47,6 +54,7 @@ function timeInChile(epochMs: number): string {
 
 export function logToLoggedFood(doc: MealLogDoc): LoggedFoodAdapter {
   const scaled = scaleNutrition(doc.nutritionSnapshot.nutritionPer100, doc.canonicalQuantity / 100);
+  const brand = normalizeBrand(doc.nutritionSnapshot.brand);
   const portion = doc.entry.portionSnapshot
     ? `${doc.entry.enteredQuantity} ${doc.entry.portionSnapshot.name}`
     : formatPortion(doc.canonicalQuantity, doc.nutritionSnapshot.canonicalUnit);
@@ -54,6 +62,7 @@ export function logToLoggedFood(doc: MealLogDoc): LoggedFoodAdapter {
     id: doc.id,
     templateId: doc.templateId ?? undefined,
     name: doc.nameSnapshot,
+    ...(brand ? { brand } : {}),
     portion,
     calories: scaled.calories,
     protein: scaled.protein,
@@ -84,18 +93,21 @@ function nutritionPer100(nutrition: Nutrition, amount: number): Nutrition {
 export function detailsFromLibraryFood(food: Omit<LibraryFoodAdapter, 'id'>): MealTemplateDetails {
   const portion = parseFoodPortion(food.portion);
   if (!portion) throw new Error('INVALID_FOOD_PORTION');
+  const brand = normalizeBrand(food.brand);
   const nutrition: Nutrition = { calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat,
     ...(food.fiber === undefined ? {} : { fiber: food.fiber }), ...(food.sodiumMg === undefined ? {} : { sodiumMg: food.sodiumMg }),
     ...(food.cholesterolMg === undefined ? {} : { cholesterolMg: food.cholesterolMg }) };
   return { schemaVersion: 2, canonicalUnit: portion.unit, nutritionPer100: nutritionPer100(nutrition, portion.canonicalQuantity), portions: [],
+    ...(brand ? { brand } : {}),
     ...(food.chileanSeals?.length ? { chileanSeals: food.chileanSeals } : {}), ...(food.category ? { category: food.category } : {}),
     ...(food.typicalTime ? { typicalTime: food.typicalTime } : {}) };
 }
 
-export function snapshotFromDisplayFood(food: { calories: number; protein: number; carbs: number; fat: number; fiber?: number; portion: string }): NutritionSnapshot {
+export function snapshotFromDisplayFood(food: { calories: number; protein: number; carbs: number; fat: number; fiber?: number; portion: string; brand?: string | null }): NutritionSnapshot {
   const portion = parseFoodPortion(food.portion);
   if (!portion) throw new Error('INVALID_FOOD_PORTION');
-  return { schemaVersion: 2, canonicalUnit: portion.unit, nutritionPer100: nutritionPer100({
+  const brand = normalizeBrand(food.brand);
+  return { schemaVersion: 2, canonicalUnit: portion.unit, ...(brand ? { brand } : {}), nutritionPer100: nutritionPer100({
     calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat, ...(food.fiber === undefined ? {} : { fiber: food.fiber })
   }, portion.canonicalQuantity) };
 }

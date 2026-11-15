@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFoodEntry, decimal, acceptFoodEntryEvent, nutrientFields } from '../src/components/meal/native/food-entry-contract.ts';
-import { isMealLogDoc } from '../src/services/sync/types.ts';
+import { isMealLogDoc, isMealTemplateDetails } from '../src/services/sync/types.ts';
+import { detailsFromLibraryFood, logToLoggedFood, snapshotFromDisplayFood, templateToLibraryFood } from '../src/services/sync/adapters.ts';
 import { chileDateParts } from '../src/lib/dates.ts';
 const template = { id: '9e2d08f7-cb78-4e09-84d0-753040147b27', name: 'Avena', isOfficial: false, updatedAt: 10, _deleted: false, details: { schemaVersion: 2, canonicalUnit: 'g', nutritionPer100: { calories: 380, protein: 13, carbs: 64, fat: 7, fiber: null, sodiumMg: 3.27, extendedNutrition: { calciumMg: 34.21, leucineG: 1.23 } }, portions: [{ id: 'cup', name: 'taza', portionQuantity: 1, canonicalQuantity: 80 }] } };
 const input = { date: '2026-10-18', time: '08:15', quantity: '1,5', templateId: template.id, templateRevision: 10, portionId: 'cup' };
@@ -38,4 +39,23 @@ test('late account callbacks, replayed saves and unknown actions cannot cross th
 test('all backend extended nutrients have explicit display metadata',()=>{
  assert.equal(new Set(nutrientFields.map(f=>f.key)).size,nutrientFields.length);
  assert.ok(nutrientFields.every(f=>f.label&&f.unit));
+});
+test('brand propagates from template to meal log snapshot and sync adapters validate/normalize brand',()=>{
+ const brandedTemplate = { ...template, details: { ...template.details, brand: '  Quaker  ' } };
+ const doc = createFoodEntry(input, [brandedTemplate], 'id', 123);
+ assert.equal(isMealLogDoc(doc), true);
+ assert.equal(doc.nutritionSnapshot.brand, 'Quaker');
+ assert.equal(logToLoggedFood(doc).brand, 'Quaker');
+
+ const blankBranded = { ...template, details: { ...template.details, brand: '   ' } };
+ const blankDoc = createFoodEntry(input, [blankBranded], 'id-2', 123);
+ assert.equal('brand' in blankDoc.nutritionSnapshot, false);
+ assert.equal('brand' in logToLoggedFood(blankDoc), false);
+
+ const libFood = templateToLibraryFood(brandedTemplate, 2);
+ assert.equal(libFood.brand, 'Quaker');
+ assert.equal(detailsFromLibraryFood(libFood).brand, 'Quaker');
+ assert.equal(snapshotFromDisplayFood({ calories: 100, protein: 5, carbs: 10, fat: 2, portion: '100g', brand: '  Colun  ' }).brand, 'Colun');
+ assert.equal(isMealTemplateDetails({ ...template.details, brand: 'a'.repeat(120) }), true);
+ assert.equal(isMealTemplateDetails({ ...template.details, brand: 'a'.repeat(121) }), false);
 });

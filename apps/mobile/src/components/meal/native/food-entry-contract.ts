@@ -35,12 +35,15 @@ export function createFoodEntry(input: unknown, templates: MealTemplateDoc[], id
   const quantity = decimal(p.quantity, true);
   if (quantity === null) return fail('La cantidad debe ser mayor que cero.');
   let name: string, nutrition: Nutrition, unit: 'g' | 'ml', templateId: string | null = null;
+  let brand: string | undefined;
   let portionSnapshot: PortionSnapshot | undefined;
   if (typeof p.templateId === 'string' && p.templateId) {
     const template = templates.find(t => t.id === p.templateId && !t._deleted);
     if (!template || template.updatedAt !== p.templateRevision) return fail('El alimento cambió. Vuelve a elegirlo en la biblioteca.');
     name = template.name; nutrition = { ...template.details.nutritionPer100 };
     if (nutrition.extendedNutrition === null) delete nutrition.extendedNutrition; unit = template.details.canonicalUnit; templateId = template.id;
+    const rawBrand = typeof template.details.brand === 'string' ? template.details.brand.trim() : '';
+    if (rawBrand) brand = rawBrand;
     if (p.portionId !== '' && p.portionId != null) {
       const portion = template.details.portions.find(v => v.id === p.portionId);
       if (!portion) return fail('La porción ya no está disponible.');
@@ -85,7 +88,7 @@ export function createFoodEntry(input: unknown, templates: MealTemplateDoc[], id
   const scaled = scaleNutrition(nutrition, canonicalQuantity / 100);
   const numbers = Object.entries(scaled).flatMap(([k,v]) => k === 'extendedNutrition' && v ? Object.values(v) : [v]).filter(v => v != null);
   if (numbers.some(v => typeof v !== 'number' || !Number.isFinite(v))) return fail('La cantidad es demasiado grande.');
-  const doc: MealLogDoc = { id, templateId, nameSnapshot: name.trim(), nutritionSnapshot: { schemaVersion: 2, canonicalUnit: unit, nutritionPer100: JSON.parse(JSON.stringify(nutrition)) },
+  const doc: MealLogDoc = { id, templateId, nameSnapshot: name.trim(), nutritionSnapshot: { schemaVersion: 2, canonicalUnit: unit, ...(brand ? { brand } : {}), nutritionPer100: JSON.parse(JSON.stringify(nutrition)) },
     canonicalQuantity, entry: { enteredQuantity: quantity, ...(portionSnapshot ? { portionSnapshot } : {}) }, consumedAt, updatedAt: now, _deleted: false };
   if (!isMealLogDoc(doc)) return fail('Revisa los datos antes de registrar.');
   return doc;

@@ -51,7 +51,14 @@ export function searchTemplates(templates: readonly MealTemplateDoc[], query: st
   const text = fold(query.trim());
   const live = templates.filter(t => !t._deleted);
   if (!text) return live.slice().sort((a, b) => a.name.localeCompare(b.name, 'es')).slice(0, limit);
-  return live.filter(t => fold(t.name).includes(text))
-    .sort((a, b) => Number(!fold(a.name).startsWith(text)) - Number(!fold(b.name).startsWith(text)) || a.name.localeCompare(b.name, 'es'))
+  const rank = (t: MealTemplateDoc) => {
+    const name = fold(t.name);
+    if (name.startsWith(text)) return 0;
+    if (name.includes(text)) return 1;
+    return 2;
+  };
+  return live
+    .filter(t => fold(t.name).includes(text) || fold(t.details.brand ?? '').includes(text))
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'es'))
     .slice(0, limit);
 }

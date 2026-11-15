@@ -53,6 +53,7 @@ export default function FoodPortionScreen() {
     addFood(targetDateId, {
       templateId: food.id,
       name: food.name,
+      ...(food.brand ? { brand: food.brand } : {}),
       portion: `${quantity}${unit}`,
       ...macros,
       time: time.trim() || targetTime,

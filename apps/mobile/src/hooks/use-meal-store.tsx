@@ -21,6 +21,7 @@ export interface LoggedFoodItem {
   id: string;
   templateId?: string;
   name: string;
+  brand?: string;
   portion: string;
   calories: number;
   protein: number;

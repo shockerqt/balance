@@ -26,3 +26,15 @@ test('search ignores accents and case and puts prefix matches first', () => {
   assert.deepEqual(searchTemplates([t('3', 'Plátano')], 'platano').map(x => x.id), ['3']);
   assert.equal(searchTemplates([t('x', 'Borrado', { _deleted: true })], '').length, 0);
 });
+
+test('search matches brand accent/case-insensitively and ranks name matches ahead of brand-only matches', () => {
+  const list = [
+    t('brand-only', 'Yogur griego', { details: { brand: 'Sopróle' } }),
+    t('name-mid', 'Leche Soprole descremada', { details: { brand: 'Colun' } }),
+    t('name-start', 'Soprole clásico'),
+  ];
+  assert.deepEqual(
+    searchTemplates(list, 'soprole').map(x => x.id),
+    ['name-start', 'name-mid', 'brand-only']
+  );
+});
