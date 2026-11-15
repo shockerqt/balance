@@ -60,7 +60,8 @@ function EditSession() {
     } }]);
   };
   const original = scaleNutrition(source.nutritionSnapshot.nutritionPer100, source.canonicalQuantity / 100);
-  return <Sheet title="Editar registro" subtitle={source.nameSnapshot} closeLabel="Cancelar" onClose={() => { if (!receipt.saving) router.back(); }}>
+  const brand = typeof source.nutritionSnapshot.brand === 'string' ? source.nutritionSnapshot.brand.trim() : '';
+  return <Sheet title="Editar registro" subtitle={brand ? `${source.nameSnapshot} · ${brand}` : source.nameSnapshot} closeLabel="Cancelar" onClose={() => { if (!receipt.saving) router.back(); }}>
     <ScrollView keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ padding: 20, gap: 18 }}>
       <Field label="Hora"><Input accessibilityLabel="Hora del registro" value={time} onChangeText={setTime} maxLength={5} editable={!receipt.saving} /></Field>
       {source.entry.portionSnapshot ? <ChoiceRow values={[source.entry.portionSnapshot.name, unit]} selected={mode === 'portion' ? 0 : 1} disabled={receipt.saving} onChange={i => {
