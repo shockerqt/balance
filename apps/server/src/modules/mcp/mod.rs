@@ -15,8 +15,9 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            CanonicalUnit, Consumption, FOOD_SCHEMA_VERSION, FoodDetails, NutritionValues,
-            PortionDefinition, WeightLogRow, WeightUpsertStatus,
+            CanonicalUnit, Consumption, FOOD_SCHEMA_VERSION, FoodDetails, MAX_BRAND_CHARS,
+            NutritionValues, PortionDefinition, WeightLogRow, WeightUpsertStatus,
+            deserialize_optional_brand, validate_optional_brand,
         },
     },
     modules::{
@@ -137,6 +138,8 @@ struct CreateFoodArgs {
     portions: Vec<PortionInput>,
     #[serde(default)]
     chilean_seals: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_brand")]
+    brand: Option<String>,
     category: Option<String>,
     typical_time: Option<String>,
 }
@@ -360,6 +363,7 @@ async fn call_tool(
                     "name must not exceed 160 characters".into(),
                 ));
             }
+            validate_optional_brand(args.brand.as_deref())?;
             let details = FoodDetails {
                 schema_version: FOOD_SCHEMA_VERSION,
                 canonical_unit: args.canonical_unit,
@@ -384,7 +388,7 @@ async fn call_tool(
                     })
                     .collect(),
                 chilean_seals: args.chilean_seals,
-                brand: None,
+                brand: args.brand,
                 category: args.category,
                 typical_time: args.typical_time,
             };
@@ -591,17 +595,35 @@ fn parse_args<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, AppError> 
 }
 
 fn consumption_output(consumption: &Consumption) -> Value {
-    json!({
-        "id": consumption.id,
-        "foodId": consumption.template_id,
-        "name": consumption.name,
-        "canonicalQuantity": public_number(consumption.canonical_quantity),
-        "canonicalUnit": consumption.snapshot.canonical_unit,
-        "entry": consumption.entry,
-        "consumedAt": consumption.consumed_at,
-        "updatedAt": consumption.updated_at,
-        "nutrition": nutrition_output(&consumption.scaled_nutrition())
-    })
+    let mut item = serde_json::Map::new();
+    item.insert("id".into(), json!(consumption.id));
+    item.insert("foodId".into(), json!(consumption.template_id));
+    item.insert("name".into(), json!(consumption.name));
+    if let Some(brand) = consumption
+        .snapshot
+        .brand
+        .as_deref()
+        .map(str::trim)
+        .filter(|brand| !brand.is_empty())
+    {
+        item.insert("brand".into(), json!(brand));
+    }
+    item.insert(
+        "canonicalQuantity".into(),
+        json!(public_number(consumption.canonical_quantity)),
+    );
+    item.insert(
+        "canonicalUnit".into(),
+        json!(consumption.snapshot.canonical_unit),
+    );
+    item.insert("entry".into(), json!(consumption.entry));
+    item.insert("consumedAt".into(), json!(consumption.consumed_at));
+    item.insert("updatedAt".into(), json!(consumption.updated_at));
+    item.insert(
+        "nutrition".into(),
+        json!(nutrition_output(&consumption.scaled_nutrition())),
+    );
+    Value::Object(item)
 }
 
 const PUBLIC_NUTRITION_DECIMAL_PLACES: i32 = 6;
@@ -819,7 +841,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "search_foods",
             "title": "Buscar en el catálogo de alimentos",
-            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre o categoría. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
+            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre, marca o categoría. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1098,6 +1120,7 @@ fn create_food_input_schema() -> Value {
             "cholesterolMg": non_negative_number_schema(),
             "portions": { "type": "array", "items": portion_schema(), "maxItems": 50 },
             "chileanSeals": { "type": "array", "items": { "type": "string" }, "maxItems": 4 },
+            "brand": { "type": "string", "maxLength": MAX_BRAND_CHARS },
             "category": { "type": "string", "maxLength": 80 },
             "typicalTime": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
         },
@@ -1144,6 +1167,7 @@ fn food_schema() -> Value {
                     "nutritionPer100": nutrition_schema(),
                     "portions": { "type": "array", "items": portion_schema() },
                     "chileanSeals": { "type": "array", "items": { "type": "string" } },
+                    "brand": { "type": "string", "maxLength": MAX_BRAND_CHARS },
                     "category": { "type": "string" },
                     "typicalTime": { "type": "string" }
                 },
@@ -1164,6 +1188,7 @@ fn consumption_schema() -> Value {
             "id": uuid_schema(),
             "foodId": { "type": ["string", "null"], "format": "uuid" },
             "name": { "type": "string" },
+            "brand": { "type": "string", "maxLength": MAX_BRAND_CHARS },
             "canonicalQuantity": positive_number_schema(),
             "canonicalUnit": canonical_unit_schema(),
             "entry": entry_schema(),
@@ -1819,6 +1844,267 @@ mod tests {
 
         assert!(parse_args::<UpdateFoodLogArgs>(json!({ "logId": "invalid-uuid" })).is_err());
         assert!(parse_args::<DeleteFoodLogArgs>(json!({ "logId": "" })).is_err());
+    }
+
+    #[test]
+    fn optional_food_brand_is_normalized_validated_and_exposed_in_mcp_contracts() {
+        let op_id = Uuid::new_v4();
+        let with_brand = parse_args::<CreateFoodArgs>(json!({
+            "operationId": op_id,
+            "name": "Yogurt griego",
+            "canonicalUnit": "g",
+            "calories": 90.0,
+            "protein": 8.0,
+            "carbs": 5.0,
+            "fat": 4.0,
+            "brand": "  Soprole  "
+        }))
+        .unwrap();
+        assert_eq!(with_brand.brand.as_deref(), Some("Soprole"));
+        assert!(validate_optional_brand(with_brand.brand.as_deref()).is_ok());
+
+        let blank_brand = parse_args::<CreateFoodArgs>(json!({
+            "operationId": op_id,
+            "name": "Avena",
+            "canonicalUnit": "g",
+            "calories": 370.0,
+            "protein": 13.0,
+            "carbs": 60.0,
+            "fat": 7.0,
+            "brand": "   "
+        }))
+        .unwrap();
+        assert_eq!(blank_brand.brand, None);
+
+        let too_long = "a".repeat(MAX_BRAND_CHARS + 1);
+        assert!(validate_optional_brand(Some(&too_long)).is_err());
+        let exact_max = "á".repeat(MAX_BRAND_CHARS);
+        assert!(validate_optional_brand(Some(&exact_max)).is_ok());
+
+        let create_schema = create_food_input_schema();
+        assert_eq!(
+            create_schema.pointer("/properties/brand"),
+            Some(&json!({ "type": "string", "maxLength": MAX_BRAND_CHARS }))
+        );
+        assert!(
+            !create_schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("brand"))
+        );
+
+        let f_schema = food_schema();
+        assert_eq!(
+            f_schema.pointer("/properties/details/properties/brand"),
+            Some(&json!({ "type": "string", "maxLength": MAX_BRAND_CHARS }))
+        );
+        assert!(
+            !f_schema
+                .pointer("/properties/details/required")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .contains(&json!("brand"))
+        );
+
+        let c_schema = consumption_schema();
+        assert_eq!(
+            c_schema.pointer("/properties/brand"),
+            Some(&json!({ "type": "string", "maxLength": MAX_BRAND_CHARS }))
+        );
+        assert!(
+            !c_schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("brand"))
+        );
+
+        let details_with_brand = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
+                calories: 90.0,
+                protein: 8.0,
+                carbs: 5.0,
+                fat: 4.0,
+                fiber: None,
+                sodium_mg: None,
+                cholesterol_mg: None,
+                extended_nutrition: Default::default(),
+            },
+            portions: vec![],
+            chilean_seals: vec![],
+            brand: Some("Soprole".into()),
+            category: None,
+            typical_time: None,
+        };
+        let template_with_brand = crate::connectors::sync::FoodTemplate {
+            id: Uuid::new_v4(),
+            name: "Yogurt griego".into(),
+            is_official: false,
+            details: details_with_brand.clone(),
+            updated_at: 1_767_398_400_000,
+        };
+        let template_json = serde_json::to_value(&template_with_brand).unwrap();
+        assert_eq!(template_json["details"]["brand"], "Soprole");
+
+        let mut details_without_brand = details_with_brand.clone();
+        details_without_brand.brand = None;
+        let template_without_brand = crate::connectors::sync::FoodTemplate {
+            id: Uuid::new_v4(),
+            name: "Avena".into(),
+            is_official: false,
+            details: details_without_brand.clone(),
+            updated_at: 1_767_398_400_000,
+        };
+        let template_without_json = serde_json::to_value(&template_without_brand).unwrap();
+        assert!(template_without_json["details"].get("brand").is_none());
+
+        let consumption_with_brand = Consumption {
+            id: Uuid::new_v4(),
+            template_id: Some(template_with_brand.id),
+            name: "Yogurt griego".into(),
+            snapshot: details_with_brand.snapshot(),
+            canonical_quantity: 125.0,
+            entry: crate::connectors::sync::MealLogEntry {
+                entered_quantity: 125.0,
+                portion_snapshot: None,
+            },
+            consumed_at: 1_767_398_400_000,
+            updated_at: 1_767_398_400_000,
+        };
+        let output_with_brand = consumption_output(&consumption_with_brand);
+        assert_eq!(output_with_brand["brand"], "Soprole");
+
+        let consumption_without_brand = Consumption {
+            id: Uuid::new_v4(),
+            template_id: Some(template_without_brand.id),
+            name: "Avena".into(),
+            snapshot: details_without_brand.snapshot(),
+            canonical_quantity: 50.0,
+            entry: crate::connectors::sync::MealLogEntry {
+                entered_quantity: 50.0,
+                portion_snapshot: None,
+            },
+            consumed_at: 1_767_398_400_000,
+            updated_at: 1_767_398_400_000,
+        };
+        let output_without_brand = consumption_output(&consumption_without_brand);
+        assert!(output_without_brand.get("brand").is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_brand_search_create_log_and_daily_log_roundtrip() {
+        let Ok(database_url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
+            return;
+        };
+        let db = Arc::new(Database::new(&database_url).await.unwrap());
+        let op_branded = Uuid::new_v4();
+        let unique_brand = format!("MarcaMcp{}", &op_branded.simple().to_string()[..8]);
+        let (_, created_json) = call_tool(
+            &db,
+            1,
+            "create_food",
+            json!({
+                "operationId": op_branded,
+                "name": format!("Yogurt {}", unique_brand),
+                "canonicalUnit": "g",
+                "calories": 90.0,
+                "protein": 8.0,
+                "carbs": 5.0,
+                "fat": 4.0,
+                "brand": format!("  {unique_brand}  ")
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created_json["status"], "created");
+        assert_eq!(created_json["food"]["details"]["brand"], unique_brand);
+
+        let (_, search_json) = call_tool(
+            &db,
+            1,
+            "search_foods",
+            json!({
+                "query": unique_brand.to_lowercase(),
+                "source": "personal",
+                "limit": 10
+            }),
+        )
+        .await
+        .unwrap();
+        let foods = search_json["foods"].as_array().unwrap();
+        assert!(foods.iter().any(|f| {
+            f["id"] == created_json["food"]["id"] && f["details"]["brand"] == unique_brand
+        }));
+
+        let op_plain = Uuid::new_v4();
+        let (_, plain_json) = call_tool(
+            &db,
+            1,
+            "create_food",
+            json!({
+                "operationId": op_plain,
+                "name": format!("Avena {}", op_plain.simple()),
+                "canonicalUnit": "g",
+                "calories": 370.0,
+                "protein": 13.0,
+                "carbs": 60.0,
+                "fat": 7.0
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(plain_json["food"]["details"].get("brand").is_none());
+
+        let log_branded = Uuid::new_v4();
+        let (_, logged_json) = call_tool(
+            &db,
+            1,
+            "log_food",
+            json!({
+                "operationId": log_branded,
+                "foodId": op_branded,
+                "quantity": 100.0,
+                "date": "2026-08-10",
+                "time": "09:00"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(logged_json["log"]["brand"], unique_brand);
+
+        let log_plain = Uuid::new_v4();
+        let (_, logged_plain_json) = call_tool(
+            &db,
+            1,
+            "log_food",
+            json!({
+                "operationId": log_plain,
+                "foodId": op_plain,
+                "quantity": 50.0,
+                "date": "2026-08-10",
+                "time": "09:05"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(logged_plain_json["log"].get("brand").is_none());
+
+        let (_, daily_json) = call_tool(&db, 1, "get_daily_log", json!({ "date": "2026-08-10" }))
+            .await
+            .unwrap();
+        let items = daily_json["items"].as_array().unwrap();
+        let branded_item = items
+            .iter()
+            .find(|i| i["id"] == log_branded.to_string())
+            .unwrap();
+        assert_eq!(branded_item["brand"], unique_brand);
+        let plain_item = items
+            .iter()
+            .find(|i| i["id"] == log_plain.to_string())
+            .unwrap();
+        assert!(plain_item.get("brand").is_none());
     }
 }
 
