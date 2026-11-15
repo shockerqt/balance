@@ -73,6 +73,7 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
   const labelled = (label, prop) => view.root.findAll(node => node.props.accessibilityLabel === label && typeof node.props[prop] === 'function')[0];
   const press = async label => { assert.ok(labelled(label, 'onPress'), `missing ${label}`); await renderer.act(async () => { await labelled(label, 'onPress').props.onPress(); }); };
   return { writes, backs, selections, removals, alerts, button, field, press, labelled,
+    sheet: () => view.root.findByType('Sheet'),
     rowActions: () => view.root.findAllByType('Touch').map(n => n.props.accessibilityLabel).filter(label => /^(Agregar|Quitar) /.test(label ?? '')),
     text: () => view.root.findAllByType('Text').map(n => [n.props.children].flat().join('')),
     async type(label, value) { assert.ok(labelled(label, 'onChangeText'), `missing input ${label}`); await renderer.act(async () => { labelled(label, 'onChangeText').props.onChangeText(value); }); },
@@ -203,6 +204,23 @@ test('RN editing uses historical portion conversions and cannot overwrite a chan
   const stale = await harness('react-native-food-edit-screen');
   try { await stale.changeDocuments([{ ...source(), updatedAt: 1001 }]); await stale.click('Guardar cambios'); assert.equal(stale.writes.length, 0); }
   finally { await stale.close(); }
+});
+
+test('RN editing shows food brand when present and preserves nutritionSnapshot.brand on save', async () => {
+  const base = source();
+  const branded = { ...base, nutritionSnapshot: { ...base.nutritionSnapshot, brand: '  Quaker  ' } };
+  const h = await harness('react-native-food-edit-screen', { documents: [branded] });
+  try {
+    assert.equal(h.sheet().props.subtitle, 'Avena · Quaker');
+    await h.fill('Cantidad del registro', '2'); await h.fill('Hora del registro', '19:15'); await h.click('Guardar cambios');
+    const doc = h.writes[0][0];
+    assert.deepEqual(doc.nutritionSnapshot, branded.nutritionSnapshot);
+    assert.equal(doc.nutritionSnapshot.brand, '  Quaker  ');
+  } finally { await h.close(); }
+  const blank = { ...base, nutritionSnapshot: { ...base.nutritionSnapshot, brand: '   ' } };
+  const withoutBrand = await harness('react-native-food-edit-screen', { documents: [blank] });
+  try { assert.equal(withoutBrand.sheet().props.subtitle, 'Avena'); }
+  finally { await withoutBrand.close(); }
 });
 
 test('queued RN callbacks check current documents and delete confirmation cannot survive blur', async () => {
