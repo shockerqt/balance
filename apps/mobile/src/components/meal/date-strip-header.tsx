@@ -139,7 +139,11 @@ function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate
   const theme = useTheme();
   const router = useRouter();
   const today = todayId();
+  const isToday = selectedDateId === today;
   const label = dateLabel(selectedDateId, today);
+  const handlePressToday = useCallback(() => {
+    if (selectedDateId !== today) onSelectDate(today);
+  }, [onSelectDate, selectedDateId, today]);
   const titleHeight = useAnimatedStyle(() => ({ height: 64 - 28 * pVisible.value }));
   const fullTitle = useAnimatedStyle(() => {
     const p = pVisible.value;
@@ -172,16 +176,18 @@ function HeaderContent({ compact = false, pVisible, selectedDateId, onSelectDate
     <Animated.View style={[{ overflow: 'hidden' }, titleHeight]}>
       <Animated.View pointerEvents={compact ? 'none' : 'box-none'} accessibilityElementsHidden={compact}
         importantForAccessibility={compact ? 'no-hide-descendants' : 'auto'} style={[styles.topHeaderRow, fullTitle]}>
-        <View accessible={!compact} {...dateCommands} style={styles.dateTitleBox}>
+        <TouchableOpacity testID="date-title-expanded" accessible={!compact} {...dateCommands}
+          disabled={isToday} activeOpacity={0.7} onPress={handlePressToday} style={styles.dateTitleBox}>
           {presentation ? <TitleLayerList selectedDateId={visualDateId} today={today} compact={false} presentation={presentation} /> : <DateLabel {...label} />}
-        </View>
+        </TouchableOpacity>
         {calendar(false)}
       </Animated.View>
       <Animated.View pointerEvents={compact ? 'box-none' : 'none'} accessibilityElementsHidden={!compact}
         importantForAccessibility={compact ? 'auto' : 'no-hide-descendants'} style={[styles.compactHeaderRow, compactTitle]}>
-        <View accessible={compact} {...dateCommands} style={[styles.dateTitleBox, { height: 20 }]}>
+        <TouchableOpacity testID="date-title-compact" accessible={compact} {...dateCommands}
+          disabled={isToday} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8 }} onPress={handlePressToday} style={[styles.dateTitleBox, { height: 20 }]}>
           {presentation ? <TitleLayerList selectedDateId={visualDateId} today={today} compact presentation={presentation} /> : <CompactDateLabel title={label.title} dateId={selectedDateId} />}
-        </View>
+        </TouchableOpacity>
         {calendar(true)}
       </Animated.View>
     </Animated.View>

@@ -717,3 +717,39 @@ test('queued visual window updates use current position and reject external jump
     await h.focus(); await h.reactToPosition(12); await h.close(); await h.flush();
   } finally { if (h.tree.toJSON() !== null) await h.close(); }
 });
+
+test('tapping the expanded or compact header date jumps to today when off today and is disabled on today', async () => {
+  for (const staticMode of [false, true]) {
+    const h = await harness('2026-12-02', staticMode);
+    try {
+      const titleButton = kind => h.tree.root.findAllByType('Button').find(b => b.props.testID === `date-title-${kind}`);
+      const expanded = () => titleButton('expanded');
+      const compact = () => titleButton('compact');
+
+      assert.equal(expanded().props.disabled, false);
+      assert.equal(compact().props.disabled, false);
+      assert.ok(expanded().props.activeOpacity < 1);
+      assert.ok(compact().props.activeOpacity < 1);
+
+      await renderer.act(async () => expanded().props.onPress());
+      assert.equal(h.nav.get(), '2026-11-10');
+      assert.equal(h.nav.getRevision(), 1);
+      assert.equal(expanded().props.disabled, true);
+      assert.equal(compact().props.disabled, true);
+
+      // No-op when already on today
+      await renderer.act(async () => expanded().props.onPress());
+      await renderer.act(async () => compact().props.onPress());
+      assert.equal(h.nav.get(), '2026-11-10');
+      assert.equal(h.nav.getRevision(), 1);
+
+      // Compact header date tap also jumps back to today
+      await h.jump('2026-12-05');
+      await h.compactMode(true);
+      assert.equal(compact().props.disabled, false);
+      await renderer.act(async () => compact().props.onPress());
+      assert.equal(h.nav.get(), '2026-11-10');
+      assert.equal(compact().props.disabled, true);
+    } finally { await h.close(); }
+  }
+});
