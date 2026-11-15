@@ -5,7 +5,7 @@ import { Button, Icon, Input, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { reactNativeSpikeEnabled } from '@/dev/react-native-spike-gate';
 import type { Appearance } from '@/theme';
-import { usePreferencesStore, type DiaryPagerEngine } from '@/hooks/use-preferences-store';
+import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { makeStyles, useTheme, useThemeControls } from '@/theme';
 import { UpdateInformation } from '@/components/updates/update-information';
 
@@ -24,8 +24,6 @@ export default function SettingsScreen() {
     setDailyCalorieTarget,
     diaryMacrosEnabled,
     setDiaryMacrosEnabled,
-    diaryPagerEngine = 'native',
-    setDiaryPagerEngine,
   } = usePreferencesStore();
 
   const [calorieDraft, setCalorieDraft] = useState(String(dailyCalorieTarget));
@@ -95,13 +93,6 @@ export default function SettingsScreen() {
               value={diaryMacrosEnabled} onValueChange={setDiaryMacrosEnabled}
               trackColor={{ false: theme.colors.outline, true: theme.colors.primary }} />
           </View>
-          <SettingsSelect
-            label="Deslizamiento de días"
-            value={diaryPagerEngine}
-            options={diaryPagerOptions}
-            disabled={!preferencesReady || !setDiaryPagerEngine}
-            onSelect={(engine) => setDiaryPagerEngine?.(engine)}
-          />
         </View>
 
         <View style={styles.section}>
@@ -165,12 +156,6 @@ export default function SettingsScreen() {
 
 const appearanceOptions: [Appearance, string][] = [
   ['system', 'Sistema'], ['light', 'Claro'], ['dark', 'Oscuro'],
-];
-
-const diaryPagerOptions: [DiaryPagerEngine, string][] = [
-  ['native', 'Pager nativo (ventana progresiva)'],
-  ['ring', 'UI Ring Buffer (5 vistas recicladas)'],
-  ['legend', 'LegendList horizontal (reciclado)'],
 ];
 
 function SettingsSelect<T extends string>({ label, value, options, disabled, onSelect }: {

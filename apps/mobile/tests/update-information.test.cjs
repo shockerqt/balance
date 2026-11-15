@@ -37,10 +37,8 @@ test('the visible running OTA identifier is distinct from the downloaded pending
     assert.equal(code.props.children, h.currentId); assert.notEqual(code.props.children, h.downloadedId);
     assert.match(h.text(), /OTA aplicada/); assert.match(h.text(), new RegExp(h.downloadedId));
     assert.equal(h.shares.length, 0, 'rendering does not share or transmit a diagnostic');
-    trace.recordNativePagerEvent('selected', { index: 8 }); trace.recordNativePagerEvent('state', { phase: 'idle' }); trace.recordNativePagerEvent('rejected', { reason: 'revision', revision: 2, expected: 1 });
-    await h.press('Ver diagnóstico del deslizamiento'); assert.match(h.text(), /selected=1 state=1/);
-    await h.press('Compartir diagnóstico');
-    assert.equal(h.shares.length, 1); assert.match(h.shares[0].message, new RegExp(h.currentId)); assert.match(h.shares[0].message, /Origen: OTA aplicada/); assert.match(h.shares[0].message, /revision/);
+    assert.equal(h.view.root.findAllByType('Button').some(node => node.props.title === 'Ver diagnóstico del deslizamiento'), false);
+    assert.doesNotMatch(h.text(), /Diagnóstico local/);
   } finally { await h.close(); }
 });
 
