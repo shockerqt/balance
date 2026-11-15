@@ -7,9 +7,8 @@ import { usePreferencesStore } from '@/hooks/use-preferences-store';
 import { DEFAULT_TARGETS } from '@/lib/day-targets';
 import { DAY_NAMES, MONTH_NAMES, dateIdToEpochDay, parseDateId, todayId } from '@/lib/dates';
 import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
-import { rangeSummary, summaryBuckets, type Bucket, type SummaryDay } from '@/lib/summary-buckets';
+import { projectSummaryDays, rangeSummary, summaryBuckets, type Bucket } from '@/lib/summary-buckets';
 import { font, makeStyles, useTheme } from '@/theme';
-import { createInterfaceDaysProjector } from './native/interface-contract';
 
 const PERIODS = [7, 30, 90] as const;
 const LETTERS = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
@@ -24,11 +23,10 @@ export function ReactNativeSummary({ onOpen }: { onOpen: (date: string, body: bo
   const preferences = usePreferencesStore();
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(7);
   const end = todayId();
-  const projector = useMemo(createInterfaceDaysProjector, []);
-  const projected = useMemo(() => projector(meals.dayLogs, weight.weightsByDate, meals.mealDocuments), [projector, meals.dayLogs, meals.mealDocuments, weight.weightsByDate]);
-  const days = useMemo(() => Object.fromEntries(Object.entries(projected).map(([date, day]) => [date, {
-    recorded: day.recorded, calories: day.totals.calories, protein: day.totals.protein, carbs: day.totals.carbs, fat: day.totals.fat, weightKg: day.weightKg,
-  } satisfies SummaryDay])), [projected]);
+  const days = useMemo(
+    () => projectSummaryDays(meals.dayLogs, weight.weightsByDate, end, 90),
+    [meals.dayLogs, weight.weightsByDate, end],
+  );
   const targets = { ...DEFAULT_TARGETS, ...meals.dayLogs[end], targetCalories: preferences.dailyCalorieTarget };
   const buckets = useMemo(() => summaryBuckets(days, end, period), [days, end, period]);
   const range = useMemo(() => rangeSummary(days, end, period), [days, end, period]);

@@ -1,3 +1,5 @@
+import type { DayLog } from '../hooks/use-meal-store';
+import type { WeightLogDoc } from '../services/sync/types';
 import { dateIdToEpochDay, epochDayToDateId } from './dates';
 
 /* ============================================================
@@ -52,4 +54,38 @@ export function rangeSummary(days: Record<string, SummaryDay | undefined>, end: 
     if (value.weightKg !== null && Number.isFinite(value.weightKg)) weights.push({ date, kg: value.weightKg });
   }
   return { recordedDays: n, calories: n ? calories / n : null, protein: n ? protein / n : null, carbs: n ? carbs / n : null, fat: n ? fat / n : null, weights };
+}
+
+/** Proyecta solo la ventana [end - period + 1, end] con los totales usados por Resumen. */
+export function projectSummaryDays(
+  dayLogs: Record<string, DayLog | undefined>,
+  weightsByDate: Record<string, WeightLogDoc | undefined>,
+  end: string,
+  period: number,
+): Record<string, SummaryDay> {
+  const days: Record<string, SummaryDay> = {};
+  const first = dateIdToEpochDay(end) - (period - 1);
+  for (let day = first; day <= first + period - 1; day++) {
+    const date = epochDayToDateId(day);
+    const log = dayLogs[date];
+    const weight = weightsByDate[date];
+    if (!log && !weight) continue;
+    const foods = log?.foods ?? [];
+    let calories = 0, protein = 0, carbs = 0, fat = 0;
+    for (const food of foods) {
+      calories += food.calories;
+      protein += food.protein;
+      carbs += food.carbs;
+      fat += food.fat;
+    }
+    days[date] = {
+      recorded: foods.length > 0,
+      calories,
+      protein,
+      carbs,
+      fat,
+      weightKg: weight ? weight.weightGrams / 1000 : null,
+    };
+  }
+  return days;
 }
