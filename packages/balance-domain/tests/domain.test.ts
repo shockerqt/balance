@@ -305,3 +305,58 @@ test('optional absent, null, zero, and extended nutrients', () => {
   assert.ok(EXTENDED_NUTRIENT_KEYS.includes('calciumMg'));
   assert.ok(EXTENDED_NUTRIENT_KEYS.includes('vitaminCMg'));
 });
+
+test('optional brand on MealTemplateDetails and NutritionSnapshot preserves backward compatibility', () => {
+  const legacyTemplate: MealTemplateDoc = {
+    id: 'tpl-legacy',
+    name: 'Avena',
+    isOfficial: false,
+    updatedAt: 1700000000000,
+    _deleted: false,
+    details: {
+      schemaVersion: 2,
+      canonicalUnit: 'g',
+      nutritionPer100: { calories: 389, protein: 16.9, carbs: 66.3, fat: 6.9 },
+      portions: [],
+    },
+  };
+  assert.strictEqual(legacyTemplate.details.brand, undefined);
+
+  const brandedTemplate: MealTemplateDoc = {
+    ...legacyTemplate,
+    id: 'tpl-branded',
+    details: {
+      ...legacyTemplate.details,
+      brand: 'Quaker',
+    },
+  };
+  assert.strictEqual(brandedTemplate.details.brand, 'Quaker');
+
+  const logFromBranded: MealLogDoc = {
+    id: 'log-branded',
+    templateId: brandedTemplate.id,
+    nameSnapshot: brandedTemplate.name,
+    nutritionSnapshot: {
+      schemaVersion: 2,
+      canonicalUnit: brandedTemplate.details.canonicalUnit,
+      nutritionPer100: structuredClone(brandedTemplate.details.nutritionPer100),
+      brand: brandedTemplate.details.brand,
+    },
+    canonicalQuantity: 50,
+    entry: { enteredQuantity: 50 },
+    consumedAt: 1700000010000,
+    updatedAt: 1700000010000,
+    _deleted: false,
+  };
+  assert.strictEqual(logFromBranded.nutritionSnapshot.brand, 'Quaker');
+
+  const nullBrandedTemplate: MealTemplateDoc = {
+    ...legacyTemplate,
+    id: 'tpl-null-brand',
+    details: {
+      ...legacyTemplate.details,
+      brand: null,
+    },
+  };
+  assert.strictEqual(nullBrandedTemplate.details.brand, null);
+});
