@@ -2,7 +2,7 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, ScrollView } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { scaleNutrition } from '@balance/domain';
-import { Button, Card, Field, Input, Sheet, Text } from '@/components/ui';
+import { Button, Card, DateTimePickerField, Field, Input, Sheet, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { useMealStore } from '@/hooks/use-meal-store';
 import { useMealReceipt } from '@/hooks/use-meal-receipt';
@@ -62,7 +62,7 @@ function EditSession() {
   const original = scaleNutrition(source.nutritionSnapshot.nutritionPer100, source.canonicalQuantity / 100);
   return <Sheet title="Editar registro" subtitle={source.nameSnapshot} closeLabel="Cancelar" onClose={() => { if (!receipt.saving) router.back(); }}>
     <ScrollView keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ padding: 20, gap: 18 }}>
-      <Field label="Hora"><Input accessibilityLabel="Hora del registro" value={time} onChangeText={setTime} maxLength={5} editable={!receipt.saving} /></Field>
+      <Field label="Hora"><DateTimePickerField mode="time" accessibilityLabel="Hora del registro" value={time} onChange={setTime} disabled={receipt.saving} /></Field>
       {source.entry.portionSnapshot ? <ChoiceRow values={[source.entry.portionSnapshot.name, unit]} selected={mode === 'portion' ? 0 : 1} disabled={receipt.saving} onChange={i => {
         setMode(i === 0 ? 'portion' : 'canonical'); setQuantity(String(i === 0 ? source.entry.enteredQuantity : source.canonicalQuantity));
       }} /> : null}

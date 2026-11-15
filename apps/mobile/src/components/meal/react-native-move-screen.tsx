@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Button, Field, Input, Sheet, Text } from '@/components/ui';
+import { Button, DateTimePickerField, Field, Sheet, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { useMealStore } from '@/hooks/use-meal-store';
 import { useMealReceipt } from '@/hooks/use-meal-receipt';
@@ -29,7 +29,7 @@ function MoveSession() {
   const current = () => selectionSources(liveDocuments.current, source.date, source.ids, source.revisions);
   return <Sheet title="Mover a otra hora" subtitle={`${source.ids.length} registros`} closeLabel="Cancelar" onClose={() => { if (!receipt.saving) router.back(); }}>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, gap: 18 }}>
-      <Field label="Nueva hora"><Input accessibilityLabel="Nueva hora" value={time} onChangeText={setTime} maxLength={5} editable={!receipt.saving} /></Field>
+      <Field label="Nueva hora"><DateTimePickerField mode="time" accessibilityLabel="Nueva hora" value={time} onChange={setTime} disabled={receipt.saving} /></Field>
       <ChoiceRow values={shortcuts} selected={shortcuts.indexOf(time)} disabled={receipt.saving} onChange={i => setTime(shortcuts[i])} />
       {receipt.error ? <Text selectable tone="danger" accessibilityRole="alert">{receipt.error}</Text> : null}
       <Button title={`Mover a las ${time}`} loading={receipt.saving} disabled={receipt.saved} onPress={() => receipt.submit(time, () => {

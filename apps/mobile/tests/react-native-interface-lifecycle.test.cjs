@@ -50,6 +50,7 @@ async function harness(screen, { commit = async () => {}, params = {}, documents
   };
   const cache = new Map();
   stubs['@/components/ui'].Sheet = props => React.createElement('Sheet', props, props.children, props.footer);
+  stubs['@/components/ui'].DateTimePickerField = props => React.createElement('Input', { ...props, editable: !props.disabled, onChangeText: props.onChange });
   function load(relative) {
     const filename = path.join(root, relative);
     if (cache.has(filename)) return cache.get(filename).exports;

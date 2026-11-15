@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LibraryFoodDraft, LibraryFoodItem, useFoodLibraryStore } from '@/hooks/use-food-library-store';
-import { Button, Field, Icon, Input, Sheet, Text } from '@/components/ui';
+import { Button, DateTimePickerField, Field, Icon, Input, Sheet, Text } from '@/components/ui';
 import { CHILEAN_FOOD_SEALS } from '@/lib/chilean-food-seals';
 import { parseFoodPortion } from '@/lib/food-portions';
 import { makeStyles } from '@/theme';
@@ -120,7 +120,8 @@ export default function FoodLibraryFoodScreen() {
       setError('Usa una porción compatible, por ejemplo 100g, 250ml, 1 unidad o 1 taza.');
       return null;
     }
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.typicalTime.trim())) {
+    const typicalTime = form.typicalTime.trim();
+    if (typicalTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(typicalTime)) {
       setError('La hora habitual debe usar el formato HH:mm, por ejemplo 08:30.');
       return null;
     }
@@ -274,7 +275,15 @@ export default function FoodLibraryFoodScreen() {
         </FoodField>
         <View style={styles.doubleRow}>
           <FoodField label="Hora habitual" hint="HH:mm" style={styles.halfField}>
-            <Input style={styles.input} value={form.typicalTime} onChangeText={(value) => update('typicalTime', value)} editable={isEditable} placeholder="12:00" keyboardType="numbers-and-punctuation" />
+            <DateTimePickerField
+              mode="time"
+              value={form.typicalTime}
+              onChange={(value) => update('typicalTime', value)}
+              disabled={!isEditable}
+              clearable
+              placeholder="12:00"
+              accessibilityLabel="Hora habitual"
+            />
           </FoodField>
           <FoodField label="Categoría" hint="Opcional; también sirve para buscar" style={styles.halfField}>
             <Input style={styles.input} value={form.category} onChangeText={(value) => update('category', value)} editable={isEditable} placeholder="Desayuno, lácteos, receta…" />

@@ -2,7 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, TextInput, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { randomUUID } from 'expo-crypto';
-import { Button, Field, Icon, Input, Screen, Sheet, Text } from '@/components/ui';
+import { Button, DateTimePickerField, Field, Icon, Input, Screen, Sheet, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/use-auth';
 import { useFoodLibraryStore } from '@/hooks/use-food-library-store';
 import { useMealStore } from '@/hooks/use-meal-store';
@@ -105,8 +105,8 @@ function FoodEntrySession() {
 
   const whenPanel = when ? <View style={styles.when}>
     <View style={{ flexDirection: 'row', gap: 12 }}>
-      <Field label="Fecha" style={{ flex: 1 }}><Input accessibilityLabel="Fecha del alimento" value={date} onChangeText={setDate} placeholder="AAAA-MM-DD" editable={!disabled} /></Field>
-      <Field label="Hora" style={{ flex: 1 }}><Input accessibilityLabel="Hora del alimento" value={time} onChangeText={setTime} placeholder="HH:MM" maxLength={5} editable={!disabled} /></Field>
+      <Field label="Fecha" style={{ flex: 1 }}><DateTimePickerField mode="date" accessibilityLabel="Fecha del alimento" value={date} onChange={setDate} placeholder="AAAA-MM-DD" disabled={disabled} /></Field>
+      <Field label="Hora" style={{ flex: 1 }}><DateTimePickerField mode="time" accessibilityLabel="Hora del alimento" value={time} onChange={setTime} placeholder="HH:MM" disabled={disabled} /></Field>
     </View>
     <Button title={calendar ? 'Ocultar calendario' : 'Elegir en el calendario'} variant="ghost" size="md" disabled={disabled} onPress={() => setCalendar(!calendar)} />
     {calendar ? <CalendarMonth value={date} onChange={value => { setDate(value); setCalendar(false); }} disabled={disabled} /> : null}

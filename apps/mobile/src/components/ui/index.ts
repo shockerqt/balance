@@ -2,6 +2,8 @@ export { Button } from './Button';
 export type { ButtonProps } from './Button';
 export { Card } from './Card';
 export type { CardProps } from './Card';
+export { DateTimePickerField } from './DateTimePickerField';
+export type { DateTimePickerFieldProps } from './DateTimePickerField';
 export { Field } from './Field';
 export type { FieldProps } from './Field';
 export { Icon } from './Icon';
