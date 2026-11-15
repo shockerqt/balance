@@ -92,6 +92,7 @@ function docFromFood(dateId: string, food: Omit<LoggedFoodItem, 'id'>, id: strin
 interface MealStoreContextType {
   dayLogs: Record<string, DayLog>;
   mealDocuments: MealLogDoc[];
+  hydrated: boolean;
   registerMealLog: (document: MealLogDoc) => Promise<void>;
   registerMealLogs: (documents: MealLogDoc[]) => Promise<void>;
   addFood: (dateId: string, food: Omit<LoggedFoodItem, 'id'>) => void;
@@ -103,8 +104,9 @@ interface MealStoreContextType {
   replaceMealDocuments: (documents: MealLogDoc[]) => void;
 }
 
-type MealActions = Omit<MealStoreContextType, 'dayLogs' | 'mealDocuments'>;
+type MealActions = Omit<MealStoreContextType, 'dayLogs' | 'mealDocuments' | 'hydrated'>;
 const MealActionsContext = createContext<MealActions | undefined>(undefined);
+const MealHydratedContext = createContext<boolean | undefined>(undefined);
 const MealDayContext = createContext<ReturnType<typeof createMealDaySubscriptions> | undefined>(undefined);
 
 const MealStoreContext = createContext<MealStoreContextType | undefined>(undefined);
@@ -117,6 +119,8 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const currentNamespace = useRef(namespace);
   currentNamespace.current = namespace;
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
+  const [hydratedNamespace, setHydratedNamespace] = useState<string | null>(null);
+  const hydrated = hydratedNamespace === namespace;
   const logsRef = useRef<MealLogDoc[]>([]);
   const logsNamespace = useRef(namespace);
   const cacheValid = useRef(false);
@@ -167,6 +171,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const next = mergeLogs(mergeLogs(cached, pending, true), logsRef.current, true);
       logsRef.current = next;
       setLogs(next);
+      setHydratedNamespace(namespace);
     })();
     readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
@@ -341,6 +346,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const value = useMemo<MealStoreContextType>(() => ({
     dayLogs,
     mealDocuments: logs,
+    hydrated,
     registerMealLog,
     registerMealLogs,
     addFood,
@@ -350,7 +356,7 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteMultipleFoods,
     moveMultipleFoodsTime,
     replaceMealDocuments,
-  }), [dayLogs, logs, registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
+  }), [dayLogs, logs, hydrated, registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood, deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   const actions = useMemo<MealActions>(() => ({
     registerMealLog, registerMealLogs, addFood, addMultipleFoods, updateFood,
     deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments,
@@ -358,7 +364,9 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     deleteFood, deleteMultipleFoods, moveMultipleFoodsTime, replaceMealDocuments]);
   return <MealStoreContext.Provider value={value}>
     <MealActionsContext.Provider value={actions}>
-      <MealDayContext.Provider value={daySubscriptions}>{children}</MealDayContext.Provider>
+      <MealHydratedContext.Provider value={hydrated}>
+        <MealDayContext.Provider value={daySubscriptions}>{children}</MealDayContext.Provider>
+      </MealHydratedContext.Provider>
     </MealActionsContext.Provider>
   </MealStoreContext.Provider>;
 };
@@ -386,4 +394,10 @@ export function useMealActions(): MealActions {
   const actions = useContext(MealActionsContext);
   if (!actions) throw new Error('useMealActions requires MealStoreProvider');
   return actions;
+}
+
+export function useMealHydrated(): boolean {
+  const hydrated = useContext(MealHydratedContext);
+  if (hydrated === undefined) throw new Error('useMealHydrated requires MealStoreProvider');
+  return hydrated;
 }
