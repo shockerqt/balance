@@ -138,3 +138,17 @@ test('Settings Deslizamiento de días selector switches ReactNativeDiary between
     assert.equal(h.tree.root.findAllByType('LegendPager').length,1);
   }finally{await h.close();}
 });
+
+test('Settings shows save confirmation feedback on valid save and clears it when editing again',async()=>{
+  const h=await harness(false);
+  const hasSavedFeedback=()=>h.tree.root.findAllByType('Text').some(n=>[n.props.children].flat().join('')==='Meta guardada');
+  try{
+    assert.equal(hasSavedFeedback(),false);
+    await h.change('2500');await h.save();
+    assert.equal(hasSavedFeedback(),true);
+    await h.change('2600');
+    assert.equal(hasSavedFeedback(),false);
+    await h.change('499');await h.save();
+    assert.equal(hasSavedFeedback(),false);
+  }finally{await h.close();}
+});
