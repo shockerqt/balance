@@ -172,3 +172,14 @@ test('updates meal-log quantity and time without mutating its historical snapsho
   assert.equal(updated?.nameSnapshot, doc.nameSnapshot);
   assert.strictEqual(updated?.nutritionSnapshot, nutritionSnapshot);
 });
+
+test('mergeEditedTemplateDetails updates, trims, and clears optional brand', () => {
+  const withBrand = mergeEditedTemplateDetails(details, { ...details, brand: '  Soprole  ' });
+  assert.equal(withBrand.brand, 'Soprole');
+
+  const clearedByOmit = mergeEditedTemplateDetails(withBrand, { ...details });
+  assert.equal('brand' in clearedByOmit, false);
+
+  const clearedByWhitespace = mergeEditedTemplateDetails(withBrand, { ...details, brand: '   ' });
+  assert.equal('brand' in clearedByWhitespace, false);
+});

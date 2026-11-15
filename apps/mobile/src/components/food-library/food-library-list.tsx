@@ -35,7 +35,7 @@ export const useFoodLibrarySections = (
         if (filter === 'personal' && food.isOfficial) return false;
         if (filter === 'official' && !food.isOfficial) return false;
         if (!needle) return true;
-        return normalize(`${food.name} ${food.category ?? ''} ${food.portion}`).includes(needle);
+        return normalize(`${food.name} ${food.brand ?? ''} ${food.category ?? ''} ${food.portion}`).includes(needle);
       })
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name, 'es-CL'));

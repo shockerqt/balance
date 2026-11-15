@@ -199,17 +199,20 @@ function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
   const styles = useStyles();
   const theme = useTheme();
   const portion = draft ? template.details.portions.find(p => p.id === draft.portionId) : undefined;
+  const brand = typeof template.details.brand === 'string' ? template.details.brand.trim() : '';
   const step = portion ? 1 : 10;
   const amount = draft ? decimal(draft.quantity, true) ?? 0 : 0;
   const units: [string, string][] = [...template.details.portions.slice(0, 1).map(p => [p.id, p.name] as [string, string]), ['', unitName(template.details.canonicalUnit)]];
-  const toggleButton = <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${draft ? 'Quitar' : 'Agregar'} ${template.name}`} disabled={disabled}
+  const toggleButton = <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${draft ? 'Quitar' : 'Agregar'} ${template.name}${brand ? `, ${brand}` : ''}`} disabled={disabled}
     style={[styles.toggle, draft ? styles.toggleOn : null]} onPress={onToggle}>
     <Icon name={draft ? 'check' : 'plus'} size={18} tone={draft ? 'onPrimary' : 'primary'} />
   </TouchableOpacity>;
   return <View style={[styles.row, !first && styles.divider, draft ? styles.rowSelected : null]}>
     <View style={styles.rowTop}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text variant="bodyStrong" numberOfLines={1} style={draft ? { fontFamily: font.semibold } : null}>{template.name}</Text>
+        <Text variant="bodyStrong" numberOfLines={1} style={draft ? { fontFamily: font.semibold } : null}>
+          {template.name}{brand ? ` · ${brand}` : ''}
+        </Text>
         <Text variant="caption" tone="secondary" numberOfLines={1}>{draft ? `${formatMacroGrams(amount)} ${portion?.name ?? template.details.canonicalUnit} · ${formatCalories(caloriesOf(draft))} kcal · ${formatMacroGrams(template.details.nutritionPer100.protein * canonical(template, draft.portionId, amount) / 100)} g proteína` : describe(template)}</Text>
       </View>
       {toggleButton}

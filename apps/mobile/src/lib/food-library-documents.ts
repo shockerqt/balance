@@ -31,7 +31,7 @@ export function mergeEditedTemplateDetails(
   current: MealTemplateDetails,
   edited: MealTemplateDetails
 ): MealTemplateDetails {
-  return {
+  const merged: MealTemplateDetails = {
     ...current,
     ...edited,
     nutritionPer100: { ...current.nutritionPer100, ...edited.nutritionPer100 },
@@ -39,6 +39,13 @@ export function mergeEditedTemplateDetails(
       ? current.portions.map((portion) => ({ ...portion }))
       : edited.portions,
   };
+  const brand = typeof edited.brand === 'string' ? edited.brand.trim() : '';
+  if (brand) {
+    merged.brand = brand;
+  } else {
+    delete merged.brand;
+  }
+  return merged;
 }
 
 export function createPersonalTemplate(

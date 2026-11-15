@@ -31,14 +31,14 @@ export const LedgerFoodRow: React.FC<{
     else onPress(food);
   };
 
-  const detail = [food.time, food.portion].filter(Boolean).join(' · ');
+  const detail = [food.brand, food.time, food.portion].filter(Boolean).join(' · ');
   const calories = formatCalories(food.calories);
 
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityState={{ selected: isSelectionMode ? isSelected : undefined }}
-      accessibilityLabel={`${food.name}, ${calories} kilocalorías`}
+      accessibilityLabel={`${food.name}${food.brand ? `, ${food.brand}` : ''}, ${calories} kilocalorías`}
       style={[styles.row, isSelected && styles.rowSelected]}
       delayPressIn={0}
       activeOpacity={0.7}

@@ -10,6 +10,7 @@ import { formatEditableNutrition } from '@/lib/nutrition';
 
 const EMPTY_FORM = {
   name: '',
+  brand: '',
   portion: '100g',
   calories: '',
   protein: '',
@@ -30,6 +31,7 @@ function formFromFood(food?: LibraryFoodItem): FormState {
   if (!food) return EMPTY_FORM;
   return {
     name: food.name,
+    brand: food.brand ?? '',
     portion: food.portion,
     calories: valueOf(food.calories),
     protein: valueOf(food.protein),
@@ -108,6 +110,11 @@ export default function FoodLibraryFoodScreen() {
       setError('El nombre puede tener hasta 160 caracteres.');
       return null;
     }
+    const brand = form.brand.trim();
+    if (Array.from(brand).length > 120) {
+      setError('La marca puede tener hasta 120 caracteres.');
+      return null;
+    }
     const portion = parseFoodPortion(form.portion);
     if (!portion) {
       setError('Usa una porción compatible, por ejemplo 100g, 250ml, 1 unidad o 1 taza.');
@@ -138,6 +145,7 @@ export default function FoodLibraryFoodScreen() {
 
     return {
       name,
+      ...(brand ? { brand } : {}),
       portion: portion.normalized,
       calories: required[0],
       protein: required[1],
@@ -247,6 +255,17 @@ export default function FoodLibraryFoodScreen() {
             placeholder="Pan de masa madre"
             editable={isEditable}
             autoFocus={isCreating}
+          />
+        </FoodField>
+
+        <FoodField label="Marca" hint="Opcional; también sirve para buscar">
+          <Input
+            style={styles.input}
+            value={form.brand}
+            onChangeText={(value) => update('brand', value)}
+            placeholder="Soprole, Colun, Watts…"
+            editable={isEditable}
+            maxLength={120}
           />
         </FoodField>
 

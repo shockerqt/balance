@@ -20,7 +20,7 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress, f
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`${food.name}, ${calories} kilocalorías, ${
+      accessibilityLabel={`${food.name}${food.brand ? `, ${food.brand}` : ''}, ${calories} kilocalorías, ${
         isOfficial ? 'alimento oficial' : 'alimento personal editable'
       }`}
       activeOpacity={0.72}
@@ -31,6 +31,11 @@ export const FoodLibraryRow: React.FC<FoodLibraryRowProps> = ({ food, onPress, f
         <Text variant="bodyStrong" numberOfLines={2} selectable>
           {food.name}
         </Text>
+        {food.brand ? (
+          <Text variant="caption" tone="secondary" numberOfLines={1}>
+            {food.brand}
+          </Text>
+        ) : null}
         <Text variant="caption" tone="secondary" numberOfLines={1}>
           {food.portion}
           {` · ${isOfficial ? 'Oficial' : 'Personal'}`}

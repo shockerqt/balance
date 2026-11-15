@@ -19,7 +19,7 @@ export const LibraryFoodRow: React.FC<{
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel={`Agregar ${food.name}, ${calories} kilocalorías`}
+      accessibilityLabel={`Agregar ${food.name}${food.brand ? `, ${food.brand}` : ''}, ${calories} kilocalorías`}
       style={styles.row}
       delayPressIn={0}
       activeOpacity={0.7}
@@ -28,6 +28,11 @@ export const LibraryFoodRow: React.FC<{
         <Text variant="bodyStrong" numberOfLines={1} selectable>
           {food.name}
         </Text>
+        {food.brand ? (
+          <Text variant="caption" tone="secondary" numberOfLines={1}>
+            {food.brand}
+          </Text>
+        ) : null}
         <View style={styles.meta}>
           <Text variant="caption" tone="accent">
             {calories} kcal

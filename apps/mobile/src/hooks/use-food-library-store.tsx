@@ -18,6 +18,7 @@ import { recoverGuestImport } from '@/services/import/guest-import';
 export interface LibraryFoodItem {
   id: string;
   name: string;
+  brand?: string;
   portion: string;
   calories: number;
   protein: number;
@@ -218,7 +219,7 @@ export const FoodLibraryProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const targetMinutes = timeToMinutes(targetTime);
     const query = searchQuery.trim().toLowerCase();
     return libraryFoods
-      .filter((food) => !query || food.name.toLowerCase().includes(query) || food.category?.toLowerCase().includes(query))
+      .filter((food) => !query || food.name.toLowerCase().includes(query) || food.brand?.toLowerCase().includes(query) || food.category?.toLowerCase().includes(query))
       .slice()
       .sort((a, b) => {
         const score = (food: LibraryFoodItem) => (food.frequency + 1) / (1 + Math.abs(timeToMinutes(food.typicalTime) - targetMinutes) / 60);

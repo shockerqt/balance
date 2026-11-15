@@ -126,6 +126,14 @@ function isPortionDefinition(value: unknown): value is PortionDefinition {
   );
 }
 
+function isOptionalBrand(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && Array.from(value.trim()).length <= 120)
+  );
+}
+
 export function isMealTemplateDetails(value: unknown): value is MealTemplateDetails {
   if (!value || typeof value !== 'object') return false;
   const details = value as Record<string, unknown>;
@@ -136,6 +144,7 @@ export function isMealTemplateDetails(value: unknown): value is MealTemplateDeta
     isCanonicalUnit(details.canonicalUnit) &&
     isNutrition(details.nutritionPer100) &&
     ids.size === details.portions.length &&
+    isOptionalBrand(details.brand) &&
     (details.typicalTime === undefined || details.typicalTime === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(String(details.typicalTime)))
   );
 }
@@ -157,7 +166,12 @@ export function isMealTemplateDoc(value: unknown): value is MealTemplateDoc {
 function isNutritionSnapshot(value: unknown): value is NutritionSnapshot {
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Record<string, unknown>;
-  return snapshot.schemaVersion === 2 && isCanonicalUnit(snapshot.canonicalUnit) && isNutrition(snapshot.nutritionPer100);
+  return (
+    snapshot.schemaVersion === 2 &&
+    isCanonicalUnit(snapshot.canonicalUnit) &&
+    isNutrition(snapshot.nutritionPer100) &&
+    isOptionalBrand(snapshot.brand)
+  );
 }
 
 function isMealLogCopySource(value: unknown): boolean {

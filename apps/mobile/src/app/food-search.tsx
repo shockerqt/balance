@@ -21,6 +21,7 @@ interface StagedDraftItem {
   id: string; // unique draft id
   originalFoodId: string;
   name: string;
+  brand?: string;
   quantityStr: string;
   unit: string;
   baseQty: number;
@@ -90,6 +91,7 @@ export function FoodSearchScreen() {
       id: 'draft_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
       originalFoodId: food.id,
       name: food.name,
+      ...(food.brand ? { brand: food.brand } : {}),
       quantityStr: String(parsedBaseQty),
       unit: defaultUnit,
       baseQty: parsedBaseQty,
@@ -146,6 +148,7 @@ export function FoodSearchScreen() {
       return {
         templateId: item.originalFoodId,
         name: item.name,
+        ...(item.brand ? { brand: item.brand } : {}),
         portion: `${q}${item.unit}`,
         calories: item.baseCalories * scale,
         protein: item.baseProtein * scale,
