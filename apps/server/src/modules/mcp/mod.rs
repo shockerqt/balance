@@ -16,8 +16,8 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            CanonicalUnit, Consumption, FOOD_SCHEMA_VERSION, FoodDetails, MAX_BRAND_CHARS,
-            NutritionValues, PortionDefinition, WeightLogRow, WeightUpsertStatus,
+            CanonicalUnit, Consumption, EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails,
+            MAX_BRAND_CHARS, NutritionValues, PortionDefinition, WeightLogRow, WeightUpsertStatus,
             deserialize_optional_brand, validate_optional_brand,
         },
     },
@@ -120,6 +120,11 @@ struct PortionInput {
     portion_quantity: f64,
     canonical_quantity: f64,
 }
+
+const MAX_PORTION_ID_CHARS: usize = 80;
+const MAX_CREATE_PORTIONS: usize = 50;
+const MAX_CREATE_SEALS: usize = 4;
+const MAX_CREATE_CATEGORY_CHARS: usize = 80;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -279,14 +284,20 @@ async fn mcp_post_handler(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let result = call_tool(&db, user.id, name, args).await;
+            let mut food_log_committed = false;
+            let result = call_tool(&db, user.id, name, args, &mut food_log_committed).await;
+            let collection = if food_log_committed {
+                Some("mealLogs")
+            } else if result.is_ok() {
+                mutated_collection(name)
+            } else {
+                None
+            };
+            if let Some(collection) = collection {
+                sync_hub.notify(user.id, collection);
+            }
             match result {
-                Ok((summary, structured)) => {
-                    if let Some(collection) = mutated_collection(name) {
-                        sync_hub.notify(user.id, collection);
-                    }
-                    tool_success(id, &summary, structured, observation)
-                }
+                Ok((summary, structured)) => tool_success(id, &summary, structured, observation),
                 Err(error) => tool_failure(id, error, observation),
             }
         }
@@ -313,6 +324,7 @@ async fn call_tool(
     user_id: i32,
     name: &str,
     args: Value,
+    food_log_committed: &mut bool,
 ) -> Result<(String, Value), AppError> {
     match name {
         "search_foods" => {
@@ -346,18 +358,14 @@ async fn call_tool(
         "get_daily_log" => {
             let args: GetDailyLogArgs = parse_args(args)?;
             let date = match args.date {
-                Some(date) => date,
+                Some(date) => {
+                    validate_food_date(&date)?;
+                    date
+                }
                 None => db.sync.current_santiago_date().await?,
             };
             let consumptions = db.sync.get_daily_consumptions(user_id, &date).await?;
-            let items: Vec<Value> = consumptions.iter().map(consumption_output).collect();
-            let totals = consumptions
-                .iter()
-                .fold(zero_nutrition(), |mut total, item| {
-                    add_nutrition(&mut total, &item.scaled_nutrition());
-                    total
-                });
-            let totals = nutrition_output(&totals);
+            let (items, totals) = daily_nutrition_output(&consumptions)?;
             Ok((
                 format!("Hay {} consumos registrados para {date}.", items.len()),
                 json!({
@@ -376,6 +384,28 @@ async fn call_tool(
                 ));
             }
             validate_optional_brand(args.brand.as_deref())?;
+            if args.portions.len() > MAX_CREATE_PORTIONS {
+                return Err(AppError::BadRequest(format!(
+                    "portions must contain at most {MAX_CREATE_PORTIONS} items"
+                )));
+            }
+            if args.chilean_seals.len() > MAX_CREATE_SEALS {
+                return Err(AppError::BadRequest(format!(
+                    "chileanSeals must contain at most {MAX_CREATE_SEALS} items"
+                )));
+            }
+            if args
+                .category
+                .as_ref()
+                .is_some_and(|category| category.chars().count() > MAX_CREATE_CATEGORY_CHARS)
+            {
+                return Err(AppError::BadRequest(format!(
+                    "category must not exceed {MAX_CREATE_CATEGORY_CHARS} characters"
+                )));
+            }
+            if let Some(time) = &args.typical_time {
+                validate_time("typicalTime", time)?;
+            }
             let details = FoodDetails {
                 schema_version: FOOD_SCHEMA_VERSION,
                 canonical_unit: args.canonical_unit,
@@ -422,7 +452,23 @@ async fn call_tool(
         }
         "log_food" => {
             let args: LogFoodArgs = parse_args(args)?;
-            let consumed_at = resolve_consumed_at(db, args.date, args.time).await?;
+            if args
+                .portion_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty() || id.chars().count() > MAX_PORTION_ID_CHARS)
+            {
+                return Err(AppError::BadRequest(format!(
+                    "portionId must contain between 1 and {MAX_PORTION_ID_CHARS} characters and cannot be blank"
+                )));
+            }
+            validate_quantity(args.quantity)?;
+            let consumed_at = match resolve_optional_datetime(db, args.date, args.time).await? {
+                Some(consumed_at) => consumed_at,
+                None => {
+                    let (date, time) = db.sync.current_santiago_datetime().await?;
+                    db.sync.local_datetime_to_epoch(&date, &time).await?
+                }
+            };
             let (consumption, created) = db
                 .sync
                 .create_consumption(
@@ -434,6 +480,7 @@ async fn call_tool(
                     consumed_at,
                 )
                 .await?;
+            *food_log_committed = created;
             Ok((
                 if created {
                     format!("Se registró {}.", consumption.name)
@@ -442,20 +489,24 @@ async fn call_tool(
                 },
                 json!({
                     "status": if created { "logged" } else { "alreadyLogged" },
-                    "log": consumption_output(&consumption)
+                    "log": consumption_output(&consumption)?
                 }),
             ))
         }
         "update_food_log" => {
             let args: UpdateFoodLogArgs = parse_args(args)?;
+            if let Some(quantity) = args.quantity {
+                validate_quantity(quantity)?;
+            }
             let consumed_at = resolve_optional_datetime(db, args.date, args.time).await?;
             let consumption = db
                 .sync
                 .update_consumption(user_id, args.log_id, args.quantity, consumed_at)
                 .await?;
+            *food_log_committed = true;
             Ok((
                 format!("Se actualizó el consumo de {}.", consumption.name),
-                json!({ "status": "updated", "log": consumption_output(&consumption) }),
+                json!({ "status": "updated", "log": consumption_output(&consumption)? }),
             ))
         }
         "delete_food_log" => {
@@ -570,21 +621,53 @@ async fn call_tool(
     }
 }
 
-async fn resolve_consumed_at(
-    db: &Database,
-    date: Option<String>,
-    time: Option<String>,
-) -> Result<i64, AppError> {
-    match (date, time) {
-        (None, None) => {
-            let (date, time) = db.sync.current_santiago_datetime().await?;
-            db.sync.local_datetime_to_epoch(&date, &time).await
-        }
-        (Some(date), Some(time)) => db.sync.local_datetime_to_epoch(&date, &time).await,
-        _ => Err(AppError::BadRequest(
-            "date and time must be provided together".into(),
-        )),
+fn validate_food_date(date: &str) -> Result<(), AppError> {
+    let canonical = matches!(
+        date.as_bytes(),
+        [
+            b'0'..=b'9',
+            b'0'..=b'9',
+            b'0'..=b'9',
+            b'0'..=b'9',
+            b'-',
+            b'0'..=b'9',
+            b'0'..=b'9',
+            b'-',
+            b'0'..=b'9',
+            b'0'..=b'9'
+        ]
+    );
+    if !canonical
+        || date.starts_with("0000")
+        || NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err()
+    {
+        return Err(AppError::BadRequest(
+            "date must be a valid YYYY-MM-DD date in years 0001–9999".into(),
+        ));
     }
+    Ok(())
+}
+
+fn validate_time(field: &str, time: &str) -> Result<(), AppError> {
+    if !matches!(
+        time.as_bytes(),
+        [b'0'..=b'1', b'0'..=b'9', b':', b'0'..=b'5', b'0'..=b'9']
+            | [b'2', b'0'..=b'3', b':', b'0'..=b'5', b'0'..=b'9']
+    ) {
+        return Err(AppError::BadRequest(format!(
+            "{field} must use 24-hour HH:MM"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_quantity(quantity: f64) -> Result<(), AppError> {
+    if !quantity.is_finite() || quantity <= 0.0 {
+        return Err(AppError::BadRequest(
+            "quantity must be finite and positive".into(),
+        ));
+    }
+    Ok(())
 }
 
 async fn resolve_optional_datetime(
@@ -594,7 +677,11 @@ async fn resolve_optional_datetime(
 ) -> Result<Option<i64>, AppError> {
     match (date, time) {
         (None, None) => Ok(None),
-        (Some(date), Some(time)) => Ok(Some(db.sync.local_datetime_to_epoch(&date, &time).await?)),
+        (Some(date), Some(time)) => {
+            validate_food_date(&date)?;
+            validate_time("time", &time)?;
+            Ok(Some(db.sync.local_datetime_to_epoch(&date, &time).await?))
+        }
         _ => Err(AppError::BadRequest(
             "date and time must be provided together".into(),
         )),
@@ -606,7 +693,13 @@ fn parse_args<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, AppError> 
         .map_err(|error| AppError::BadRequest(format!("Invalid tool arguments: {error}")))
 }
 
-fn consumption_output(consumption: &Consumption) -> Value {
+fn consumption_output(consumption: &Consumption) -> Result<Value, AppError> {
+    let nutrition = consumption.scaled_nutrition();
+    check_nutrition_finite(&nutrition)?;
+    Ok(render_consumption(consumption, &nutrition))
+}
+
+fn render_consumption(consumption: &Consumption, nutrition: &NutritionValues) -> Value {
     let mut item = serde_json::Map::new();
     item.insert("id".into(), json!(consumption.id));
     item.insert("foodId".into(), json!(consumption.template_id));
@@ -620,10 +713,13 @@ fn consumption_output(consumption: &Consumption) -> Value {
     {
         item.insert("brand".into(), json!(brand));
     }
-    item.insert(
-        "canonicalQuantity".into(),
-        json!(public_number(consumption.canonical_quantity)),
-    );
+    let quantity = public_number(consumption.canonical_quantity);
+    let quantity = if quantity == 0.0 {
+        consumption.canonical_quantity
+    } else {
+        quantity
+    };
+    item.insert("canonicalQuantity".into(), json!(quantity));
     item.insert(
         "canonicalUnit".into(),
         json!(consumption.snapshot.canonical_unit),
@@ -631,10 +727,7 @@ fn consumption_output(consumption: &Consumption) -> Value {
     item.insert("entry".into(), json!(consumption.entry));
     item.insert("consumedAt".into(), json!(consumption.consumed_at));
     item.insert("updatedAt".into(), json!(consumption.updated_at));
-    item.insert(
-        "nutrition".into(),
-        json!(nutrition_output(&consumption.scaled_nutrition())),
-    );
+    item.insert("nutrition".into(), json!(nutrition_output(nutrition)));
     Value::Object(item)
 }
 
@@ -642,7 +735,11 @@ const PUBLIC_NUTRITION_DECIMAL_PLACES: i32 = 6;
 
 fn public_number(value: f64) -> f64 {
     let factor = 10_f64.powi(PUBLIC_NUTRITION_DECIMAL_PLACES);
-    let rounded = (value * factor).round() / factor;
+    let scaled = value * factor;
+    if !scaled.is_finite() {
+        return value;
+    }
+    let rounded = scaled.round() / factor;
     if rounded == 0.0 { 0.0 } else { rounded }
 }
 
@@ -662,6 +759,45 @@ fn nutrition_output(value: &NutritionValues) -> NutritionValues {
             .map(|(name, amount)| (name.clone(), public_number(*amount)))
             .collect(),
     }
+}
+
+const NUTRITION_RENDER_ERROR: &str = "Nutrition result cannot be represented";
+
+fn check_nutrition_finite(value: &NutritionValues) -> Result<(), AppError> {
+    let amounts = [
+        Some(value.calories),
+        Some(value.protein),
+        Some(value.carbs),
+        Some(value.fat),
+        value.fiber,
+        value.sodium_mg,
+        value.cholesterol_mg,
+    ];
+    if amounts
+        .into_iter()
+        .flatten()
+        .chain(value.extended_nutrition.values().copied())
+        .all(f64::is_finite)
+    {
+        Ok(())
+    } else {
+        Err(AppError::Internal(NUTRITION_RENDER_ERROR.into()))
+    }
+}
+
+fn daily_nutrition_output(
+    consumptions: &[Consumption],
+) -> Result<(Vec<Value>, NutritionValues), AppError> {
+    let mut total = zero_nutrition();
+    let mut items = Vec::with_capacity(consumptions.len());
+    for consumption in consumptions {
+        let nutrition = consumption.scaled_nutrition();
+        check_nutrition_finite(&nutrition)?;
+        items.push(render_consumption(consumption, &nutrition));
+        add_nutrition(&mut total, &nutrition);
+    }
+    check_nutrition_finite(&total)?;
+    Ok((items, nutrition_output(&total)))
 }
 
 fn zero_nutrition() -> NutritionValues {
@@ -808,6 +944,7 @@ fn tool_failure(
             drop(error);
             ("database_error", "Database operation failed".into())
         }
+        AppError::Internal(error) if error == NUTRITION_RENDER_ERROR => ("internal_error", error),
         AppError::Internal(error) => {
             drop(error);
             ("internal_error", "Internal operation failed".into())
@@ -877,7 +1014,7 @@ pub(crate) fn tool_definitions() -> Value {
             "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": { "type": "string", "format": "date" } },
+                "properties": { "date": nullable_schema(food_date_schema()) },
                 "additionalProperties": false
             },
             "outputSchema": daily_output_schema(),
@@ -888,7 +1025,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "create_food",
             "title": "Crear alimento personal",
-            "description": "Crea un alimento personal con nutrición siempre expresada por 100 g o 100 ml. Las porciones nombradas son conversiones opcionales y explícitas. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
+            "description": "Crea un alimento personal con nutrición por 100 g o 100 ml según canonicalUnit. Las porciones nombradas son conversiones opcionales con IDs únicos dentro del alimento. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
             "inputSchema": create_food_input_schema(),
             "outputSchema": {
                 "type": "object",
@@ -906,18 +1043,23 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "log_food",
             "title": "Registrar consumo",
-            "description": "Registra una cantidad de un foodId elegido inequívocamente. Omite date y time solo cuando el usuario quiere registrar el consumo ahora; ambos deben enviarse juntos en cualquier otro caso.",
+            "description": "Registra un consumo de un foodId elegido inequívocamente. Sin portionId, quantity se expresa en la unidad canónica del alimento (g o ml). Con portionId, quantity cuenta unidades de esa conversión. Si 2 unidades equivalen a 60 g, quantity de 1 registra 30 g. Omite date y time para registrar la fecha y hora actuales de Santiago; ambos deben enviarse juntos cuando son explícitos.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "operationId": uuid_schema(),
                     "foodId": uuid_schema(),
-                    "quantity": positive_number_schema(),
-                    "portionId": { "type": "string", "minLength": 1, "maxLength": 80 },
-                    "date": { "type": "string", "format": "date" },
-                    "time": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
+                    "quantity": described_schema(positive_number_schema(), LOG_QUANTITY_DESCRIPTION),
+                    "portionId": nullable_schema(json!({
+                        "type": "string", "minLength": 1, "maxLength": MAX_PORTION_ID_CHARS,
+                        "pattern": PORTION_ID_NONBLANK_PATTERN,
+                        "description": "ID opaco y sensible a mayúsculas de details.portions[].id del alimento seleccionado."
+                    })),
+                    "date": nullable_schema(food_date_schema()),
+                    "time": nullable_schema(time_schema())
                 },
                 "required": ["operationId", "foodId", "quantity"],
+                "allOf": food_datetime_pair_conditions(),
                 "additionalProperties": false
             },
             "outputSchema": log_mutation_output_schema(&["logged", "alreadyLogged"]),
@@ -928,16 +1070,18 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "update_food_log",
             "title": "Corregir consumo",
-            "description": "Corrige la cantidad o fecha/hora de un consumo identificado por logId. No cambia su alimento ni su snapshot nutricional.",
+            "description": "Corrige la cantidad o fecha y hora de un consumo identificado por logId. La cantidad usa la unidad de la entrada histórica y su conversión guardada. Envía quantity, el par date y time, o ambos cambios. No cambia su alimento ni su snapshot nutricional.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "logId": uuid_schema(),
-                    "quantity": positive_number_schema(),
-                    "date": { "type": "string", "format": "date" },
-                    "time": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
+                    "quantity": nullable_schema(described_schema(positive_number_schema(), UPDATE_QUANTITY_DESCRIPTION)),
+                    "date": nullable_schema(food_date_schema()),
+                    "time": nullable_schema(time_schema())
                 },
                 "required": ["logId"],
+                "allOf": food_datetime_pair_conditions(),
+                "anyOf": [present_value("quantity"), present_value("date")],
                 "additionalProperties": false
             },
             "outputSchema": log_mutation_output_schema(&["updated"]),
@@ -981,8 +1125,8 @@ pub(crate) fn tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "startDate": { "type": "string", "format": "date" },
-                    "endDate": { "type": "string", "format": "date" },
+                    "startDate": weight_date_schema(),
+                    "endDate": weight_date_schema(),
                     "limit": { "type": "integer", "minimum": 1, "maximum": 366, "default": 30 }
                 },
                 "additionalProperties": false
@@ -999,7 +1143,7 @@ pub(crate) fn tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "date": { "type": "string", "format": "date" },
+                    "date": weight_date_schema(),
                     "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0, "description": "Kilograms with at most one decimal place" }
                 },
                 "required": ["weightKg"],
@@ -1024,14 +1168,14 @@ pub(crate) fn tool_definitions() -> Value {
             "description": "Elimina de forma reversible el peso de una fecha. Omite date solo para hoy y confirma la fecha con el usuario. Requiere que el seguimiento esté habilitado en Configuración.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": { "type": "string", "format": "date" } },
+                "properties": { "date": weight_date_schema() },
                 "additionalProperties": false
             },
             "outputSchema": {
                 "type": "object",
                 "properties": {
                     "status": { "type": "string", "enum": ["deleted", "alreadyDeleted"] },
-                    "date": { "type": "string", "format": "date" },
+                    "date": weight_date_schema(),
                     "updatedAt": { "type": "integer" }
                 },
                 "required": ["status", "date", "updatedAt"],
@@ -1049,11 +1193,70 @@ pub(crate) fn tool_definitions() -> Value {
     ])
 }
 
+const LOG_QUANTITY_DESCRIPTION: &str = "Sin portionId, cantidad en la unidad canónica (g o ml). Con portionId, número de unidades de esa conversión. Si 2 unidades equivalen a 60 g, quantity de 1 registra 30 g.";
+const UPDATE_QUANTITY_DESCRIPTION: &str =
+    "Cantidad en la unidad de la entrada histórica, usando su conversión guardada.";
+const PER_100_DESCRIPTION: &str = "Valor por 100 g o 100 ml, según canonicalUnit.";
+// Same Unicode White_Space set as str::trim.
+const PORTION_ID_NONBLANK_PATTERN: &str =
+    r"[^\x09-\x0d\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]";
+
+fn food_date_schema() -> Value {
+    json!({
+        "type": "string",
+        "format": "date",
+        "minLength": 10,
+        "maxLength": 10,
+        "pattern": r"^(?:[1-9][0-9]{3}|0[1-9][0-9]{2}|00[1-9][0-9]|000[1-9])-[0-9]{2}-[0-9]{2}$",
+        "description": "Fecha de calendario YYYY-MM-DD en el rango inclusivo de años 0001–9999."
+    })
+}
+
+fn weight_date_schema() -> Value {
+    json!({
+        "anyOf": [
+            { "type": "string", "format": "date" },
+            { "type": "string", "pattern": r"^(?:-[0-9]{4,6}|\+[0-9]{5,6})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$" }
+        ]
+    })
+}
+
+fn time_schema() -> Value {
+    json!({
+        "type": "string", "minLength": 5, "maxLength": 5,
+        "pattern": r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
+        "description": "Hora local de Santiago en formato de 24 horas HH:MM."
+    })
+}
+
+fn nullable_schema(schema: Value) -> Value {
+    json!({ "anyOf": [schema, { "type": "null" }] })
+}
+
+fn described_schema(mut schema: Value, description: &str) -> Value {
+    schema["description"] = json!(description);
+    schema
+}
+
+fn present_value(field: &str) -> Value {
+    json!({
+        "required": [field],
+        "properties": { (field): { "not": { "type": "null" } } }
+    })
+}
+
+fn food_datetime_pair_conditions() -> Value {
+    json!([
+        { "if": present_value("date"), "then": present_value("time") },
+        { "if": present_value("time"), "then": present_value("date") }
+    ])
+}
+
 fn weight_measurement_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "date": { "type": "string", "format": "date" },
+            "date": weight_date_schema(),
             "weightKg": { "type": "number", "minimum": 1.0, "maximum": 500.0 },
             "updatedAt": { "type": "integer" }
         },
@@ -1125,18 +1328,18 @@ fn create_food_input_schema() -> Value {
             "operationId": uuid_schema(),
             "name": { "type": "string", "minLength": 1, "maxLength": 160 },
             "canonicalUnit": canonical_unit_schema(),
-            "calories": non_negative_number_schema(),
-            "protein": non_negative_number_schema(),
-            "carbs": non_negative_number_schema(),
-            "fat": non_negative_number_schema(),
-            "fiber": non_negative_number_schema(),
-            "sodiumMg": non_negative_number_schema(),
-            "cholesterolMg": non_negative_number_schema(),
-            "portions": { "type": "array", "items": portion_schema(), "maxItems": 50 },
-            "chileanSeals": { "type": "array", "items": { "type": "string" }, "maxItems": 4 },
-            "brand": { "type": "string", "maxLength": MAX_BRAND_CHARS },
-            "category": { "type": "string", "maxLength": 80 },
-            "typicalTime": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }
+            "calories": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "protein": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "carbs": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "fat": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "fiber": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "sodiumMg": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "cholesterolMg": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "portions": { "type": "array", "items": portion_schema(), "maxItems": MAX_CREATE_PORTIONS, "description": "Los IDs de las porciones deben ser únicos dentro del alimento." },
+            "chileanSeals": { "type": "array", "items": { "type": "string" }, "maxItems": MAX_CREATE_SEALS },
+            "brand": { "type": ["string", "null"], "maxLength": MAX_BRAND_CHARS },
+            "category": { "type": ["string", "null"], "maxLength": MAX_CREATE_CATEGORY_CHARS },
+            "typicalTime": nullable_schema(time_schema())
         },
         "required": ["operationId", "name", "canonicalUnit", "calories", "protein", "carbs", "fat"],
         "additionalProperties": false
@@ -1156,7 +1359,7 @@ fn daily_output_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "date": { "type": "string", "format": "date" },
+            "date": food_date_schema(),
             "timezone": { "type": "string", "const": TIMEZONE },
             "items": { "type": "array", "items": consumption_schema() },
             "totals": nutrition_schema()
@@ -1228,6 +1431,10 @@ fn log_mutation_output_schema(statuses: &[&str]) -> Value {
 }
 
 fn nutrition_schema() -> Value {
+    let extended = EXTENDED_NUTRIENT_KEYS
+        .iter()
+        .map(|&name| (name.to_owned(), non_negative_number_schema()))
+        .collect::<serde_json::Map<_, _>>();
     json!({
         "type": "object",
         "properties": {
@@ -1236,8 +1443,13 @@ fn nutrition_schema() -> Value {
             "carbs": non_negative_number_schema(),
             "fat": non_negative_number_schema(),
             "fiber": non_negative_number_schema(),
-            "sodiumMg": { "type": ["number", "null"], "minimum": 0 },
-            "cholesterolMg": { "type": ["number", "null"], "minimum": 0 }
+            "sodiumMg": non_negative_number_schema(),
+            "cholesterolMg": non_negative_number_schema(),
+            "extendedNutrition": {
+                "type": "object",
+                "properties": extended,
+                "additionalProperties": false
+            }
         },
         "required": ["calories", "protein", "carbs", "fat"],
         "additionalProperties": false
@@ -1263,6 +1475,1018 @@ fn non_negative_number_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn validator(schema: &Value, formats: bool) -> jsonschema::Validator {
+        jsonschema::draft202012::options()
+            .should_validate_formats(formats)
+            .build(schema)
+            .unwrap()
+    }
+
+    fn assert_valid(validator: &jsonschema::Validator, instance: &Value) {
+        if let Err(error) = validator.validate(instance) {
+            panic!(
+                "Contract violation at {}: {error}; instance: {instance}",
+                error.instance_path
+            );
+        }
+    }
+
+    fn tool_definition<'a>(definitions: &'a Value, name: &str) -> &'a Value {
+        definitions
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap()
+    }
+
+    fn create_args(operation_id: Uuid) -> Value {
+        json!({
+            "operationId": operation_id,
+            "name": format!("MCP {operation_id}"),
+            "canonicalUnit": "g",
+            "calories": 100, "protein": 4, "carbs": 20, "fat": 2
+        })
+    }
+
+    fn log_args(food_id: Uuid, quantity: f64, date: &str) -> Value {
+        json!({
+            "operationId": Uuid::new_v4(), "foodId": food_id, "quantity": quantity,
+            "date": date, "time": "12:00"
+        })
+    }
+
+    fn food_date_cases(date: &str) -> [(&'static str, Value); 3] {
+        [
+            ("get_daily_log", json!({"date": date})),
+            ("log_food", log_args(Uuid::new_v4(), 1.0, date)),
+            (
+                "update_food_log",
+                json!({"logId": Uuid::new_v4(), "date": date, "time": "12:00"}),
+            ),
+        ]
+    }
+
+    fn iron_food_details() -> FoodDetails {
+        let mut nutrition = zero_nutrition();
+        nutrition.calories = 100.0;
+        nutrition.fiber = None;
+        nutrition.sodium_mg = Some(0.0);
+        nutrition.cholesterol_mg = Some(10.0);
+        nutrition.extended_nutrition.insert("ironMg".into(), 2.0);
+        FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: nutrition,
+            portions: vec![PortionDefinition {
+                id: "Scoop".into(),
+                name: "Scoop".into(),
+                portion_quantity: 2.0,
+                canonical_quantity: 60.0,
+            }],
+            chilean_seals: vec![],
+            brand: Some("Brand".into()),
+            category: None,
+            typical_time: None,
+        }
+    }
+
+    #[test]
+    fn mcp_output_schema_2020_12() {
+        use crate::connectors::sync::FoodTemplate;
+        let tools = tool_definitions();
+        for (name, args) in food_date_cases("0000-01-02") {
+            let schema = &tool_definition(&tools, name)["inputSchema"];
+            assert!(!validator(schema, false).is_valid(&args), "{name}: {args}");
+            let check = validator(schema, true);
+            assert!(!check.is_valid(&args), "{name}: {args}");
+            for (date, valid) in [
+                ("0001-01-02", true),
+                ("9999-01-02", true),
+                ("2024-02-29", true),
+                ("2025-02-29", false),
+                ("2025-1-02", false),
+                ("+10000-01-02", false),
+                ("２０２５-01-02", false),
+                ("2025-01-02\n", false),
+            ] {
+                let mut args = args.clone();
+                args["date"] = json!(date);
+                assert_eq!(check.is_valid(&args), valid, "{name}: {args}");
+                assert_eq!(validate_food_date(date).is_ok(), valid, "{name}: {date}");
+            }
+        }
+
+        let daily_tool = tool_definition(&tools, "get_daily_log");
+        let daily_input = validator(&daily_tool["inputSchema"], true);
+        for args in [json!({}), json!({"date": null})] {
+            assert_valid(&daily_input, &args);
+        }
+        let daily_output = validator(&daily_tool["outputSchema"], true);
+        let daily_date = validator(&daily_tool["outputSchema"]["properties"]["date"], false);
+        assert!(!daily_date.is_valid(&json!("0000-01-02")));
+        for (date, valid) in [
+            ("0000-01-02", false),
+            ("0001-01-02", true),
+            ("9999-01-02", true),
+            ("2025-02-29", false),
+        ] {
+            let output = json!({"date": date, "timezone": TIMEZONE, "items": [], "totals": zero_nutrition()});
+            assert_eq!(daily_output.is_valid(&output), valid, "{output}");
+        }
+
+        let log_tool = tool_definition(&tools, "log_food");
+        let update_tool = tool_definition(&tools, "update_food_log");
+        let log_input = validator(&log_tool["inputSchema"], true);
+        let update_input = validator(&update_tool["inputSchema"], true);
+        let id = Uuid::new_v4();
+        for (date, time, valid_pair) in [
+            (None, None, true),
+            (Some(Value::Null), Some(Value::Null), true),
+            (Some(Value::Null), None, true),
+            (Some(json!("2025-09-07")), Some(json!("00:30")), true),
+            (Some(json!("2025-09-07")), Some(json!("0:30")), false),
+            (Some(json!("2025-09-07")), Some(json!("24:00")), false),
+            (Some(json!("2025-09-07")), Some(json!("12:60")), false),
+            (Some(json!("2025-09-07")), Some(json!("０９:30")), false),
+            (Some(json!("2025-09-07")), None, false),
+            (Some(json!("2025-09-07")), Some(Value::Null), false),
+            (None, Some(json!("00:30")), false),
+            (Some(Value::Null), Some(json!("00:30")), false),
+        ] {
+            let mut log = json!({"operationId": id, "foodId": id, "quantity": 1.0});
+            let mut update = json!({"logId": id});
+            let has_date = date.as_ref().is_some_and(|date| !date.is_null());
+            for (field, value) in [("date", date), ("time", time)] {
+                if let Some(value) = value {
+                    log[field] = value.clone();
+                    update[field] = value;
+                }
+            }
+            assert_eq!(log_input.is_valid(&log), valid_pair, "{log}");
+            for quantity in [None, Some(Value::Null), Some(json!(1.0)), Some(json!(0))] {
+                let mut update = update.clone();
+                let has_quantity = quantity.as_ref().is_some_and(|q| q == &json!(1.0));
+                let invalid_quantity = quantity.as_ref().is_some_and(|q| q == &json!(0));
+                if let Some(quantity) = quantity {
+                    update["quantity"] = quantity;
+                }
+                assert_eq!(
+                    update_input.is_valid(&update),
+                    valid_pair && !invalid_quantity && (has_quantity || has_date),
+                    "{update}"
+                );
+            }
+        }
+        for (portion, valid) in [
+            (json!(null), true),
+            (json!(""), false),
+            (json!(" \t\u{85}\u{3000}"), false),
+            (json!("é".repeat(80)), true),
+            (json!("é".repeat(81)), false),
+        ] {
+            let mut log = log_args(id, 1.0, "2025-01-02");
+            log["portionId"] = portion;
+            assert_eq!(log_input.is_valid(&log), valid, "{log}");
+        }
+        let mut invalid_id = log_args(id, 1.0, "2025-01-02");
+        invalid_id["foodId"] = json!("not-a-uuid");
+        assert!(validator(&log_tool["inputSchema"], false).is_valid(&invalid_id));
+        assert!(!log_input.is_valid(&invalid_id));
+
+        let create_tool = tool_definition(&tools, "create_food");
+        let create_input = validator(&create_tool["inputSchema"], true);
+        let mut create = create_args(id);
+        assert_valid(&create_input, &create);
+        create["brand"] = json!("Brand");
+        assert_valid(&create_input, &create);
+        for field in [
+            "brand",
+            "category",
+            "fiber",
+            "sodiumMg",
+            "cholesterolMg",
+            "typicalTime",
+        ] {
+            create[field] = Value::Null;
+        }
+        assert_valid(&create_input, &create);
+        let parsed = parse_args::<CreateFoodArgs>(create).unwrap();
+        assert!(
+            parsed.brand.is_none() && parsed.category.is_none() && parsed.typical_time.is_none()
+        );
+        assert!(
+            parsed.fiber.is_none() && parsed.sodium_mg.is_none() && parsed.cholesterol_mg.is_none()
+        );
+
+        let search_tool = tool_definition(&tools, "search_foods");
+        let search_output = validator(&search_tool["outputSchema"], true);
+        let create_output = validator(&create_tool["outputSchema"], true);
+        let log_output = validator(&log_tool["outputSchema"], true);
+        let update_output = validator(&update_tool["outputSchema"], true);
+        let details = iron_food_details();
+        let food = FoodTemplate {
+            id,
+            name: "Iron food".into(),
+            is_official: false,
+            details: details.clone(),
+            updated_at: 1,
+        };
+        let (quantity, entry) = details.entry_for(1.0, Some("Scoop")).unwrap();
+        let mut consumption = Consumption {
+            id: Uuid::new_v4(),
+            template_id: None,
+            name: food.name.clone(),
+            snapshot: details.snapshot(),
+            canonical_quantity: quantity,
+            entry,
+            consumed_at: 1,
+            updated_at: 1,
+        };
+        let log = consumption_output(&consumption).unwrap();
+        assert_eq!(log["canonicalQuantity"], 30.0);
+        assert_eq!(log["nutrition"]["extendedNutrition"]["ironMg"], 0.6);
+        assert_eq!(log["nutrition"]["sodiumMg"], 0.0);
+        assert!(log["nutrition"].get("fiber").is_none());
+        assert_valid(&search_output, &json!({"foods": [food]}));
+        assert_valid(&search_output, &json!({"foods": []}));
+        assert_valid(
+            &create_output,
+            &json!({"status": "alreadyCreated", "food": food}),
+        );
+        assert_valid(&log_output, &json!({"status": "logged", "log": log}));
+        assert_valid(&update_output, &json!({"status": "updated", "log": log}));
+        let (items, totals) = daily_nutrition_output(std::slice::from_ref(&consumption)).unwrap();
+        let day =
+            json!({"date": "2025-01-02", "timezone": TIMEZONE, "items": items, "totals": totals});
+        assert_valid(&daily_output, &day);
+        assert!(day["totals"].get("fiber").is_none());
+        assert!(day["totals"].get("extendedNutrition").is_none());
+        assert_eq!(day["totals"]["sodiumMg"], 0.0);
+        assert_eq!(day["totals"]["cholesterolMg"], 3.0);
+
+        for extended in [
+            json!({"extra": 0}),
+            json!({"ironMg": -1}),
+            json!({"ironMg": null}),
+            json!({"ironMg": "3"}),
+        ] {
+            let mut output = json!({"status": "logged", "log": log});
+            output["log"]["nutrition"]["extendedNutrition"] = extended;
+            assert!(!log_output.is_valid(&output), "{output}");
+        }
+        let mut output = json!({"status": "logged", "log": log});
+        output["log"]["nutrition"]["sodiumMg"] = Value::Null;
+        assert!(!log_output.is_valid(&output));
+        output["log"]["nutrition"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sodiumMg");
+        output["log"]["unexpected"] = json!(0);
+        assert!(!log_output.is_valid(&output));
+
+        for name in ["get_weight_history", "set_weight", "delete_weight_log"] {
+            let tool = tool_definition(&tools, name);
+            let input = validator(&tool["inputSchema"], true);
+            let output = validator(&tool["outputSchema"], true);
+            for (date, valid) in [
+                ("2025-01-02", true),
+                ("-0001-01-02", true),
+                ("+10000-01-02", true),
+                ("-001-01-02", false),
+                ("+0001-01-02", false),
+                ("-1234567-01-02", false),
+                ("-0001-00-02", false),
+                ("+10000-13-02", false),
+                ("-0001-01-32", false),
+                ("-0001-01-02\n", false),
+                ("-0001-1-02", false),
+                ("2025-02-29", false),
+            ] {
+                if valid {
+                    assert_eq!(parse_weight_date(date).unwrap().to_string(), date);
+                }
+                let measurement = json!({"date": date, "weightKg": 70.1, "updatedAt": 1});
+                let (args, result) = match name {
+                    "get_weight_history" => (
+                        json!({"startDate": date, "endDate": date}),
+                        json!({"timezone": TIMEZONE, "entries": [measurement], "latest": measurement, "changeKg": null}),
+                    ),
+                    "set_weight" => (
+                        json!({"date": date, "weightKg": 70.1}),
+                        json!({"status": "created", "measurement": measurement}),
+                    ),
+                    _ => (
+                        json!({"date": date}),
+                        json!({"status": "deleted", "date": date, "updatedAt": 1}),
+                    ),
+                };
+                assert_eq!(input.is_valid(&args), valid, "{name}: {args}");
+                assert_eq!(output.is_valid(&result), valid, "{name}: {result}");
+            }
+        }
+
+        consumption.canonical_quantity = 200.0;
+        consumption
+            .snapshot
+            .nutrition_per100
+            .extended_nutrition
+            .insert("ironMg".into(), 1e308);
+        assert!(consumption_output(&consumption).is_err());
+        assert!(daily_nutrition_output(std::slice::from_ref(&consumption)).is_err());
+        consumption
+            .snapshot
+            .nutrition_per100
+            .extended_nutrition
+            .clear();
+        consumption.canonical_quantity = 100.0;
+        for nutrient in ["calories", "fiber", "sodiumMg", "cholesterolMg"] {
+            let mut nutrition = json!(zero_nutrition());
+            nutrition[nutrient] = json!(1e308);
+            consumption.snapshot.nutrition_per100 = serde_json::from_value(nutrition).unwrap();
+            assert_valid(
+                &log_output,
+                &json!({"status": "logged", "log": consumption_output(&consumption).unwrap()}),
+            );
+            assert!(
+                daily_nutrition_output(&[consumption.clone(), consumption.clone()]).is_err(),
+                "{nutrient}"
+            );
+        }
+        assert_eq!(public_number(f64::MAX), f64::MAX);
+    }
+
+    async fn dispatch(
+        db: &Arc<Database>,
+        hub: &SyncHub,
+        user_id: i32,
+        name: &str,
+        args: Value,
+    ) -> Value {
+        let response = mcp_post_handler(
+            Extension(db.clone()),
+            Extension(hub.clone()),
+            Extension(CurrentUser { id: user_id }),
+            None,
+            Ok(Json(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(1)),
+                method: "tools/call".into(),
+                params: Some(json!({"name": name, "arguments": args})),
+            })),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let envelope: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(envelope["jsonrpc"], "2.0");
+        assert_eq!(envelope["id"], 1);
+        envelope["result"].clone()
+    }
+
+    fn assert_tool_error<'a>(result: &'a Value, code: &str) -> &'a str {
+        assert_eq!(result["isError"], true, "{result}");
+        let error = &result["structuredContent"];
+        assert_eq!(error.as_object().unwrap().len(), 1, "{result}");
+        assert_eq!(error["error"]["code"], code, "{result}");
+        let message = error["error"]["message"].as_str().unwrap();
+        assert_eq!(
+            result["content"],
+            json!([{"type": "text", "text": message}])
+        );
+        message
+    }
+
+    #[tokio::test]
+    async fn mcp_food_year_zero_before_sql() {
+        use crate::connectors::{
+            imports::ImportDatasource, sync::SyncDatasource, user::UserDatasource,
+        };
+        use sqlx::postgres::PgPoolOptions;
+
+        // SQLx closes the child pool when an acquisition discovers the
+        // closed parent. That records an attempt without opening a socket.
+        let url = "postgres://unused@localhost/unused";
+        let options = PgPoolOptions::new().max_connections(1);
+        let parent = options.clone().connect_lazy(url).unwrap();
+        let pool = options.parent(parent.clone()).connect_lazy(url).unwrap();
+        parent.close().await;
+        assert!(!pool.is_closed());
+        let db = Arc::new(Database {
+            user: UserDatasource { pool: pool.clone() },
+            sync: SyncDatasource::new(pool.clone()),
+            imports: ImportDatasource::new(pool.clone()),
+        });
+        let hub = SyncHub::default();
+        for (tool, args) in food_date_cases("0000-01-02") {
+            let result = dispatch(&db, &hub, 80, tool, args).await;
+            assert!(
+                !pool.is_closed(),
+                "{tool} tried to acquire a SQL connection"
+            );
+            assert_eq!(pool.size(), 0);
+            assert!(assert_tool_error(&result, "invalid_arguments").contains("0001–9999"));
+        }
+        // Check the acquisition detector independently of the handler.
+        assert!(matches!(pool.acquire().await, Err(sqlx::Error::PoolClosed)));
+        assert!(pool.is_closed());
+        for date in ["0001-01-02", "9999-01-02"] {
+            validate_food_date(date).unwrap();
+        }
+    }
+
+    struct ContractFixture {
+        db: Arc<Database>,
+        hub: SyncHub,
+        user_id: i32,
+        input: std::collections::HashMap<String, jsonschema::Validator>,
+        output: std::collections::HashMap<String, jsonschema::Validator>,
+    }
+
+    impl ContractFixture {
+        async fn call(&self, name: &str, args: Value) -> Value {
+            dispatch(&self.db, &self.hub, self.user_id, name, args).await
+        }
+
+        async fn success(&self, name: &str, args: Value) -> Value {
+            assert_valid(&self.input[name], &args);
+            let result = self.call(name, args).await;
+            assert_eq!(result["isError"], false, "{name}: {result}");
+            let structured = &result["structuredContent"];
+            assert_valid(&self.output[name], structured);
+            let content = result["content"].as_array().unwrap();
+            assert_eq!(content.len(), 1);
+            assert_eq!(content[0]["type"], "text");
+            let text = content[0]["text"].as_str().unwrap();
+            let embedded = embedded_json(text);
+            assert!(text.strip_suffix(embedded).unwrap().ends_with("\n\n"));
+            assert!(!text.strip_suffix(embedded).unwrap().trim().is_empty());
+            assert_eq!(
+                serde_json::from_str::<Value>(embedded).unwrap(),
+                *structured
+            );
+            structured.clone()
+        }
+
+        async fn seed_food(&self, id: Uuid, name: &str, details: &FoodDetails) {
+            let (food, created) = self
+                .db
+                .sync
+                .create_personal_food(self.user_id, id, name, details)
+                .await
+                .unwrap();
+            assert!(created);
+            assert_eq!(food.id, id);
+        }
+
+        async fn stored_log(&self, id: Uuid) -> (i64, Option<f64>) {
+            sqlx::query_as("SELECT count(*), max(canonical_quantity) FROM meal_logs WHERE user_id = $1 AND id = $2")
+                .bind(self.user_id)
+                .bind(id)
+                .fetch_one(&self.db.sync.pool)
+                .await
+                .unwrap()
+        }
+
+        fn assert_meal_invalidation(
+            &self,
+            events: &mut tokio::sync::broadcast::Receiver<
+                crate::modules::sync::hub::SyncInvalidation,
+            >,
+        ) {
+            let event = events.try_recv().unwrap();
+            assert_eq!(event.user_id, self.user_id);
+            assert_eq!(event.collection, "mealLogs");
+            assert_no_invalidation(events);
+        }
+    }
+
+    fn assert_no_invalidation(
+        events: &mut tokio::sync::broadcast::Receiver<crate::modules::sync::hub::SyncInvalidation>,
+    ) {
+        assert!(matches!(
+            events.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    fn operation_id(args: &Value) -> Uuid {
+        serde_json::from_value(args["operationId"].clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn mcp_dispatch_contract_postgres() {
+        let Ok(database_url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
+            return;
+        };
+        let db = Arc::new(Database::new(&database_url).await.unwrap());
+        let scope = Uuid::new_v4();
+        // Keep fixture users outside the IDs used by older tests.
+        let user_id = 1_000_000 + (scope.as_u128() % 1_000_000_000) as i32;
+        sqlx::query("INSERT INTO users (id, email) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(format!("bal080-{scope}@example.invalid"))
+            .execute(&db.sync.pool)
+            .await
+            .unwrap();
+
+        let tools = tool_definitions();
+        let compile = |key: &str| {
+            tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| {
+                    (
+                        tool["name"].as_str().unwrap().to_owned(),
+                        validator(&tool[key], true),
+                    )
+                })
+                .collect()
+        };
+        let fixture = ContractFixture {
+            db,
+            hub: SyncHub::default(),
+            user_id,
+            input: compile("inputSchema"),
+            output: compile("outputSchema"),
+        };
+        dispatch_weight_contract(&fixture).await;
+        dispatch_food_contract(&fixture).await;
+        dispatch_nutrition_overflow(&fixture).await;
+
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&fixture.db.sync.pool)
+            .await
+            .unwrap();
+    }
+
+    async fn dispatch_weight_contract(fixture: &ContractFixture) {
+        fixture
+            .db
+            .sync
+            .push_user_preference(
+                fixture.user_id,
+                json!({"weightTrackingEnabled": true}),
+                1,
+                None,
+            )
+            .await
+            .unwrap();
+        let empty = fixture.success("get_weight_history", json!({})).await;
+        assert_eq!(empty["entries"], json!([]));
+        assert!(empty["latest"].is_null());
+        assert!(empty["changeKg"].is_null());
+
+        let date = "-0001-01-02";
+        let (_, status) = fixture
+            .db
+            .sync
+            .set_weight(fixture.user_id, parse_weight_date(date).unwrap(), 70_000)
+            .await
+            .unwrap();
+        assert!(matches!(status, WeightUpsertStatus::Created));
+        for args in [json!({}), json!({"startDate": date, "endDate": date})] {
+            let history = fixture.success("get_weight_history", args).await;
+            assert_eq!(history["entries"].as_array().unwrap().len(), 1);
+            assert_eq!(history["entries"][0]["date"], date);
+            assert_eq!(history["latest"]["date"], date);
+        }
+        for (date, status, kg) in [
+            ("-0002-01-02", "created", 71.2),
+            (date, "updated", 72.3),
+            (date, "unchanged", 72.3),
+            ("2025-01-02", "created", 73.4),
+        ] {
+            let result = fixture
+                .success("set_weight", json!({"date": date, "weightKg": kg}))
+                .await;
+            assert_eq!(result["status"], status);
+            assert_eq!(result["measurement"]["date"], date);
+            assert_eq!(result["measurement"]["weightKg"], kg);
+        }
+        let history = fixture
+            .success(
+                "get_weight_history",
+                json!({"startDate":"2025-01-02", "endDate":"2025-01-02"}),
+            )
+            .await;
+        assert_eq!(history["latest"]["date"], "2025-01-02");
+        for status in ["deleted", "alreadyDeleted"] {
+            let result = fixture
+                .success("delete_weight_log", json!({"date": date}))
+                .await;
+            assert_eq!(result["status"], status);
+            assert_eq!(result["date"], date);
+        }
+    }
+
+    async fn dispatch_create_limits(fixture: &ContractFixture) -> Uuid {
+        let id = Uuid::new_v4();
+        let mut max_create = create_args(id);
+        max_create["canonicalUnit"] = json!("ml");
+        max_create["portions"] = json!((0..MAX_CREATE_PORTIONS).map(|i| {
+            json!({"id": format!("cup-{i}"), "name": "Cup", "portionQuantity": 1, "canonicalQuantity": 250})
+        }).collect::<Vec<_>>());
+        max_create["chileanSeals"] = json!(["Free-form", "", "sello", "other"]);
+        max_create["category"] = json!("á".repeat(MAX_CREATE_CATEGORY_CHARS));
+        max_create["typicalTime"] = json!("23:59");
+        for key in ["brand", "fiber", "sodiumMg", "cholesterolMg"] {
+            max_create[key] = Value::Null;
+        }
+        let created = fixture.success("create_food", max_create.clone()).await;
+        assert_eq!(created["status"], "created");
+        assert_eq!(
+            created["food"]["details"]["portions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            MAX_CREATE_PORTIONS
+        );
+        assert_eq!(
+            created["food"]["details"]["chileanSeals"],
+            max_create["chileanSeals"]
+        );
+        assert_eq!(
+            created["food"]["details"]["category"],
+            max_create["category"]
+        );
+        assert_eq!(created["food"]["details"]["typicalTime"], "23:59");
+        assert_eq!(
+            created["food"]["details"]["nutritionPer100"],
+            json!({"calories": 100.0, "protein": 4.0, "carbs": 20.0, "fat": 2.0})
+        );
+        assert!(created["food"]["details"].get("brand").is_none());
+
+        let mut too_many_portions = max_create["portions"].as_array().unwrap().clone();
+        too_many_portions.push(
+            json!({"id": "extra", "name": "Extra", "portionQuantity": 1, "canonicalQuantity": 1}),
+        );
+        for (field, value) in [
+            ("portions", json!(too_many_portions)),
+            ("chileanSeals", json!(["a", "b", "c", "d", "e"])),
+            ("category", json!("á".repeat(MAX_CREATE_CATEGORY_CHARS + 1))),
+            ("typicalTime", json!("9:00")),
+            ("typicalTime", json!("24:00")),
+            ("typicalTime", json!("１２:00")),
+        ] {
+            let id = Uuid::new_v4();
+            let mut rejected = create_args(id);
+            rejected[field] = value;
+            assert!(
+                !fixture.input["create_food"].is_valid(&rejected),
+                "{rejected}"
+            );
+            let result = fixture.call("create_food", rejected).await;
+            assert!(assert_tool_error(&result, "invalid_arguments").contains(field));
+            assert!(
+                fixture
+                    .db
+                    .sync
+                    .get_food_template(fixture.user_id, id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        let bad_id = Uuid::new_v4();
+        let mut duplicate = create_args(bad_id);
+        duplicate["portions"] = json!([
+            {"id": "duplicate", "name": "First", "portionQuantity": 1, "canonicalQuantity": 1},
+            {"id": "duplicate", "name": "Second", "portionQuantity": 1, "canonicalQuantity": 1}
+        ]);
+        assert_valid(&fixture.input["create_food"], &duplicate);
+        let result = fixture.call("create_food", duplicate).await;
+        assert!(assert_tool_error(&result, "invalid_arguments").contains("unique"));
+        assert!(
+            fixture
+                .db
+                .sync
+                .get_food_template(fixture.user_id, bad_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        id
+    }
+
+    async fn dispatch_food_contract(fixture: &ContractFixture) {
+        const DAY: &str = "2025-01-02";
+        let iron_id = Uuid::new_v4();
+        let iron_name = format!("Iron {iron_id}");
+        let mut iron = iron_food_details();
+        fixture.seed_food(iron_id, &iron_name, &iron).await;
+        let oversized_id = Uuid::new_v4();
+        let oversized_name = format!("Oversized {oversized_id}");
+        let mut oversized = iron.clone();
+        oversized.portions.clear();
+        oversized.chilean_seals = vec!["free form".into(); MAX_CREATE_SEALS + 1];
+        fixture
+            .seed_food(oversized_id, &oversized_name, &oversized)
+            .await;
+        let mut replay_create = create_args(iron_id);
+        replay_create["name"] = json!(iron_name);
+        let replay = fixture.success("create_food", replay_create).await;
+        assert_eq!(replay["status"], "alreadyCreated");
+        assert_eq!(
+            replay["food"]["details"]["nutritionPer100"]["extendedNutrition"]["ironMg"],
+            2.0
+        );
+        for (id, query) in [(iron_id, iron_name), (oversized_id, oversized_name)] {
+            let search = fixture
+                .success(
+                    "search_foods",
+                    json!({"query": query, "source": "personal"}),
+                )
+                .await;
+            assert_eq!(search["foods"].as_array().unwrap().len(), 1);
+            assert_eq!(search["foods"][0]["id"], json!(id));
+            assert_eq!(
+                search["foods"][0]["details"]["nutritionPer100"]["extendedNutrition"]["ironMg"],
+                2.0
+            );
+        }
+        let search = fixture
+            .success(
+                "search_foods",
+                json!({"query": Uuid::new_v4().to_string(), "source": "personal"}),
+            )
+            .await;
+        assert_eq!(search["foods"], json!([]));
+
+        for date in [DAY, "0001-01-02", "9999-01-02"] {
+            let empty = fixture
+                .success("get_daily_log", json!({"date": date}))
+                .await;
+            assert_eq!(empty["date"], date);
+            assert_eq!(empty["items"], json!([]));
+            assert_eq!(empty["totals"], json!(zero_nutrition()));
+        }
+        for args in [json!({}), json!({"date": null})] {
+            let today = fixture.success("get_daily_log", args).await;
+            assert_eq!(today["items"], json!([]));
+        }
+
+        let ml_id = dispatch_create_limits(fixture).await;
+        for (id, unit) in [(iron_id, "g"), (ml_id, "ml")] {
+            let args = log_args(id, 1.0, DAY);
+            let result = fixture.success("log_food", args).await;
+            assert_eq!(result["status"], "logged");
+            assert_eq!(result["log"]["canonicalQuantity"], 1.0);
+            assert_eq!(result["log"]["canonicalUnit"], unit);
+        }
+
+        let mut scoop = log_args(iron_id, 1.0, DAY);
+        scoop["portionId"] = json!("Scoop");
+        let scoop_id = operation_id(&scoop);
+        for status in ["logged", "alreadyLogged"] {
+            let result = fixture.success("log_food", scoop.clone()).await;
+            assert_eq!(result["status"], status);
+            assert_eq!(result["log"]["canonicalQuantity"], 30.0);
+            assert_eq!(
+                result["log"]["nutrition"]["extendedNutrition"]["ironMg"],
+                0.6
+            );
+            assert_eq!(
+                result["log"]["entry"]["portionSnapshot"]["portionId"],
+                "Scoop"
+            );
+        }
+        for (id, message) in [
+            (json!("scoop"), "Unknown portionId"),
+            (json!("unknown"), "Unknown portionId"),
+            (json!(" Scoop "), "Unknown portionId"),
+            (json!("\u{3000}"), "cannot be blank"),
+            (json!("é".repeat(81)), "80 characters"),
+        ] {
+            let mut args = log_args(iron_id, 1.0, DAY);
+            args["portionId"] = id;
+            let op_id = operation_id(&args);
+            let error = fixture.call("log_food", args).await;
+            assert!(assert_tool_error(&error, "invalid_arguments").contains(message));
+            assert_eq!(fixture.stored_log(op_id).await, (0, None));
+        }
+
+        iron.portions[0].canonical_quantity = 100.0;
+        let changed =
+            sqlx::query("UPDATE meal_templates SET details = $1 WHERE user_id = $2 AND id = $3")
+                .bind(json!(iron))
+                .bind(fixture.user_id)
+                .bind(iron_id)
+                .execute(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(changed.rows_affected(), 1);
+        let quantity_update = fixture
+            .success(
+                "update_food_log",
+                json!({"logId": scoop_id, "quantity": 2.0, "date": null, "time": null}),
+            )
+            .await;
+        assert_eq!(quantity_update["status"], "updated");
+        assert_eq!(quantity_update["log"]["canonicalQuantity"], 60.0);
+        assert_eq!(
+            quantity_update["log"]["nutrition"]["extendedNutrition"]["ironMg"],
+            1.2
+        );
+        let date_update = fixture
+            .success(
+                "update_food_log",
+                json!({"logId": scoop_id, "quantity": null, "date": DAY, "time": "11:00"}),
+            )
+            .await;
+        assert_eq!(date_update["log"]["canonicalQuantity"], 60.0);
+        assert_ne!(
+            date_update["log"]["consumedAt"],
+            quantity_update["log"]["consumedAt"]
+        );
+        let combined = fixture
+            .success(
+                "update_food_log",
+                json!({"logId": scoop_id, "quantity": 2.0, "date": DAY, "time": "12:00"}),
+            )
+            .await;
+        assert_eq!(combined["log"]["canonicalQuantity"], 60.0);
+        assert_eq!(
+            combined["log"]["consumedAt"],
+            quantity_update["log"]["consumedAt"]
+        );
+
+        let tiny_args = log_args(iron_id, 0.00000001, DAY);
+        let tiny_id = operation_id(&tiny_args);
+        let tiny = fixture.success("log_food", tiny_args).await;
+        assert_eq!(tiny["log"]["canonicalQuantity"], 0.00000001);
+        let changed =
+            sqlx::query("UPDATE meal_logs SET template_id = NULL WHERE user_id = $1 AND id = $2")
+                .bind(fixture.user_id)
+                .bind(tiny_id)
+                .execute(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(changed.rows_affected(), 1);
+
+        let precise_args = log_args(iron_id, 1.123456789, DAY);
+        let precise_id = operation_id(&precise_args);
+        let precise = fixture.success("log_food", precise_args).await;
+        assert_eq!(precise["log"]["canonicalQuantity"], 1.123457);
+        assert_eq!(fixture.stored_log(precise_id).await, (1, Some(1.123456789)));
+        let large = fixture
+            .success("log_food", log_args(iron_id, 1e308, "2025-01-03"))
+            .await;
+        assert_eq!(large["log"]["canonicalQuantity"], 1e308);
+        assert_eq!(large["log"]["nutrition"]["calories"], 1e308);
+
+        let daily = fixture.success("get_daily_log", json!({"date": DAY})).await;
+        let items = daily["items"].as_array().unwrap();
+        let tiny = items
+            .iter()
+            .find(|item| item["id"] == json!(tiny_id))
+            .unwrap();
+        assert_eq!(tiny["canonicalQuantity"], 0.00000001);
+        assert!(tiny["foodId"].is_null());
+        let scoop = items
+            .iter()
+            .find(|item| item["id"] == json!(scoop_id))
+            .unwrap();
+        assert_eq!(scoop["nutrition"]["extendedNutrition"]["ironMg"], 1.2);
+        assert!(daily["totals"].get("extendedNutrition").is_none());
+        assert!(daily["totals"].get("fiber").is_none());
+        assert_eq!(daily["totals"]["sodiumMg"], 0.0);
+
+        let deleted = fixture
+            .success("delete_food_log", json!({"logId": scoop_id}))
+            .await;
+        assert_eq!(deleted["status"], "deleted");
+        assert_eq!(deleted["logId"], json!(scoop_id));
+
+        let omitted = json!({"operationId": Uuid::new_v4(), "foodId": iron_id, "quantity": 1.0});
+        let omitted = fixture.success("log_food", omitted).await;
+        assert_eq!(omitted["status"], "logged");
+        let nulls = json!({"operationId": Uuid::new_v4(), "foodId": iron_id, "quantity": 1.0, "date": null, "time": null, "portionId": null});
+        assert_eq!(fixture.success("log_food", nulls).await["status"], "logged");
+
+        for (date, time, message) in [
+            (json!("2025-09-07"), json!("00:30"), "does not exist"),
+            (json!("2025-02-29"), json!("12:00"), "YYYY-MM-DD"),
+            (json!("2025-1-02"), json!("12:00"), "YYYY-MM-DD"),
+            (json!(DAY), json!("9:00"), "24-hour HH:MM"),
+            (json!(DAY), json!("24:00"), "24-hour HH:MM"),
+            (json!(DAY), Value::Null, "provided together"),
+            (Value::Null, json!("12:00"), "provided together"),
+        ] {
+            let mut log = log_args(iron_id, 1.0, DAY);
+            log["date"] = date.clone();
+            log["time"] = time.clone();
+            let result = fixture.call("log_food", log).await;
+            assert!(assert_tool_error(&result, "invalid_arguments").contains(message));
+            let result = fixture
+                .call(
+                    "update_food_log",
+                    json!({"logId": precise_id, "date": date, "time": time}),
+                )
+                .await;
+            assert!(assert_tool_error(&result, "invalid_arguments").contains(message));
+        }
+        for patch in [
+            json!({"logId": precise_id}),
+            json!({"logId": precise_id, "quantity": null, "date": null, "time": null}),
+        ] {
+            let result = fixture.call("update_food_log", patch).await;
+            assert_tool_error(&result, "invalid_arguments");
+        }
+    }
+
+    async fn dispatch_nutrition_overflow(fixture: &ContractFixture) {
+        const SCALING_DAY: &str = "2025-01-05";
+        const SUM_DAY: &str = "2025-01-06";
+        let food_id = Uuid::new_v4();
+        let mut details = iron_food_details();
+        details.nutrition_per100.calories = 1e308;
+        fixture
+            .seed_food(food_id, &format!("Overflow {food_id}"), &details)
+            .await;
+
+        let overflow_log = log_args(food_id, 200.0, SCALING_DAY);
+        let overflow_id = operation_id(&overflow_log);
+        let mut events = fixture.hub.subscribe();
+        let result = fixture.call("log_food", overflow_log.clone()).await;
+        assert_eq!(
+            assert_tool_error(&result, "internal_error"),
+            NUTRITION_RENDER_ERROR
+        );
+        fixture.assert_meal_invalidation(&mut events);
+        assert_eq!(fixture.stored_log(overflow_id).await, (1, Some(200.0)));
+        let replay = fixture.call("log_food", overflow_log).await;
+        assert_eq!(replay, result);
+        assert_eq!(fixture.stored_log(overflow_id).await, (1, Some(200.0)));
+        assert_no_invalidation(&mut events);
+
+        let update_args = log_args(food_id, 100.0, SCALING_DAY);
+        let update_id = operation_id(&update_args);
+        assert_eq!(
+            fixture.success("log_food", update_args).await["log"]["nutrition"]["calories"],
+            1e308
+        );
+        let mut events = fixture.hub.subscribe();
+        let result = fixture
+            .call(
+                "update_food_log",
+                json!({"logId": update_id, "quantity": 200.0}),
+            )
+            .await;
+        assert_eq!(
+            assert_tool_error(&result, "internal_error"),
+            NUTRITION_RENDER_ERROR
+        );
+        fixture.assert_meal_invalidation(&mut events);
+        assert_eq!(fixture.stored_log(update_id).await, (1, Some(200.0)));
+
+        let rejected = log_args(food_id, 200.0, "0000-01-02");
+        let rejected_id = operation_id(&rejected);
+        let result = fixture.call("log_food", rejected).await;
+        assert_tool_error(&result, "invalid_arguments");
+        assert_eq!(fixture.stored_log(rejected_id).await, (0, None));
+        let result = fixture
+            .call(
+                "update_food_log",
+                json!({"logId": update_id, "quantity": 0}),
+            )
+            .await;
+        assert_tool_error(&result, "invalid_arguments");
+        assert_eq!(fixture.stored_log(update_id).await, (1, Some(200.0)));
+        assert_no_invalidation(&mut events);
+
+        let result = fixture
+            .call("get_daily_log", json!({"date": SCALING_DAY}))
+            .await;
+        assert_eq!(
+            assert_tool_error(&result, "internal_error"),
+            NUTRITION_RENDER_ERROR
+        );
+        assert_no_invalidation(&mut events);
+
+        for _ in 0..2 {
+            let result = fixture
+                .success("log_food", log_args(food_id, 100.0, SUM_DAY))
+                .await;
+            assert_eq!(result["log"]["nutrition"]["calories"], 1e308);
+        }
+        let mut events = fixture.hub.subscribe();
+        let result = fixture
+            .call("get_daily_log", json!({"date": SUM_DAY}))
+            .await;
+        assert_eq!(
+            assert_tool_error(&result, "internal_error"),
+            NUTRITION_RENDER_ERROR
+        );
+        assert_no_invalidation(&mut events);
+    }
 
     fn extract_json_response(res: axum::response::Response) -> Value {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1898,7 +3122,7 @@ mod tests {
         let create_schema = create_food_input_schema();
         assert_eq!(
             create_schema.pointer("/properties/brand"),
-            Some(&json!({ "type": "string", "maxLength": MAX_BRAND_CHARS }))
+            Some(&json!({ "type": ["string", "null"], "maxLength": MAX_BRAND_CHARS }))
         );
         assert!(
             !create_schema["required"]
@@ -1987,7 +3211,7 @@ mod tests {
             consumed_at: 1_767_398_400_000,
             updated_at: 1_767_398_400_000,
         };
-        let output_with_brand = consumption_output(&consumption_with_brand);
+        let output_with_brand = consumption_output(&consumption_with_brand).unwrap();
         assert_eq!(output_with_brand["brand"], "Soprole");
 
         let consumption_without_brand = Consumption {
@@ -2003,7 +3227,7 @@ mod tests {
             consumed_at: 1_767_398_400_000,
             updated_at: 1_767_398_400_000,
         };
-        let output_without_brand = consumption_output(&consumption_without_brand);
+        let output_without_brand = consumption_output(&consumption_without_brand).unwrap();
         assert!(output_without_brand.get("brand").is_none());
     }
 
@@ -2029,6 +3253,7 @@ mod tests {
                 "fat": 4.0,
                 "brand": format!("  {unique_brand}  ")
             }),
+            &mut false,
         )
         .await
         .unwrap();
@@ -2044,6 +3269,7 @@ mod tests {
                 "source": "personal",
                 "limit": 10
             }),
+            &mut false,
         )
         .await
         .unwrap();
@@ -2066,6 +3292,7 @@ mod tests {
                 "carbs": 60.0,
                 "fat": 7.0
             }),
+            &mut false,
         )
         .await
         .unwrap();
@@ -2083,6 +3310,7 @@ mod tests {
                 "date": "2026-08-10",
                 "time": "09:00"
             }),
+            &mut false,
         )
         .await
         .unwrap();
@@ -2100,14 +3328,21 @@ mod tests {
                 "date": "2026-08-10",
                 "time": "09:05"
             }),
+            &mut false,
         )
         .await
         .unwrap();
         assert!(logged_plain_json["log"].get("brand").is_none());
 
-        let (_, daily_json) = call_tool(&db, 1, "get_daily_log", json!({ "date": "2026-08-10" }))
-            .await
-            .unwrap();
+        let (_, daily_json) = call_tool(
+            &db,
+            1,
+            "get_daily_log",
+            json!({ "date": "2026-08-10" }),
+            &mut false,
+        )
+        .await
+        .unwrap();
         let items = daily_json["items"].as_array().unwrap();
         let branded_item = items
             .iter()
