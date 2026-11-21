@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json, Router,
+    extract::rejection::JsonRejection,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -204,13 +205,24 @@ fn default_weight_limit() -> i64 {
     30
 }
 
+#[derive(Clone, Copy)]
+struct JsonExtractorRejected;
+
 async fn mcp_post_handler(
     Extension(db): Extension<Arc<Database>>,
     Extension(sync_hub): Extension<SyncHub>,
     Extension(user): Extension<CurrentUser>,
     observation: Option<Extension<observation::Observation>>,
-    Json(payload): Json<JsonRpcRequest>,
+    payload: Result<Json<JsonRpcRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let Json(payload) = match payload {
+        Ok(payload) => payload,
+        Err(rejection) => {
+            let mut response = rejection.into_response();
+            response.extensions_mut().insert(JsonExtractorRejected);
+            return response;
+        }
+    };
     let observation = observation.as_ref().map(|Extension(value)| value);
     if let Some(observation) = observation {
         observation.request(
@@ -775,10 +787,11 @@ fn tool_success(
             "isError": false
         }
     });
+    let response = Json(&envelope).into_response();
     if let Some(observation) = observation {
-        observation.result(&envelope["result"], "none");
+        observation.result(&response, &envelope["result"], "none");
     }
-    Json(envelope).into_response()
+    response
 }
 
 fn tool_failure(
@@ -808,10 +821,11 @@ fn tool_failure(
             "isError": true
         }
     });
+    let response = Json(&envelope).into_response();
     if let Some(observation) = observation {
-        observation.result(&envelope["result"], code);
+        observation.result(&response, &envelope["result"], code);
     }
-    Json(envelope).into_response()
+    response
 }
 
 fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> axum::response::Response {
