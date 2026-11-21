@@ -471,11 +471,19 @@ mod tests {
         })
     }
 
+    const FIXTURE_USER_ID: i32 = 987654321;
+
     fn handler_router() -> Router {
-        super::super::mcp_routes()
+        handler_router_with_admission(super::super::AdmissionController::new(20))
+    }
+
+    fn handler_router_with_admission(admission: super::super::AdmissionController) -> Router {
+        super::super::mcp_routes(admission)
             .layer(Extension(lazy_database()))
             .layer(Extension(SyncHub::default()))
-            .layer(Extension(CurrentUser { id: 987654321 }))
+            .layer(Extension(CurrentUser {
+                id: FIXTURE_USER_ID,
+            }))
     }
 
     // Only the query result is synthetic. Use the actual final-result helper.
@@ -504,8 +512,11 @@ mod tests {
     }
 
     fn auth_router() -> Router {
-        crate::mcp_authenticated(OidcConfig::test_cached_subject_config().mcp_config())
-            .layer(Extension(lazy_database()))
+        crate::mcp_authenticated(
+            OidcConfig::test_cached_subject_config().mcp_config(),
+            super::super::AdmissionController::new(20),
+        )
+        .layer(Extension(lazy_database()))
     }
 
     fn unauthenticated_request() -> HttpRequest<Body> {
@@ -545,6 +556,107 @@ mod tests {
                 .all(|field| line.split_whitespace().any(|token| token == *field))),
             "missing event with {fields:?} in {output}"
         );
+    }
+
+    #[tokio::test]
+    async fn handler_overload_uses_existing_tool_error_budget_without_logging_payloads() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        async {
+            let observer = Arc::new(Observer::new());
+            let admission = super::super::AdmissionController::new(20);
+            let app = observe_with(handler_router_with_admission(admission.clone()), observer.clone());
+            let body = r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"log_food","arguments":{"private":"ARG_SECRET"}}}"#;
+
+            let invalid = app.clone().oneshot(request(body)).await.unwrap();
+            assert_eq!(invalid.status(), StatusCode::OK);
+            let held: Vec<_> = (0..super::super::MCP_MAX_ENROLLED_PER_USER)
+                .map(|_| admission.enroll(FIXTURE_USER_ID).unwrap())
+                .collect();
+            let class = EventClass::ToolError;
+            for _ in 0..class.limit() {
+                let response = app.clone().oneshot(request(body)).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let result: Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(result["result"]["structuredContent"]["error"]["code"], "server_busy");
+            }
+            drop(held);
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!(budget.admitted[class as usize], class.limit());
+            assert_eq!(budget.suppressed[class as usize], 1);
+        }.with_subscriber(subscriber).await;
+
+        let output = capture.text();
+        assert_eq!(
+            output.matches("error_class=\"server_busy\"").count(),
+            usize::from(EventClass::ToolError.limit() - 1)
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "outcome=\"tool_error\"",
+                "error_class=\"server_busy\"",
+                "method=\"tools_call\"",
+                "tool=\"log_food\"",
+                "http_status=200",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "outcome=\"tool_error\"",
+                "error_class=\"invalid_arguments\"",
+            ],
+        );
+        assert!(!output.contains("event=\"response_prepared\""));
+        for secret in [
+            "TOKEN_SECRET",
+            "RPC_SECRET",
+            "ARG_SECRET",
+            "URI_SECRET",
+            "HEADER_SECRET",
+            "987654321",
+            "Server busy. Retry shortly.",
+            "structuredContent",
+        ] {
+            assert!(!output.contains(secret));
+        }
+        let allowed_fields = [
+            "event",
+            "correlation",
+            "source_sha",
+            "build_run",
+            "duration_ms",
+            "http_method",
+            "http_status",
+            "response_bytes",
+            "method",
+            "tool",
+            "outcome",
+            "error_class",
+            "content_blocks",
+            "text_blocks",
+            "structured",
+            "collection_count",
+            "first_text_json",
+        ];
+        for event in output
+            .lines()
+            .filter(|line| line.contains("error_class=\"server_busy\""))
+        {
+            for (field, _) in event
+                .split_whitespace()
+                .filter_map(|token| token.split_once('='))
+            {
+                assert!(allowed_fields.contains(&field), "unexpected field {field}");
+            }
+        }
     }
 
     #[tokio::test]

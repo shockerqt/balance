@@ -1,5 +1,6 @@
 use std::{
-    sync::{Arc, RwLock},
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
 
@@ -9,6 +10,52 @@ use serde::{Deserialize, de::DeserializeOwned};
 use tokio::sync::OnceCell;
 
 const MAX_PROVIDER_BODY: usize = 64 * 1024;
+const IDENTITY_CACHE_CAPACITY: usize = 4096;
+const IDENTITY_CACHE_TTL: Duration = Duration::from_secs(60);
+
+type IdentityKey = (String, String);
+
+#[derive(Default)]
+struct IdentityCache {
+    entries: HashMap<IdentityKey, (i32, Instant)>,
+    insertion_order: VecDeque<IdentityKey>,
+}
+
+impl IdentityCache {
+    fn remove_oldest(&mut self) {
+        let key = self.insertion_order.pop_front().unwrap();
+        self.entries.remove(&key);
+    }
+
+    fn reclaim_expired(&mut self, now: Instant) {
+        // All entries have the same TTL, so expiry follows insertion order.
+        while self
+            .insertion_order
+            .front()
+            .is_some_and(|key| self.entries[key].1 <= now)
+        {
+            self.remove_oldest();
+        }
+    }
+
+    fn get(&mut self, key: &IdentityKey, now: Instant) -> Option<i32> {
+        self.reclaim_expired(now);
+        self.entries.get(key).map(|&(user_id, _)| user_id)
+    }
+
+    fn insert(&mut self, key: IdentityKey, user_id: i32, now: Instant) {
+        self.reclaim_expired(now);
+        if self.entries.contains_key(&key) {
+            return;
+        }
+        if self.entries.len() == IDENTITY_CACHE_CAPACITY {
+            self.remove_oldest();
+        }
+        self.insertion_order.push_back(key.clone());
+        self.entries
+            .insert(key, (user_id, now + IDENTITY_CACHE_TTL));
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IdentityMode {
@@ -27,6 +74,7 @@ pub struct OidcConfig {
     challenge: axum::http::HeaderValue,
     discovery: Arc<OnceCell<Discovery>>,
     jwks_cache: Arc<RwLock<Option<CachedJwks>>>,
+    identity_cache: Arc<Mutex<IdentityCache>>,
 }
 
 struct CachedJwks {
@@ -223,6 +271,7 @@ impl OidcConfig {
             challenge,
             discovery: Arc::new(OnceCell::new()),
             jwks_cache: Arc::new(RwLock::new(None)),
+            identity_cache: Arc::default(),
         })
     }
 
@@ -240,6 +289,18 @@ impl OidcConfig {
         config
     }
 
+    pub(super) fn cached_identity(&self, issuer: &str, subject: &str) -> Option<i32> {
+        let key = (issuer.to_owned(), subject.to_owned());
+        let mut cache = self.identity_cache.lock().unwrap();
+        cache.get(&key, Instant::now())
+    }
+
+    pub(super) fn cache_identity(&self, issuer: &str, subject: &str, user_id: i32) {
+        let key = (issuer.to_owned(), subject.to_owned());
+        let mut cache = self.identity_cache.lock().unwrap();
+        cache.insert(key, user_id, Instant::now());
+    }
+
     pub fn challenge(&self) -> &axum::http::HeaderValue {
         &self.challenge
     }
@@ -252,14 +313,57 @@ impl OidcConfig {
 
     #[cfg(test)]
     pub(crate) fn test_cached_subject_config() -> Self {
-        let config = Self::test_subject_config("https://issuer.example.invalid");
-        *config.jwks_cache.write().unwrap() = Some(CachedJwks {
+        Self::test_subject_config("https://issuer.example.invalid").with_test_jwks()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_cached_legacy_config() -> Self {
+        Self::new(
+            "https://issuer.example.invalid".into(),
+            "unused".into(),
+            vec!["legacy-api".into()],
+            IdentityMode::LegacyEmail,
+            None,
+        )
+        .unwrap()
+        .with_test_jwks()
+    }
+
+    #[cfg(test)]
+    fn with_test_jwks(self) -> Self {
+        *self.jwks_cache.write().unwrap() = Some(CachedJwks {
             value: Arc::new(
                 serde_json::from_str(include_str!("fixtures/PUBLIC-TEST-ONLY-jwks.json")).unwrap(),
             ),
             fetched_at: Instant::now(),
         });
-        config
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_access_token(&self, subject: &str, exp: i64) -> String {
+        Self::test_signed_claims(&serde_json::json!({
+            "sub": subject,
+            "iss": self.issuer(),
+            "aud": [format!("{}/userinfo", self.issuer()), self.resource().unwrap()],
+            "exp": exp,
+        }))
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_signed_claims(claims: &serde_json::Value) -> String {
+        let mut header = jsonwebtoken::Header::new(Algorithm::RS256);
+        header.typ = Some("at+jwt".into());
+        header.kid = Some("public-test-only".into());
+        jsonwebtoken::encode(
+            &header,
+            claims,
+            &jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
+                "fixtures/PUBLIC-TEST-ONLY-active-private.pem"
+            ))
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     #[cfg(test)]
@@ -430,6 +534,66 @@ mod tests {
         let url = format!("http://{}/", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (url, task)
+    }
+
+    #[test]
+    fn identity_cache_expiry_and_eviction_follow_insertion_order() {
+        let mut cache = IdentityCache::default();
+        let start = Instant::now();
+        let key = |issuer: &str, subject: &str| (issuer.to_owned(), subject.to_owned());
+        let expired = key("issuer-a", "subject");
+        let oldest_live = key("issuer-b", "subject");
+        cache.insert(expired.clone(), 1, start);
+        let later = start + Duration::from_secs(30);
+        cache.insert(oldest_live.clone(), 2, later);
+        for index in 2..IDENTITY_CACHE_CAPACITY {
+            cache.insert(key("issuer-b", &index.to_string()), 3, later);
+        }
+
+        assert_eq!(cache.get(&expired, later), Some(1));
+        assert_eq!(cache.get(&oldest_live, later), Some(2));
+        // A duplicate cold lookup can race with an insertion. It keeps the existing TTL.
+        cache.insert(expired.clone(), 4, later);
+        let expiry = start + IDENTITY_CACHE_TTL;
+        cache.insert(key("issuer-c", "first"), 5, expiry);
+        assert_eq!(cache.get(&expired, expiry), None);
+        assert_eq!(cache.get(&oldest_live, expiry), Some(2));
+        assert_eq!(cache.entries.len(), IDENTITY_CACHE_CAPACITY);
+
+        cache.insert(key("issuer-c", "second"), 6, expiry);
+        assert_eq!(cache.get(&oldest_live, expiry), None);
+        assert_eq!(cache.get(&key("issuer-b", "2"), expiry), Some(3));
+        assert_eq!(cache.entries.len(), IDENTITY_CACHE_CAPACITY);
+        assert_eq!(cache.insertion_order.len(), IDENTITY_CACHE_CAPACITY);
+    }
+
+    #[test]
+    fn identity_cache_handles_concurrent_access_through_config_clones() {
+        let config = OidcConfig::test_cached_subject_config();
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for user_id in 1..=8 {
+                let config = if user_id % 2 == 0 {
+                    config.mcp_config()
+                } else {
+                    config.clone()
+                };
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    for index in 0..128 {
+                        let subject = format!("{user_id}-{index}");
+                        config.cache_identity(config.issuer(), &subject, user_id);
+                        assert_eq!(
+                            config.cached_identity(config.issuer(), &subject),
+                            Some(user_id)
+                        );
+                    }
+                });
+            }
+        });
+        assert_eq!(config.identity_cache.lock().unwrap().entries.len(), 1024);
+        assert_eq!(config.cached_identity(config.issuer(), "8-127"), Some(8));
     }
 
     fn fixture() -> serde_json::Value {

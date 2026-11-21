@@ -6,7 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use config::openapi::ApiDoc;
-use connectors::{db::Database, gemini::GeminiClient};
+use connectors::{
+    db::{Database, PoolSettings},
+    gemini::GeminiClient,
+};
 use modules::{
     ai::routes::ai_routes,
     auth::{
@@ -15,7 +18,10 @@ use modules::{
         routes::auth_routes,
     },
     imports::import_routes,
-    mcp::{PROTOCOL_VERSION_HEADER, mcp_metadata_routes, mcp_post, observation, supports_version},
+    mcp::{
+        AdmissionController, PROTOCOL_VERSION_HEADER, mcp_metadata_routes, mcp_post, observation,
+        supports_version,
+    },
     sync::routes::{
         WsAllowedOrigins, application_sync_routes, public_template_routes, sync_routes,
     },
@@ -46,7 +52,8 @@ async fn main() -> anyhow::Result<()> {
     let oidc = OidcConfig::from_env().expect("Failed to configure OIDC");
     let mcp_origins = McpAllowedOrigins::from_env()?;
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let db = Database::new(&database_url)
+    let pool_settings = PoolSettings::parse(std::env::var_os("DB_MAX_CONNECTIONS").as_deref())?;
+    let db = Database::new(&database_url, pool_settings)
         .await
         .expect("Failed to connect to the database");
 
@@ -60,14 +67,19 @@ async fn main() -> anyhow::Result<()> {
     } else {
         sync_routes().route_layer(middleware::from_fn_with_state(oidc.clone(), auth))
     };
-    let app = application_router(oidc, mcp_origins, sync)
-        .layer(
-            ServiceBuilder::new()
-                .layer(Extension(shared_db))
-                .layer(Extension(gemini_client))
-                .layer(Extension(sync_hub)),
-        )
-        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
+    let app = application_router(
+        oidc,
+        mcp_origins,
+        sync,
+        AdmissionController::new(shared_db.user.pool.options().get_max_connections()),
+    )
+    .layer(
+        ServiceBuilder::new()
+            .layer(Extension(shared_db))
+            .layer(Extension(gemini_client))
+            .layer(Extension(sync_hub)),
+    )
+    .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
     let bind_addr = server_bind_addr_from_env()?;
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -154,10 +166,10 @@ async fn mcp_guard(
     next.run(request).await
 }
 
-fn mcp_authenticated(oidc: OidcConfig) -> Router {
+fn mcp_authenticated(oidc: OidcConfig, admission: AdmissionController) -> Router {
     Router::new().route(
         "/mcp",
-        mcp_post().route_layer(middleware::from_fn_with_state(oidc, auth)),
+        mcp_post(admission).route_layer(middleware::from_fn_with_state(oidc, auth)),
     )
 }
 
@@ -176,7 +188,12 @@ fn mcp_transport(observed: Router, origins: McpAllowedOrigins) -> Router {
         .route_layer(middleware::from_fn_with_state(origins, mcp_guard))
 }
 
-fn application_router(oidc: OidcConfig, mcp_origins: McpAllowedOrigins, sync: Router) -> Router {
+fn application_router(
+    oidc: OidcConfig,
+    mcp_origins: McpAllowedOrigins,
+    sync: Router,
+    admission: AdmissionController,
+) -> Router {
     let mcp_oidc = oidc.mcp_config();
     Router::new()
         .route("/health", axum::routing::get(health))
@@ -196,7 +213,7 @@ fn application_router(oidc: OidcConfig, mcp_origins: McpAllowedOrigins, sync: Ro
         .nest_service("/mockups", ServeDir::new("static/mockups"))
         .layer(CorsLayer::permissive())
         .merge(mcp_transport(
-            observation::observe_routes(mcp_authenticated(mcp_oidc)),
+            observation::observe_routes(mcp_authenticated(mcp_oidc, admission)),
             mcp_origins,
         ))
 }
@@ -222,13 +239,17 @@ mod readiness_tests {
         let Ok(url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
             return;
         };
-        let db = Arc::new(Database::new(&url).await.unwrap());
+        let db = Arc::new(
+            Database::new(&url, PoolSettings::parse(None).unwrap())
+                .await
+                .unwrap(),
+        );
         assert_eq!(
             health(axum::Extension(db.clone())).await,
             axum::http::StatusCode::NO_CONTENT
         );
         let mut held = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..db.user.pool.options().get_max_connections() {
             held.push(db.user.pool.acquire().await.unwrap());
         }
         let start = std::time::Instant::now();
@@ -269,6 +290,7 @@ mod mcp_transport_tests {
             OidcConfig::test_cached_subject_config(),
             origins,
             Router::new(),
+            AdmissionController::new(db.user.pool.options().get_max_connections()),
         )
         .layer(Extension(db))
     }

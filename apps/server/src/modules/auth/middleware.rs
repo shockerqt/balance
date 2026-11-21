@@ -113,7 +113,7 @@ pub async fn authenticate_token(
             challenge: None,
         }
     })?;
-    let user = if oidc.identity_mode() == IdentityMode::IssuerSubject {
+    let user_id = if oidc.identity_mode() == IdentityMode::IssuerSubject {
         resolve_subject_user(oidc, db, token, &claims)
             .await
             .map_err(|_| {
@@ -126,7 +126,7 @@ pub async fn authenticate_token(
             .as_ref()
             .filter(|email| !email.is_empty())
             .ok_or(AuthError::new(StatusCode::UNAUTHORIZED))?;
-        match db.user.get_by_email(email).await {
+        let user = match db.user.get_by_email(email).await {
             Ok(Some(user)) => user,
             Ok(None) => db
                 .user
@@ -146,10 +146,11 @@ pub async fn authenticate_token(
                 tracing::error!(?error, "finding OIDC user");
                 return Err(AuthError::new(StatusCode::INTERNAL_SERVER_ERROR));
             }
-        }
+        };
+        user.id
     };
 
-    Ok((CurrentUser { id: user.id }, claims.exp))
+    Ok((CurrentUser { id: user_id }, claims.exp))
 }
 
 async fn resolve_subject_user(
@@ -157,25 +158,31 @@ async fn resolve_subject_user(
     db: &Database,
     token: &str,
     claims: &crate::modules::auth::oidc::OidcClaims,
-) -> anyhow::Result<crate::connectors::user::User> {
-    if let Some(user) = db.user.get_by_identity(&claims.iss, &claims.sub).await? {
-        return Ok(user);
+) -> anyhow::Result<i32> {
+    if let Some(user_id) = oidc.cached_identity(&claims.iss, &claims.sub) {
+        return Ok(user_id);
     }
-    let profile = oidc.userinfo(token, claims).await?;
-    Ok(db
-        .user
-        .provision_identity(
-            &claims.iss,
-            &claims.sub,
-            &NewUser {
-                email: profile.email,
-                name: profile.name,
-                family_name: profile.family_name,
-                given_name: profile.given_name,
-                picture: profile.picture,
-            },
-        )
-        .await?)
+    let user = match db.user.get_by_identity(&claims.iss, &claims.sub).await? {
+        Some(user) => user,
+        None => {
+            let profile = oidc.userinfo(token, claims).await?;
+            db.user
+                .provision_identity(
+                    &claims.iss,
+                    &claims.sub,
+                    &NewUser {
+                        email: profile.email,
+                        name: profile.name,
+                        family_name: profile.family_name,
+                        given_name: profile.given_name,
+                        picture: profile.picture,
+                    },
+                )
+                .await?
+        }
+    };
+    oidc.cache_identity(&claims.iss, &claims.sub, user.id);
+    Ok(user.id)
 }
 
 #[cfg(test)]
@@ -222,7 +229,7 @@ mod tests {
         let resolved = resolve_subject_user(&oidc, &db, "not-a-network-token", &claims)
             .await
             .unwrap();
-        assert_eq!(resolved.id, user.id);
+        assert_eq!(resolved, user.id);
         sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(user.id)
             .execute(&db.user.pool)
@@ -231,82 +238,150 @@ mod tests {
         crate::connectors::user::cleanup_identity_test_database(&db, &schema).await;
     }
     #[tokio::test]
-    async fn rejected_userinfo_does_not_provision_rows() {
+    async fn rejected_userinfo_and_rolled_back_provisioning_allow_retry() {
+        use axum::{Router, body::Body, http::Request};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        use tower::ServiceExt;
+
         let Some((db, schema)) = crate::connectors::user::isolated_identity_test_database().await
         else {
             return;
         };
-        let subject = uuid::Uuid::new_v4().to_string();
-        let email = format!("invalid-{subject}@example.invalid");
-        let response =
-            serde_json::json!({"sub":"wrong-subject","email":email,"email_verified":true})
-                .to_string();
+        let db = Arc::new(db);
+        let oidc = OidcConfig::test_cached_subject_config();
+        let subject = "provisioning-retry";
+        let email = "provisioning-retry@example.invalid";
+        let valid_profile = Arc::new(AtomicBool::new(false));
+        let profile_calls = Arc::new(AtomicUsize::new(0));
+        let valid = valid_profile.clone();
+        let calls = profile_calls.clone();
+        let provider = Router::new().route("/", axum::routing::get(move || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            let reported_subject = if valid.load(Ordering::Relaxed) { subject } else { "wrong-subject" };
+            async move { axum::Json(serde_json::json!({"sub":reported_subject,"email":email,"email_verified":true})) }
+        }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
-        let app = axum::Router::new().route(
-            "/",
-            axum::routing::get(move || {
-                let body = response.clone();
-                async move { body }
-            }),
-        );
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+        oidc.test_userinfo_endpoint(format!("http://{}/", listener.local_addr().unwrap()));
+        let provider = tokio::spawn(async move {
+            axum::serve(listener, provider).await.unwrap();
         });
-        let issuer = "https://userinfo.example.invalid";
-        let oidc = OidcConfig::test_subject_config(issuer);
-        oidc.test_userinfo_endpoint(endpoint);
-        let claims = OidcClaims {
-            sub: subject.clone(),
-            iss: issuer.into(),
-            exp: 4102444800,
-            email: None,
-            name: None,
-            given_name: None,
-            family_name: None,
-            picture: None,
+
+        let app = Router::new()
+            .route(
+                "/",
+                axum::routing::get(|Extension(user): Extension<CurrentUser>| async move {
+                    user.id.to_string()
+                }),
+            )
+            .route_layer(axum::middleware::from_fn_with_state(oidc.clone(), auth))
+            .layer(Extension(db.clone()));
+        let token = oidc.test_access_token(subject, chrono::Utc::now().timestamp() + 120);
+        let request = || {
+            Request::get("/")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
         };
-        assert!(
-            resolve_subject_user(&oidc, &db, "synthetic-bearer", &claims)
-                .await
-                .is_err()
+        sqlx::query(
+            "ALTER TABLE oidc_user_identities ADD CONSTRAINT reject_provision CHECK (false)",
+        )
+        .execute(&db.user.pool)
+        .await
+        .unwrap();
+
+        for expected_profile_calls in 1..=2 {
+            let response = app.clone().oneshot(request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                response.headers()[axum::http::header::WWW_AUTHENTICATE],
+                *oidc.challenge()
+            );
+            assert_eq!(
+                profile_calls.load(Ordering::Relaxed),
+                expected_profile_calls
+            );
+            assert!(db.user.get_by_email(email).await.unwrap().is_none());
+            assert!(
+                db.user
+                    .get_by_identity(oidc.issuer(), subject)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(oidc.cached_identity(oidc.issuer(), subject).is_none());
+            valid_profile.store(true, Ordering::Relaxed);
+        }
+
+        sqlx::query("ALTER TABLE oidc_user_identities DROP CONSTRAINT reject_provision")
+            .execute(&db.user.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            app.oneshot(request()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(profile_calls.load(Ordering::Relaxed), 3);
+        let user = db
+            .user
+            .get_by_identity(oidc.issuer(), subject)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db.user.get_by_email(email).await.unwrap().unwrap().id,
+            user.id
+        );
+        assert_eq!(oidc.cached_identity(oidc.issuer(), subject), Some(user.id));
+
+        provider.abort();
+        crate::connectors::user::cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn legacy_auth_resolves_and_provisions_by_email() {
+        let Some((db, schema)) = crate::connectors::user::isolated_identity_test_database().await
+        else {
+            return;
+        };
+        let oidc = OidcConfig::test_cached_legacy_config();
+        let email = "legacy-auth@example.invalid";
+        let exp = chrono::Utc::now().timestamp() + 120;
+        let token = |subject: &str| {
+            OidcConfig::test_signed_claims(&serde_json::json!({
+                "sub": subject,
+                "iss": oidc.issuer(),
+                "aud": "legacy-api",
+                "email": email,
+                "exp": exp,
+            }))
+        };
+
+        let (first, first_exp) = authenticate_token(&oidc, &db, &token("first"))
+            .await
+            .ok()
+            .unwrap();
+        let (second, _) = authenticate_token(&oidc, &db, &token("second"))
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(first_exp, exp as usize);
+        assert_eq!(first.id, second.id);
+        assert_eq!(
+            first.id,
+            db.user.get_by_email(email).await.unwrap().unwrap().id
         );
         assert!(
             db.user
-                .get_by_identity(issuer, &subject)
+                .get_by_identity(oidc.issuer(), "first")
                 .await
                 .unwrap()
                 .is_none()
         );
-        assert!(db.user.get_by_email(&email).await.unwrap().is_none());
-        task.abort();
-        assert!(
-            resolve_subject_user(&oidc, &db, "synthetic-bearer", &claims)
-                .await
-                .is_err()
-        );
-        assert!(db.user.get_by_email(&email).await.unwrap().is_none());
+        assert!(oidc.cached_identity(oidc.issuer(), "first").is_none());
         crate::connectors::user::cleanup_identity_test_database(&db, &schema).await;
-    }
-    fn signed_resource_token(subject: &str, resource: &str) -> String {
-        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-        header.typ = Some("at+jwt".into());
-        header.kid = Some("public-test-only".into());
-        jsonwebtoken::encode(
-            &header,
-            &serde_json::json!({
-                "sub":subject,"iss":"https://issuer.example.invalid",
-                // Eri openid access tokens also target UserInfo; that extra audience
-                // must never substitute for the configured route's resource.
-                "aud":["https://issuer.example.invalid/userinfo",resource],
-                "exp":chrono::Utc::now().timestamp()+120
-            }),
-            &jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
-                "fixtures/PUBLIC-TEST-ONLY-active-private.pem"
-            ))
-            .unwrap(),
-        )
-        .unwrap()
     }
 
     #[tokio::test]
@@ -354,13 +429,13 @@ mod tests {
                     .route_layer(axum::middleware::from_fn_with_state(api.clone(), auth)),
             )
             .merge(
-                crate::modules::mcp::mcp_routes()
+                crate::modules::mcp::mcp_routes(crate::modules::mcp::AdmissionController::new(20))
                     .route_layer(axum::middleware::from_fn_with_state(mcp.clone(), auth)),
             )
             .layer(Extension(db.clone()))
             .layer(Extension(crate::modules::sync::hub::SyncHub::default()));
-        let api_token = signed_resource_token(subject, api.resource().unwrap());
-        let mcp_token = signed_resource_token(subject, mcp.resource().unwrap());
+        let api_token = api.test_access_token(subject, chrono::Utc::now().timestamp() + 120);
+        let mcp_token = mcp.test_access_token(subject, chrono::Utc::now().timestamp() + 120);
         for (path, method, token, expected, challenge) in [
             (
                 "/me",
@@ -445,13 +520,59 @@ mod tests {
                 );
             }
         }
+        let mut held = Vec::new();
+        for _ in 0..db.user.pool.options().get_max_connections() {
+            held.push(db.user.pool.acquire().await.unwrap());
+        }
+        let fresh_exp = chrono::Utc::now().timestamp() + 180;
+        let fresh_mcp_token = mcp.test_access_token(subject, fresh_exp);
+        let expired_mcp_token = mcp.test_access_token(subject, chrono::Utc::now().timestamp() - 1);
+        let mut invalid_signature = fresh_mcp_token.clone();
+        let signature_start = invalid_signature.rfind('.').unwrap() + 1;
+        let first = if invalid_signature.as_bytes()[signature_start] == b'A' {
+            "B"
+        } else {
+            "A"
+        };
+        invalid_signature.replace_range(signature_start..signature_start + 1, first);
+        for (token, status) in [
+            (&fresh_mcp_token, StatusCode::OK),
+            (&invalid_signature, StatusCode::UNAUTHORIZED),
+            (&expired_mcp_token, StatusCode::UNAUTHORIZED),
+            (&api_token, StatusCode::UNAUTHORIZED),
+        ] {
+            let req = Request::post("/mcp")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+                .unwrap();
+            let response =
+                tokio::time::timeout(std::time::Duration::from_secs(1), app.clone().oneshot(req))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(response.status(), status);
+            if status == StatusCode::UNAUTHORIZED {
+                assert_eq!(
+                    response.headers()[axum::http::header::WWW_AUTHENTICATE],
+                    *mcp.challenge()
+                );
+            }
+        }
+        let (_, exp) = authenticate_token(&mcp, &db, &fresh_mcp_token)
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(exp, fresh_exp as usize);
+        drop(held);
         assert_eq!(
             calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
             "persisted associations must not call UserInfo"
         );
         for (path, method, config) in [("/me", "GET", &api), ("/mcp", "POST", &mcp)] {
-            let token = signed_resource_token("unknown-profile", config.resource().unwrap());
+            let token =
+                config.test_access_token("unknown-profile", chrono::Utc::now().timestamp() + 120);
             let response = app
                 .clone()
                 .oneshot(
