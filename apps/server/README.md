@@ -46,3 +46,26 @@ cargo sqlx prepare --workspace -- --all-targets
 
 See `docs/database-migrations.md` before adding a migration or guiding a
 production migration. Application startup intentionally never runs migrations.
+
+## Database pool and MCP limits
+
+`DB_MAX_CONNECTIONS` sets the maximum number of PostgreSQL connections per server
+process. It defaults to 20 when unset and accepts ASCII decimal integers from 1
+through 50. The shared pool sets its minimum to two connections (one when the
+maximum is one) and allows five seconds to acquire a connection. Readiness
+checks the same pool with a one-second deadline.
+
+MCP admits up to six tool calls per user and up to the pool maximum minus two
+globally, with a floor of one and a ceiling of 14. At the default pool size, the
+14 execution slots leave six connections outside that budget. A one-connection
+pool has no concurrent headroom. Cold authentication, REST, sync, and readiness
+also use the shared pool. Running and waiting tool calls count toward enrollment
+limits of 24 per user and 128 per process. A call has ten seconds to acquire both
+execution permits. On overflow or admission timeout, the tool returns
+`server_busy`.
+
+Strict OIDC authentication verifies each token for its route and shares a
+process-local cache of up to 4,096 positive issuer/subject mappings across the
+API, MCP, and application WebSocket routes. A changed or deleted mapping may
+still be served for up to 60 seconds after caching. An API restart clears the
+cache.

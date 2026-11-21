@@ -1,4 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::{
+    sync::{OwnedSemaphorePermit, Semaphore},
+    time::{Instant, timeout_at},
+};
 
 use axum::{
     Extension, Json, Router,
@@ -41,13 +49,123 @@ const AUTHORIZATION_SERVER: &str = "https://auth.shocker.cl/realms/balance";
 const TIMEZONE: &str = "America/Santiago";
 const SERVER_INSTRUCTIONS: &str = "Usa get_daily_log para consultar consumos y search_foods exclusivamente para el catálogo. Nunca uses search_foods para consultar consumos, historial o fechas. Usa get_weight_history, set_weight y delete_weight_log únicamente para peso corporal. Si el seguimiento de peso está desactivado, indica que debe habilitarse en Configuración de la app. Para varios días de comidas llama get_daily_log una vez por fecha exacta; una consulta de peso puede usar un rango. Omite date únicamente cuando el usuario dice hoy; hoy se interpreta en America/Santiago.";
 
-pub fn mcp_post() -> MethodRouter {
-    post(mcp_post_handler)
+const MCP_ADMISSION_TIMEOUT: Duration = Duration::from_secs(10);
+const MCP_MAX_ENROLLED: usize = 128;
+const MCP_MAX_ENROLLED_PER_USER: usize = 24;
+const MCP_MAX_RUNNING_PER_USER: usize = 6;
+
+#[derive(Clone)]
+pub struct AdmissionController {
+    global: Arc<Semaphore>,
+    enrolled: Arc<Mutex<EnrollmentCounts>>,
+}
+
+#[derive(Default)]
+struct EnrollmentCounts {
+    total: usize,
+    users: HashMap<i32, UserEnrollment>,
+}
+
+struct UserEnrollment {
+    count: usize,
+    permits: Arc<Semaphore>,
+}
+
+struct Enrollment {
+    counts: Arc<Mutex<EnrollmentCounts>>,
+    user_id: i32,
+}
+
+impl Drop for Enrollment {
+    fn drop(&mut self) {
+        let mut counts = self.counts.lock().unwrap();
+        counts.total -= 1;
+        let user = counts.users.get_mut(&self.user_id).unwrap();
+        user.count -= 1;
+        if user.count == 0 {
+            counts.users.remove(&self.user_id);
+        }
+    }
+}
+
+struct Admission {
+    // Fields drop in order. Release permits before retiring the user entry.
+    _global: Option<OwnedSemaphorePermit>,
+    _user: Option<OwnedSemaphorePermit>,
+    _enrollment: Enrollment,
+}
+
+impl AdmissionController {
+    pub fn new(pool_max: u32) -> Self {
+        let global_limit = pool_max.saturating_sub(2).clamp(1, 14) as usize;
+        Self {
+            global: Arc::new(Semaphore::new(global_limit)),
+            enrolled: Arc::new(Mutex::new(EnrollmentCounts::default())),
+        }
+    }
+
+    fn enroll(&self, user_id: i32) -> Option<(Enrollment, Arc<Semaphore>)> {
+        let mut counts = self.enrolled.lock().unwrap();
+        if counts.total >= MCP_MAX_ENROLLED
+            || counts
+                .users
+                .get(&user_id)
+                .is_some_and(|user| user.count >= MCP_MAX_ENROLLED_PER_USER)
+        {
+            return None;
+        }
+        counts.total += 1;
+        let user = counts
+            .users
+            .entry(user_id)
+            .or_insert_with(|| UserEnrollment {
+                count: 0,
+                permits: Arc::new(Semaphore::new(MCP_MAX_RUNNING_PER_USER)),
+            });
+        user.count += 1;
+        let enrollment = Enrollment {
+            counts: self.enrolled.clone(),
+            user_id,
+        };
+        Some((enrollment, user.permits.clone()))
+    }
+
+    async fn admit(&self, user_id: i32) -> Option<Admission> {
+        let deadline = Instant::now() + MCP_ADMISSION_TIMEOUT;
+        let (enrollment, user) = self.enroll(user_id)?;
+        let mut admission = Admission {
+            _global: None,
+            _user: None,
+            _enrollment: enrollment,
+        };
+        timeout_at(deadline, async {
+            admission._user = Some(
+                user.acquire_owned()
+                    .await
+                    .expect("user semaphore stays open"),
+            );
+            admission._global = Some(
+                self.global
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .expect("global semaphore stays open"),
+            );
+        })
+        .await
+        .ok()?;
+        // The timeout polls the permits before its timer when both are ready.
+        (Instant::now() < deadline).then_some(admission)
+    }
+}
+
+pub fn mcp_post(admission: AdmissionController) -> MethodRouter {
+    post(mcp_post_handler).layer(Extension(admission))
 }
 
 #[cfg(test)]
-pub fn mcp_routes() -> Router {
-    Router::new().route("/mcp", mcp_post())
+pub fn mcp_routes(admission: AdmissionController) -> Router {
+    Router::new().route("/mcp", mcp_post(admission))
 }
 
 pub fn mcp_metadata_routes(api: &OidcConfig, mcp: &OidcConfig) -> Router {
@@ -328,6 +446,7 @@ async fn mcp_post_handler(
     Extension(db): Extension<Arc<Database>>,
     Extension(sync_hub): Extension<SyncHub>,
     Extension(user): Extension<CurrentUser>,
+    Extension(admission): Extension<AdmissionController>,
     observation: Option<Extension<observation::Observation>>,
     #[cfg(test)] dispatch_count: Option<Extension<DispatchCount>>,
     payload: Result<Json<Box<RawValue>>, JsonRejection>,
@@ -481,6 +600,14 @@ async fn mcp_post_handler(
                 return tool_failure(
                     id,
                     AppError::BadRequest("Invalid tool arguments".into()),
+                    observation,
+                );
+            };
+            let Some(_admitted) = admission.admit(user.id).await else {
+                return tool_error(
+                    id,
+                    "server_busy",
+                    "Server busy. Retry shortly.",
                     observation,
                 );
             };
@@ -1163,6 +1290,15 @@ fn tool_failure(
             ("internal_error", "Internal operation failed".into())
         }
     };
+    tool_error(id, code, &message, observation)
+}
+
+fn tool_error(
+    id: impl Serialize,
+    code: &'static str,
+    message: &str,
+    observation: Option<&observation::Observation>,
+) -> Response {
     let result = json!({
         "content": [{ "type": "text", "text": message }],
         "structuredContent": { "error": { "code": code, "message": message } },
@@ -1717,10 +1853,12 @@ mod tests {
     use tower::ServiceExt;
 
     fn handler_router(db: Arc<Database>, hub: SyncHub, user_id: i32) -> Router {
-        mcp_routes()
-            .layer(Extension(db))
-            .layer(Extension(hub))
-            .layer(Extension(CurrentUser { id: user_id }))
+        mcp_routes(AdmissionController::new(
+            db.user.pool.options().get_max_connections(),
+        ))
+        .layer(Extension(db))
+        .layer(Extension(hub))
+        .layer(Extension(CurrentUser { id: user_id }))
     }
 
     fn protocol_fixture() -> (Router, DispatchCount) {
@@ -1786,6 +1924,424 @@ mod tests {
         fn calls(&self) -> usize {
             self.0.load(std::sync::atomic::Ordering::Relaxed)
         }
+    }
+
+    #[test]
+    fn admission_global_limit_reserves_pool_capacity_where_possible() {
+        for (pool_max, expected) in [
+            (1, 1),
+            (2, 1),
+            (3, 1),
+            (4, 2),
+            (15, 13),
+            (16, 14),
+            (20, 14),
+            (50, 14),
+        ] {
+            assert_eq!(
+                AdmissionController::new(pool_max)
+                    .global
+                    .available_permits(),
+                expected
+            );
+        }
+    }
+
+    struct AdmissionFixture {
+        admin: Database,
+        schema: String,
+        db: Arc<Database>,
+        app: Router,
+        controller: AdmissionController,
+        hub: SyncHub,
+        dispatch: DispatchCount,
+        users: Vec<(i32, String)>,
+    }
+
+    impl AdmissionFixture {
+        async fn new(user_count: usize) -> Option<Self> {
+            use crate::connectors::{
+                db::PoolSettings,
+                user::{NewUser, isolated_identity_test_database},
+            };
+            use crate::modules::auth::middleware::authenticate_token;
+
+            let (admin, schema) = isolated_identity_test_database().await?;
+            let mut url =
+                reqwest::Url::parse(&std::env::var("BALANCE_TEST_DATABASE_URL").unwrap()).unwrap();
+            url.query_pairs_mut()
+                .append_pair("options[search_path]", &schema);
+            let db = Arc::new(
+                Database::new(url.as_str(), PoolSettings::parse(None).unwrap())
+                    .await
+                    .unwrap(),
+            );
+            let controller = AdmissionController::new(db.user.pool.options().get_max_connections());
+            let api = OidcConfig::test_cached_subject_config();
+            let mcp = api.mcp_config();
+            let exp = chrono::Utc::now().timestamp() + 120;
+            let mut users = Vec::new();
+            for index in 0..user_count {
+                let subject = format!("admission-{index}");
+                let user = db
+                    .user
+                    .provision_identity(
+                        api.issuer(),
+                        &subject,
+                        &NewUser {
+                            email: format!("{subject}@example.invalid"),
+                            name: None,
+                            given_name: None,
+                            family_name: None,
+                            picture: None,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                let (authenticated, _) =
+                    authenticate_token(&api.clone(), &db, &api.test_access_token(&subject, exp))
+                        .await
+                        .ok()
+                        .unwrap();
+                assert_eq!(authenticated.id, user.id);
+                users.push((user.id, mcp.test_access_token(&subject, exp)));
+            }
+
+            let hub = SyncHub::default();
+            let dispatch = DispatchCount::default();
+            let app = crate::application_router(
+                api,
+                Default::default(),
+                Router::new(),
+                controller.clone(),
+            )
+            .layer(Extension(db.clone()))
+            .layer(Extension(hub.clone()))
+            .layer(Extension(dispatch.clone()));
+            Some(Self {
+                admin,
+                schema,
+                db,
+                app,
+                controller,
+                hub,
+                dispatch,
+                users,
+            })
+        }
+
+        fn request(&self, user: usize, method: &str, params: Value) -> Request<Body> {
+            let mut request = rpc_request(
+                json!({
+                    "jsonrpc": "2.0", "id": "admission-request", "method": method, "params": params
+                })
+                .to_string(),
+            );
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                format!("Bearer {}", self.users[user].1).parse().unwrap(),
+            );
+            request
+        }
+
+        fn log(&self, user: usize, args: &Value) -> Request<Body> {
+            self.request(
+                user,
+                "tools/call",
+                json!({"name": "log_food", "arguments": args}),
+            )
+        }
+
+        fn assert_idle(&self) {
+            let counts = self.controller.enrolled.lock().unwrap();
+            assert_eq!(counts.total, 0);
+            assert!(counts.users.is_empty());
+            assert_eq!(self.controller.global.available_permits(), 14);
+        }
+
+        async fn cleanup(self) {
+            self.assert_idle();
+            self.db.user.pool.close().await;
+            crate::connectors::user::cleanup_identity_test_database(&self.admin, &self.schema)
+                .await;
+        }
+    }
+
+    async fn assert_pending<F: std::future::Future>(mut request: std::pin::Pin<&mut F>) {
+        std::future::poll_fn(|cx| {
+            assert!(request.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+    }
+
+    async fn assert_busy(response: Response) {
+        let message = "Server busy. Retry shortly.";
+        assert_eq!(
+            reply_body(response, StatusCode::OK).await,
+            json!({
+                "jsonrpc": "2.0",
+                "id": "admission-request",
+                "result": {
+                    "content": [{"type": "text", "text": message}],
+                    "structuredContent": {"error": {"code": "server_busy", "message": message}},
+                    "isError": true
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_caps_and_cancellation_use_production_mcp_route() {
+        let Some(fixture) = AdmissionFixture::new(7).await else {
+            return;
+        };
+        let global = fixture
+            .controller
+            .global
+            .clone()
+            .try_acquire_many_owned(14)
+            .unwrap();
+        let args = log_args(Uuid::new_v4(), 1.0, "2026-01-12");
+        let mut requests = Vec::new();
+        let mut events = fixture.hub.subscribe();
+
+        for user in 0..6 {
+            let count = if user == 5 { 8 } else { 24 };
+            for _ in 0..count {
+                let mut request = Box::pin(fixture.app.clone().oneshot(fixture.log(user, &args)));
+                assert_pending(request.as_mut()).await;
+                requests.push(request);
+            }
+            if user == 0 {
+                // With spare global enrollment, this rejection isolates the per-user cap.
+                assert_busy(
+                    fixture
+                        .app
+                        .clone()
+                        .oneshot(fixture.log(0, &args))
+                        .await
+                        .unwrap(),
+                )
+                .await;
+            }
+        }
+        let semaphore = {
+            let counts = fixture.controller.enrolled.lock().unwrap();
+            assert_eq!(counts.total, 128);
+            assert_eq!(counts.users[&fixture.users[0].0].count, 24);
+            counts.users[&fixture.users[0].0].permits.clone()
+        };
+        assert_eq!(semaphore.available_permits(), 0);
+        // A user with no prior requests cannot enroll once the process cap is reached.
+        assert_busy(
+            fixture
+                .app
+                .clone()
+                .oneshot(fixture.log(6, &args))
+                .await
+                .unwrap(),
+        )
+        .await;
+
+        for (method, params) in [
+            (
+                "initialize",
+                json!({"protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "admission-test", "version": "1"}}),
+            ),
+            ("ping", json!({})),
+            ("tools/list", json!({})),
+        ] {
+            let response = fixture
+                .app
+                .clone()
+                .oneshot(fixture.request(0, method, params))
+                .await
+                .unwrap();
+            assert!(
+                reply_body(response, StatusCode::OK)
+                    .await
+                    .get("result")
+                    .is_some()
+            );
+        }
+
+        drop(requests.remove(6)); // The seventh request is waiting for its user permit.
+        assert_eq!(semaphore.available_permits(), 0);
+        assert_eq!(fixture.controller.enrolled.lock().unwrap().total, 127);
+        drop(requests.remove(0)); // The first request owns a user permit and waits globally.
+        {
+            let counts = fixture.controller.enrolled.lock().unwrap();
+            assert_eq!(counts.total, 126);
+            assert_eq!(counts.users[&fixture.users[0].0].count, 22);
+        }
+        drop(requests);
+        assert_eq!(semaphore.available_permits(), 6);
+        drop(global);
+        fixture.assert_idle();
+        assert_eq!(fixture.dispatch.calls(), 0);
+        let persisted: i64 = sqlx::query_scalar("SELECT count(*) FROM meal_logs WHERE id = $1")
+            .bind(operation_id(&args))
+            .fetch_one(&fixture.db.user.pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, 0);
+        assert_no_invalidation(&mut events);
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn admission_deadline_spans_both_permit_waits() {
+        let Some(fixture) = AdmissionFixture::new(1).await else {
+            return;
+        };
+        let (enrollment, user) = fixture.controller.enroll(fixture.users[0].0).unwrap();
+        let user_hold = user.clone().try_acquire_many_owned(6).unwrap();
+        let global_hold = fixture
+            .controller
+            .global
+            .clone()
+            .try_acquire_many_owned(14)
+            .unwrap();
+        let args = log_args(Uuid::new_v4(), 1.0, "2026-01-12");
+        let mut events = fixture.hub.subscribe();
+        let started = Instant::now();
+        let mut request = Box::pin(fixture.app.clone().oneshot(fixture.log(0, &args)));
+        assert_pending(request.as_mut()).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        drop(user_hold);
+        assert_pending(request.as_mut()).await;
+        assert_eq!(user.available_permits(), 5);
+        let response = timeout_at(started + Duration::from_secs(12), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(10));
+        assert_busy(response).await;
+        assert_eq!(user.available_permits(), 6);
+        assert_eq!(fixture.controller.enrolled.lock().unwrap().total, 1);
+        assert_eq!(fixture.dispatch.calls(), 0);
+        assert_no_invalidation(&mut events);
+        let persisted: i64 = sqlx::query_scalar("SELECT count(*) FROM meal_logs WHERE id = $1")
+            .bind(operation_id(&args))
+            .fetch_one(&fixture.db.user.pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, 0);
+        drop(global_hold);
+        drop(enrollment);
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn authenticated_parallel_food_logs_leave_capacity_for_readiness() {
+        let Some(fixture) = AdmissionFixture::new(3).await else {
+            return;
+        };
+        let mut food_ids = Vec::new();
+        for &(user_id, _) in &fixture.users {
+            let id = Uuid::new_v4();
+            fixture
+                .db
+                .sync
+                .create_personal_food(user_id, id, "Burst test food", &iron_food_details())
+                .await
+                .unwrap();
+            food_ids.push(id);
+        }
+        let mut hold = fixture.db.user.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE meal_logs IN SHARE MODE")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let mut events = fixture.hub.subscribe();
+        let mut operations = Vec::new();
+        let mut requests = Vec::new();
+        for (user, food_id) in food_ids.into_iter().enumerate() {
+            for _ in 0..if user == 0 { 18 } else { 6 } {
+                let args = log_args(food_id, 1.0, "2026-01-12");
+                let mut request = Box::pin(fixture.app.clone().oneshot(fixture.log(user, &args)));
+                assert_pending(request.as_mut()).await;
+                operations.push((user, args));
+                requests.push(request);
+            }
+            assert_eq!(fixture.dispatch.calls(), [6, 12, 14][user]);
+        }
+        assert_eq!(fixture.controller.global.available_permits(), 0);
+        assert_eq!(fixture.controller.enrolled.lock().unwrap().total, 30);
+        // Keep polling all tool requests while waiting for all 14 executions to reach the DB lock.
+        tokio::time::timeout(Duration::from_secs(7), async {
+            loop {
+                for request in &mut requests {
+                    assert_pending(request.as_mut()).await;
+                }
+                let blocked: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_locks WHERE relation = 'meal_logs'::regclass AND NOT granted"
+                ).fetch_one(&fixture.db.user.pool).await.unwrap();
+                if blocked == 14 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        let health = fixture
+            .app
+            .clone()
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::NO_CONTENT);
+        hold.commit().await.unwrap();
+
+        for response in futures_util::future::join_all(requests).await {
+            let reply = reply_body(response.unwrap(), StatusCode::OK).await;
+            assert_eq!(reply["result"]["isError"], false, "{reply}");
+            assert_eq!(reply["result"]["structuredContent"]["status"], "logged");
+        }
+        fixture.assert_idle();
+        assert_eq!(fixture.dispatch.calls(), 30);
+        let mut invalidations = HashMap::new();
+        while let Ok(event) = events.try_recv() {
+            assert_eq!(event.collection, "mealLogs");
+            *invalidations.entry(event.user_id).or_insert(0) += 1;
+        }
+        assert_eq!(
+            invalidations,
+            HashMap::from([
+                (fixture.users[0].0, 18),
+                (fixture.users[1].0, 6),
+                (fixture.users[2].0, 6),
+            ])
+        );
+
+        let (user, args) = &operations[0];
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(fixture.log(*user, args))
+            .await
+            .unwrap();
+        let reply = reply_body(response, StatusCode::OK).await;
+        assert_eq!(
+            reply["result"]["structuredContent"]["status"],
+            "alreadyLogged"
+        );
+        let replay_event = events.try_recv().unwrap();
+        assert_eq!(replay_event.user_id, fixture.users[*user].0);
+        assert_eq!(replay_event.collection, "mealLogs");
+        assert_no_invalidation(&mut events);
+        let persisted: Vec<(Uuid, i32)> = sqlx::query_as("SELECT id, user_id FROM meal_logs")
+            .fetch_all(&fixture.db.user.pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted.len(), operations.len());
+        let expected: HashMap<_, _> = operations
+            .iter()
+            .map(|(user, args)| (operation_id(args), fixture.users[*user].0))
+            .collect();
+        assert_eq!(persisted.into_iter().collect::<HashMap<_, _>>(), expected);
+        fixture.cleanup().await;
     }
 
     #[tokio::test]
@@ -2743,10 +3299,16 @@ mod tests {
         };
 
         let count = DispatchCount::default();
-        let router = crate::mcp_transport(crate::mcp_authenticated(oidc), Default::default())
-            .layer(Extension(fixture.db.clone()))
-            .layer(Extension(fixture.hub.clone()))
-            .layer(Extension(count.clone()));
+        let router = crate::mcp_transport(
+            crate::mcp_authenticated(
+                oidc,
+                AdmissionController::new(fixture.db.user.pool.options().get_max_connections()),
+            ),
+            Default::default(),
+        )
+        .layer(Extension(fixture.db.clone()))
+        .layer(Extension(fixture.hub.clone()))
+        .layer(Extension(count.clone()));
         let mut events = fixture.hub.subscribe();
         assert_unsolicited_responses(&router, &request).await;
         assert_duplicate_envelope_members(&router, &request).await;
@@ -3986,7 +4548,14 @@ mod tests {
         let Ok(database_url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
             return;
         };
-        let db = Arc::new(Database::new(&database_url).await.unwrap());
+        let db = Arc::new(
+            Database::new(
+                &database_url,
+                crate::connectors::db::PoolSettings::parse(None).unwrap(),
+            )
+            .await
+            .unwrap(),
+        );
         let op_branded = Uuid::new_v4();
         let unique_brand = format!("MarcaMcp{}", &op_branded.simple().to_string()[..8]);
         let (_, created_json) = call_tool(
