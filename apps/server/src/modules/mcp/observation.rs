@@ -8,7 +8,9 @@ use std::{
 
 use axum::{
     Router,
+    body::HttpBody,
     extract::{Request, State},
+    http::{Method, StatusCode},
     middleware::{self, Next},
     response::Response,
 };
@@ -17,8 +19,6 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use uuid::Uuid;
 
 const TARGET: &str = "balance_mcp_observation";
-const EVENTS_PER_WINDOW: u16 = 20;
-const BACKGROUND_EVENTS_PER_WINDOW: u16 = 8;
 const WINDOW: Duration = Duration::from_secs(60);
 const MAX_TEXT_BYTES: usize = 16_384;
 const MAX_NODES: usize = 512;
@@ -59,10 +59,28 @@ struct Observer {
     budget: Mutex<EmissionBudget>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Priority {
+#[derive(Clone, Copy)]
+enum EventClass {
     Background,
-    KnownToolResult,
+    KnownToolSuccess,
+    MethodNotAllowed,
+    OtherClientError,
+    ServerError,
+    Abandoned,
+    ToolError,
+    JsonRpcError,
+}
+
+const CLASS_COUNT: usize = EventClass::JsonRpcError as usize + 1;
+type Suppressions = [u64; CLASS_COUNT];
+
+impl EventClass {
+    const fn limit(self) -> u8 {
+        match self {
+            Self::KnownToolSuccess => 12,
+            _ => 8,
+        }
+    }
 }
 
 impl Observer {
@@ -72,69 +90,70 @@ impl Observer {
         }
     }
 
-    fn permit(&self, priority: Priority) -> bool {
+    fn permit(&self, class: EventClass) -> bool {
         if !tracing::enabled!(target: TARGET, tracing::Level::INFO) {
             return false;
         }
-        let (allowed, suppressed) = self
+        let (allowed, summary) = self
             .budget
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .permit(Instant::now(), priority);
-        if let Some(suppressed) = suppressed {
-            let build = server::build_identity::compiled_identity();
-            tracing::info!(target: TARGET, parent: None,
-                event = "suppressed", source_sha = build.source_sha, build_run = build.build_run,
-                suppressed_events = suppressed);
+            .permit(Instant::now(), class);
+        if let Some(counts) = summary {
+            write_summary(counts);
         }
         allowed
     }
 }
 
+fn write_summary(counts: Suppressions) {
+    let build = server::build_identity::compiled_identity();
+    tracing::info!(target: TARGET, parent: None,
+        event = "suppressed", source_sha = build.source_sha, build_run = build.build_run,
+        suppressed_background = counts[EventClass::Background as usize],
+        suppressed_known_tool_success = counts[EventClass::KnownToolSuccess as usize],
+        suppressed_method_not_allowed = counts[EventClass::MethodNotAllowed as usize],
+        suppressed_other_client_error = counts[EventClass::OtherClientError as usize],
+        suppressed_server_error = counts[EventClass::ServerError as usize],
+        suppressed_abandoned = counts[EventClass::Abandoned as usize],
+        suppressed_tool_error = counts[EventClass::ToolError as usize],
+        suppressed_json_rpc_error = counts[EventClass::JsonRpcError as usize]);
+}
+
 struct EmissionBudget {
     started: Instant,
-    emitted: u16,
-    background_emitted: u16,
-    suppressed: u64,
+    admitted: [u8; CLASS_COUNT],
+    suppressed: Suppressions,
 }
 
 impl EmissionBudget {
     fn new(now: Instant) -> Self {
         Self {
             started: now,
-            emitted: 0,
-            background_emitted: 0,
-            suppressed: 0,
+            admitted: [0; CLASS_COUNT],
+            suppressed: [0; CLASS_COUNT],
         }
     }
 
-    /// Both the carried suppression summary and this event consume the current
-    /// window. Late completions have no reservation that can bypass this check.
-    fn permit(&mut self, now: Instant, priority: Priority) -> (bool, Option<u64>) {
+    fn permit(&mut self, now: Instant, class: EventClass) -> (bool, Option<Suppressions>) {
         let mut summary = None;
         if now.saturating_duration_since(self.started) >= WINDOW {
             self.started = now;
-            self.emitted = 0;
-            self.background_emitted = 0;
-            if self.suppressed > 0 {
-                summary = Some(std::mem::take(&mut self.suppressed));
-                self.emitted = 1;
-                self.background_emitted = 1;
+            self.admitted = [0; CLASS_COUNT];
+            let counts = std::mem::take(&mut self.suppressed);
+            // At most one carried summary can be emitted at rollover.
+            if counts.iter().any(|&count| count != 0) {
+                summary = Some(counts);
             }
         }
-        if self.emitted < EVENTS_PER_WINDOW
-            && (priority == Priority::KnownToolResult
-                || self.background_emitted < BACKGROUND_EVENTS_PER_WINDOW)
-        {
-            self.emitted += 1;
-            if priority == Priority::Background {
-                self.background_emitted += 1;
-            }
-            (true, summary)
+        let index = class as usize;
+        let allowed = self.admitted[index] < class.limit();
+        if allowed {
+            self.admitted[index] += 1;
         } else {
-            self.suppressed = self.suppressed.saturating_add(1);
-            (false, summary)
+            self.suppressed[index] = self.suppressed[index].saturating_add(1);
         }
+        (allowed, summary)
     }
 }
 
@@ -144,6 +163,7 @@ pub(super) struct Observation(Arc<RequestContext>);
 struct RequestContext {
     observer: Arc<Observer>,
     correlation: Uuid,
+    http_method: &'static str,
     started: Instant,
     details: Mutex<Details>,
 }
@@ -154,7 +174,7 @@ struct Details {
     tool: &'static str,
     outcome: &'static str,
     error_class: &'static str,
-    terminal_attempted: bool,
+    tool_preparation_attempted: bool,
 }
 
 impl Default for Details {
@@ -164,16 +184,23 @@ impl Default for Details {
             tool: "not_applicable",
             outcome: "http_rejected",
             error_class: "none",
-            terminal_attempted: false,
+            tool_preparation_attempted: false,
         }
     }
 }
 
 impl Observation {
-    fn new(observer: Arc<Observer>) -> Self {
+    fn new(observer: Arc<Observer>, method: &Method) -> Self {
         Self(Arc::new(RequestContext {
             observer,
             correlation: Uuid::new_v4(),
+            http_method: match *method {
+                Method::GET => "GET",
+                Method::POST => "POST",
+                Method::DELETE => "DELETE",
+                Method::OPTIONS => "OPTIONS",
+                _ => "other",
+            },
             started: Instant::now(),
             details: Mutex::new(Details::default()),
         }))
@@ -207,26 +234,30 @@ impl Observation {
             .outcome = outcome;
     }
 
-    pub(super) fn result(&self, result: &Value, error_class: &'static str) {
-        self.with_result_inspector(result, error_class, Shape::inspect);
+    pub(super) fn result(&self, response: &Response, result: &Value, error_class: &'static str) {
+        self.with_result_inspector(response, result, error_class, Shape::inspect);
     }
 
     fn with_result_inspector(
         &self,
+        response: &Response,
         result: &Value,
         error_class: &'static str,
         inspect: impl FnOnce(&Value, &str) -> Shape,
     ) {
-        // This clock ends at the prepared Value, before inspection or Json
-        // conversion. No permit or result reference can escape this sync hook.
         let duration_ms = self.elapsed_ms();
+        let status = response.status();
+        if status.is_client_error() || status.is_server_error() {
+            return;
+        }
+        let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
         let details = {
             let mut details = self.0.details.lock().unwrap_or_else(|e| e.into_inner());
-            if details.terminal_attempted {
+            if details.tool_preparation_attempted {
                 return;
             }
-            details.terminal_attempted = true;
-            details.outcome = if result.get("isError").and_then(Value::as_bool) == Some(true) {
+            details.tool_preparation_attempted = true;
+            details.outcome = if is_error {
                 "tool_error"
             } else {
                 "tool_success"
@@ -234,33 +265,59 @@ impl Observation {
             details.error_class = error_class;
             *details
         };
-        let priority = if details.method == "tools_call" && known_tool(details.tool).is_some() {
-            Priority::KnownToolResult
+        let class = if is_error {
+            EventClass::ToolError
+        } else if details.method == "tools_call" && known_tool(details.tool).is_some() {
+            EventClass::KnownToolSuccess
         } else {
-            Priority::Background
+            EventClass::Background
         };
-        if !self.0.observer.permit(priority) {
-            return;
+        if self.0.observer.permit(class) {
+            self.write_event(
+                "tool_result_prepared",
+                ResponseFields::from_response(response),
+                details,
+                inspect(result, details.tool),
+                duration_ms,
+            );
         }
-        let shape = inspect(result, details.tool);
-        self.write_event("tool_result_prepared", None, details, shape, duration_ms);
     }
 
-    fn background(&self, event: &'static str, status: u16) {
-        let details = {
-            let mut details = self.0.details.lock().unwrap_or_else(|e| e.into_inner());
-            if details.terminal_attempted {
-                return;
+    fn response_prepared(&self, response: &Response) {
+        let mut details = *self.0.details.lock().unwrap_or_else(|e| e.into_inner());
+        let status = response.status();
+        let class = if status.is_client_error() || status.is_server_error() {
+            details.outcome = "http_rejected";
+            details.error_class = match status {
+                StatusCode::UNAUTHORIZED => "auth_unauthorized",
+                StatusCode::FORBIDDEN => "http_forbidden",
+                StatusCode::METHOD_NOT_ALLOWED => "method_not_allowed",
+                _ if response
+                    .extensions()
+                    .get::<super::JsonExtractorRejected>()
+                    .is_some() =>
+                {
+                    "json_rejected"
+                }
+                _ if status.is_client_error() => "http_client_error",
+                _ => "http_server_error",
+            };
+            match status {
+                StatusCode::METHOD_NOT_ALLOWED => EventClass::MethodNotAllowed,
+                _ if status.is_client_error() => EventClass::OtherClientError,
+                _ => EventClass::ServerError,
             }
-            if event == "abandoned" {
-                details.outcome = "abandoned";
-            }
-            *details
+        } else if details.tool_preparation_attempted {
+            return;
+        } else if details.outcome == "json_rpc_error" {
+            EventClass::JsonRpcError
+        } else {
+            EventClass::Background
         };
-        if self.0.observer.permit(Priority::Background) {
+        if self.0.observer.permit(class) {
             self.write_event(
-                event,
-                Some(status),
+                "response_prepared",
+                ResponseFields::from_response(response),
                 details,
                 Shape::default(),
                 self.elapsed_ms(),
@@ -268,25 +325,69 @@ impl Observation {
         }
     }
 
+    fn abandoned(&self) {
+        if self.0.observer.permit(EventClass::Abandoned) {
+            let mut details = *self.0.details.lock().unwrap_or_else(|e| e.into_inner());
+            details.outcome = "abandoned";
+            details.error_class = "abandoned";
+            self.write_event(
+                "abandoned",
+                ResponseFields::default(),
+                details,
+                Shape::default(),
+                self.elapsed_ms(),
+            );
+        }
+    }
+
+    fn arrived(&self) {
+        if self.0.observer.permit(EventClass::Background) {
+            let build = server::build_identity::compiled_identity();
+            tracing::info!(target: TARGET, parent: None,
+                event = "arrived", correlation = %self.0.correlation,
+                source_sha = build.source_sha, build_run = build.build_run,
+                http_method = self.0.http_method);
+        }
+    }
+
     fn write_event(
         &self,
         event: &'static str,
-        status: Option<u16>,
+        response: ResponseFields,
         details: Details,
         shape: Shape,
         duration_ms: u64,
     ) {
         let build = server::build_identity::compiled_identity();
+        let entries_checked = shape.checked_entries > 0;
         tracing::info!(target: TARGET, parent: None,
             event, correlation = %self.0.correlation,
             source_sha = build.source_sha, build_run = build.build_run,
-            duration_ms, http_status = status, method = details.method, tool = details.tool,
+            duration_ms, http_method = self.0.http_method, http_status = response.status,
+            response_bytes = response.bytes, method = details.method, tool = details.tool,
             outcome = details.outcome, error_class = details.error_class,
             content_blocks = shape.content_blocks, text_blocks = shape.text_blocks,
             structured = shape.structured, collection_count = shape.collection_count,
-            checked_entries = shape.checked_entries, entry_inspection = shape.entry_inspection,
-            checked_date_strings = shape.date_strings, checked_weight_numbers = shape.weight_numbers,
+            checked_entries = entries_checked.then_some(shape.checked_entries),
+            entry_inspection = entries_checked.then_some(shape.entry_inspection),
+            checked_date_strings = entries_checked.then_some(shape.date_strings),
+            checked_weight_numbers = entries_checked.then_some(shape.weight_numbers),
             first_text_json = shape.first_text_json);
+    }
+}
+
+#[derive(Default)]
+struct ResponseFields {
+    status: Option<u16>,
+    bytes: Option<u64>,
+}
+
+impl ResponseFields {
+    fn from_response(response: &Response) -> Self {
+        Self {
+            status: Some(response.status().as_u16()),
+            bytes: response.body().size_hint().exact(),
+        }
     }
 }
 
@@ -313,7 +414,7 @@ struct Completion {
 impl Drop for Completion {
     fn drop(&mut self) {
         if !self.completed {
-            self.observation.background("abandoned", 0);
+            self.observation.abandoned();
         }
     }
 }
@@ -334,7 +435,7 @@ mod tests {
     use axum::{
         Extension, Json,
         body::{Body, to_bytes},
-        http::{Request as HttpRequest, StatusCode},
+        http::{Request as HttpRequest, header},
         response::IntoResponse,
         routing::post,
     };
@@ -375,6 +476,7 @@ mod tests {
             .uri("/mcp?private=URI_SECRET")
             .header("content-type", "application/json")
             .header("authorization", "Bearer TOKEN_SECRET")
+            .header("x-private", "HEADER_SECRET")
             .body(Body::from(body.to_owned()))
             .unwrap()
     }
@@ -429,7 +531,7 @@ mod tests {
                 observation,
             );
         }
-        super::super::mcp_post_handler(db, hub, user, observation, Json(payload))
+        super::super::mcp_post_handler(db, hub, user, observation, Ok(Json(payload)))
             .await
             .into_response()
     }
@@ -442,8 +544,56 @@ mod tests {
             .layer(Extension(CurrentUser { id: 987654321 }))
     }
 
+    fn auth_router() -> Router {
+        super::super::mcp_routes()
+            .route_layer(middleware::from_fn_with_state(
+                OidcConfig::test_cached_subject_config().mcp_config(),
+                auth,
+            ))
+            .layer(Extension(lazy_database()))
+    }
+
+    fn unauthenticated_request() -> HttpRequest<Body> {
+        HttpRequest::post("/mcp?private=URI_SECRET")
+            .body(Body::from("PRIVATE_BODY"))
+            .unwrap()
+    }
+
+    async fn poll_and_drop(router: Router, body: &str) {
+        let mut future = Box::pin(router.oneshot(request(body)));
+        std::future::poll_fn(|cx| {
+            assert!(future.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(future);
+    }
+
+    async fn pending() -> Response {
+        std::future::pending().await
+    }
+
+    async fn assert_wire(baseline: Response, observed: Response, status: StatusCode) -> usize {
+        assert_eq!(observed.status(), status);
+        assert_eq!(baseline.status(), status);
+        assert_eq!(observed.headers(), baseline.headers());
+        let body = to_bytes(observed.into_body(), usize::MAX).await.unwrap();
+        let expected = to_bytes(baseline.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, expected);
+        body.len()
+    }
+
+    fn assert_event(output: &str, fields: &[&str]) {
+        assert!(
+            output.lines().any(|line| fields
+                .iter()
+                .all(|field| line.split_whitespace().any(|token| token == *field))),
+            "missing event with {fields:?} in {output}"
+        );
+    }
+
     #[tokio::test]
-    async fn startup_burst_cannot_hide_known_weight_result_when_arrival_is_suppressed() {
+    async fn startup_and_method_rejections_cannot_hide_other_event_classes() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -452,61 +602,88 @@ mod tests {
             .finish();
         async {
             let observer = Arc::new(Observer::new());
-            let observed = observe_with(history_fixture_router(), observer);
-            for (http_method, method) in [
-                ("POST", "initialize"),
-                ("GET", ""),
-                ("POST", "notifications/initialized"),
-                ("POST", "initialize"),
-                ("GET", ""),
-                ("POST", "notifications/initialized"),
-                ("POST", "tools/list"),
-                ("POST", "initialize"),
-                ("GET", ""),
-                ("POST", "notifications/initialized"),
-                ("POST", "tools/call"),
-            ] {
-                let raw = json!({"jsonrpc":"2.0","id":"RPC_SECRET","method":method,
-                    "params":{"name":"get_weight_history","arguments":{"private":"ARG_SECRET"}}})
-                .to_string();
-                let make_request = || {
-                    let mut req = request(&raw);
-                    *req.method_mut() = http_method.parse().unwrap();
-                    req
-                };
-                let baseline = history_fixture_router()
-                    .oneshot(make_request())
-                    .await
-                    .unwrap();
-                let response = observed.clone().oneshot(make_request()).await.unwrap();
-                assert_eq!(response.status(), baseline.status());
+            let handler = observe_with(handler_router(), observer.clone());
+            for _ in 0..10 {
+                let response = handler.clone().oneshot(request(
+                    r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"initialize"}"#,
+                )).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            for attempt in 0..10 {
+                let response = handler.clone().oneshot(
+                    HttpRequest::get("/mcp").body(Body::empty()).unwrap(),
+                ).await.unwrap();
+                assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
                 assert_eq!(
-                    to_bytes(response.into_body(), usize::MAX).await.unwrap(),
-                    to_bytes(baseline.into_body(), usize::MAX).await.unwrap()
+                    capture.text().matches("error_class=\"method_not_allowed\"").count(),
+                    (attempt + 1).min(8),
                 );
             }
-        }
-        .with_subscriber(subscriber)
-        .await;
+            let auth = observe_with(auth_router(), observer.clone())
+                .oneshot(unauthenticated_request()).await.unwrap();
+            assert_eq!(auth.status(), StatusCode::UNAUTHORIZED);
+            assert!(auth.headers().contains_key(header::WWW_AUTHENTICATE));
+
+            for status in [StatusCode::FORBIDDEN, StatusCode::INTERNAL_SERVER_ERROR] {
+                let router = Router::new().route("/mcp", post(move || async move { status }));
+                let response = observe_with(router, observer.clone()).oneshot(request("{}")).await.unwrap();
+                assert_eq!(response.status(), status);
+            }
+            let pending_router = Router::new().route("/mcp", post(pending));
+            poll_and_drop(observe_with(pending_router, observer.clone()), "{}").await;
+
+            for (body, status) in [
+                ("[]", StatusCode::UNPROCESSABLE_ENTITY),
+                (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"search_foods","arguments":{}}}"#, StatusCode::OK),
+                (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"UNKNOWN_SECRET"}}"#, StatusCode::OK),
+                (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"METHOD_SECRET"}"#, StatusCode::OK),
+            ] {
+                assert_eq!(handler.clone().oneshot(request(body)).await.unwrap().status(), status);
+            }
+            let response = observe_with(history_fixture_router(), observer.clone())
+                .oneshot(request(r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"get_weight_history","arguments":{"private":"ARG_SECRET"}}}"#))
+                .await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap().len();
+            assert_event(&capture.text(), &["outcome=\"tool_success\"", &format!("response_bytes={bytes}")]);
+            assert_eq!(observer.budget.lock().unwrap().admitted, [8, 1, 8, 3, 1, 1, 2, 1]);
+        }.with_subscriber(subscriber).await;
+
         let output = capture.text();
-        // Accept the old and new labels: RED must prove actual loss of the
-        // known-tool result after the burst, not simply an event rename.
-        let terminals: Vec<_> = output
+        for (status, class) in [
+            (401, "auth_unauthorized"),
+            (403, "http_forbidden"),
+            (422, "json_rejected"),
+            (500, "http_server_error"),
+        ] {
+            assert_event(
+                &output,
+                &[
+                    &format!("http_status={status}"),
+                    &format!("error_class=\"{class}\""),
+                ],
+            );
+        }
+        for tool in ["search_foods", "unknown"] {
+            assert_event(
+                &output,
+                &[
+                    "http_status=200",
+                    "outcome=\"tool_error\"",
+                    "error_class=\"invalid_arguments\"",
+                    &format!("tool=\"{tool}\""),
+                ],
+            );
+        }
+        assert_event(&output, &["http_status=200", "outcome=\"json_rpc_error\""]);
+        assert_event(&output, &["event=\"abandoned\""]);
+        let terminal = output
             .lines()
-            .filter(|line| {
-                (line.contains("event=\"response_prepared\"")
-                    || line.contains("event=\"tool_result_prepared\""))
-                    && line.contains("method=\"tools_call\"")
-                    && line.contains("tool=\"get_weight_history\"")
-            })
-            .collect();
-        assert_eq!(
-            terminals.len(),
-            1,
-            "known weight result was hidden after the startup burst"
-        );
-        let terminal = terminals[0];
+            .find(|line| line.contains("outcome=\"tool_success\""))
+            .unwrap();
         for expected in [
+            "event=\"tool_result_prepared\"",
+            "tool=\"get_weight_history\"",
             "content_blocks=1",
             "text_blocks=1",
             "structured=true",
@@ -528,16 +705,17 @@ mod tests {
         assert!(
             !output
                 .lines()
-                .any(|line| line.contains("event=\"arrived\"") && line.contains(correlation)),
-            "result must remain observable without an admitted arrival"
+                .any(|line| line.contains("event=\"arrived\"") && line.contains(correlation))
         );
-        assert!(output.lines().count() <= 20);
         for secret in [
             "RESULT_SECRET",
             "RPC_SECRET",
             "ARG_SECRET",
             "TOKEN_SECRET",
             "URI_SECRET",
+            "HEADER_SECRET",
+            "UNKNOWN_SECRET",
+            "METHOD_SECRET",
             "2099-01-",
             "123.4",
             "234.5",
@@ -556,17 +734,18 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            for payload in [
-                json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"METHOD_SECRET","params":{"secret":"ARG_SECRET"}}),
-                json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/call","params":{"name":"TOOL_SECRET","arguments":{"secret":"ARG_SECRET"}}}),
-                json!({"jsonrpc":"bad","id":"ID_SECRET","method":"ping"}),
-                json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/list"}),
+            for (payload, outcome) in [
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"METHOD_SECRET","params":{"secret":"ARG_SECRET"}}), "json_rpc_error"),
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/call","params":{"name":"TOOL_SECRET","arguments":{"secret":"ARG_SECRET"}}}), "tool_error"),
+                (json!({"jsonrpc":"bad","id":"ID_SECRET","method":"ping"}), "json_rpc_error"),
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/list"}), "protocol_success"),
             ] {
                 let raw = payload.to_string();
                 let baseline = handler_router().oneshot(request(&raw)).await.unwrap();
                 let observed = observe_with(handler_router(), Arc::new(Observer::new())).oneshot(request(&raw)).await.unwrap();
-                assert_eq!(baseline.status(), observed.status());
-                assert_eq!(to_bytes(baseline.into_body(), usize::MAX).await.unwrap(), to_bytes(observed.into_body(), usize::MAX).await.unwrap());
+                let bytes = assert_wire(baseline, observed, StatusCode::OK).await;
+                assert_event(&capture.text(), &["http_status=200", &format!("outcome=\"{outcome}\""),
+                    &format!("response_bytes={bytes}")]);
             }
         }.with_subscriber(subscriber).await;
         let output = capture.text();
@@ -574,6 +753,7 @@ mod tests {
             "URI_SECRET",
             "TOKEN_SECRET",
             "ID_SECRET",
+            "HEADER_SECRET",
             "METHOD_SECRET",
             "TOOL_SECRET",
             "ARG_SECRET",
@@ -589,7 +769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_auth_and_json_extractor_rejections_are_observed_without_changing_responses() {
+    async fn http_metadata_preserves_stock_rejection_wire_and_distinguishes_the_extractor() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -597,52 +777,160 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            let auth_router = || {
-                super::super::mcp_routes()
-                    .route_layer(middleware::from_fn_with_state(
-                        OidcConfig::test_cached_subject_config().mcp_config(),
-                        auth,
-                    ))
-                    .layer(Extension(lazy_database()))
-            };
-            let req = || {
-                HttpRequest::builder()
-                    .method("POST")
-                    .uri("/mcp")
-                    .body(Body::from("PRIVATE_BODY"))
-                    .unwrap()
-            };
-            let baseline = auth_router().oneshot(req()).await.unwrap();
+            let baseline = auth_router()
+                .oneshot(unauthenticated_request())
+                .await
+                .unwrap();
             let response = observe_with(auth_router(), Arc::new(Observer::new()))
-                .oneshot(req())
+                .oneshot(unauthenticated_request())
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-            assert_eq!(baseline.headers(), response.headers());
+            let config = OidcConfig::test_cached_subject_config().mcp_config();
             assert_eq!(
-                to_bytes(baseline.into_body(), usize::MAX).await.unwrap(),
-                to_bytes(response.into_body(), usize::MAX).await.unwrap()
+                response.headers()[header::WWW_AUTHENTICATE],
+                *config.challenge()
             );
-            let malformed = "{\"jsonrpc\": [\"BODY_SECRET\"]}";
-            let baseline = handler_router().oneshot(request(malformed)).await.unwrap();
+            let bytes = assert_wire(baseline, response, StatusCode::UNAUTHORIZED).await;
+            assert_event(
+                &capture.text(),
+                &[
+                    "http_method=\"POST\"",
+                    "http_status=401",
+                    "error_class=\"auth_unauthorized\"",
+                    &format!("response_bytes={bytes}"),
+                ],
+            );
+
+            for (body, status) in [
+                (
+                    "{\"jsonrpc\":, \"BODY_SECRET\": true}",
+                    StatusCode::BAD_REQUEST,
+                ),
+                (
+                    r#"[{"jsonrpc":"2.0","method":"BODY_SECRET"}]"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+            ] {
+                let stock = Router::new().route(
+                    "/mcp",
+                    post(|Json(_): Json<super::super::JsonRpcRequest>| async { StatusCode::OK }),
+                );
+                let baseline = stock.oneshot(request(body)).await.unwrap();
+                let observed = observe_with(handler_router(), Arc::new(Observer::new()))
+                    .oneshot(request(body))
+                    .await
+                    .unwrap();
+                let bytes = assert_wire(baseline, observed, status).await;
+                assert_event(
+                    &capture.text(),
+                    &[
+                        &format!("http_status={}", status.as_u16()),
+                        "error_class=\"json_rejected\"",
+                        &format!("response_bytes={bytes}"),
+                    ],
+                );
+            }
+
+            let get = || HttpRequest::get("/mcp").body(Body::empty()).unwrap();
+            let baseline = handler_router().oneshot(get()).await.unwrap();
             let observed = observe_with(handler_router(), Arc::new(Observer::new()))
-                .oneshot(request(malformed))
+                .oneshot(get())
                 .await
                 .unwrap();
-            assert_eq!(baseline.status(), observed.status());
-            assert_eq!(
-                to_bytes(baseline.into_body(), usize::MAX).await.unwrap(),
-                to_bytes(observed.into_body(), usize::MAX).await.unwrap()
+            assert_eq!(observed.headers()[header::ALLOW], "POST");
+            assert_wire(baseline, observed, StatusCode::METHOD_NOT_ALLOWED).await;
+            assert_event(
+                &capture.text(),
+                &[
+                    "http_method=\"GET\"",
+                    "http_status=405",
+                    "error_class=\"method_not_allowed\"",
+                ],
+            );
+
+            for (method, label, status, class) in [
+                (
+                    Method::DELETE,
+                    "DELETE",
+                    StatusCode::FORBIDDEN,
+                    "http_forbidden",
+                ),
+                (
+                    Method::OPTIONS,
+                    "OPTIONS",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "http_server_error",
+                ),
+                (
+                    Method::from_bytes(b"PRIVATE_METHOD").unwrap(),
+                    "other",
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "method_not_allowed",
+                ),
+            ] {
+                let router = || {
+                    let endpoint = move || async move {
+                        (
+                            status,
+                            [("x-private-response", "RESPONSE_HEADER_SECRET")],
+                            "PAYLOAD_SECRET",
+                        )
+                    };
+                    Router::new().route("/mcp", post(endpoint).delete(endpoint).options(endpoint))
+                };
+                let req = || {
+                    HttpRequest::builder()
+                        .method(method.clone())
+                        .uri("/mcp")
+                        .body(Body::empty())
+                        .unwrap()
+                };
+                let baseline = router().oneshot(req()).await.unwrap();
+                let observed = observe_with(router(), Arc::new(Observer::new()))
+                    .oneshot(req())
+                    .await
+                    .unwrap();
+                let bytes = assert_wire(baseline, observed, status).await;
+                assert_event(
+                    &capture.text(),
+                    &[
+                        &format!("http_method=\"{label}\""),
+                        &format!("http_status={}", status.as_u16()),
+                        &format!("error_class=\"{class}\""),
+                        &format!("response_bytes={bytes}"),
+                    ],
+                );
+            }
+
+            let router =
+                || Router::new().route("/mcp", post(|| async { StatusCode::UNPROCESSABLE_ENTITY }));
+            assert_wire(
+                router().oneshot(request("{}")).await.unwrap(),
+                observe_with(router(), Arc::new(Observer::new()))
+                    .oneshot(request("{}"))
+                    .await
+                    .unwrap(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+            assert_event(
+                &capture.text(),
+                &["http_status=422", "error_class=\"http_client_error\""],
             );
         }
         .with_subscriber(subscriber)
         .await;
+
         let output = capture.text();
-        assert!(output.contains("http_status=401"));
-        assert!(output.contains("outcome=\"http_rejected\""));
-        assert!(output.contains("event=\"arrived\""));
-        assert!(!output.contains("PRIVATE_BODY"));
-        assert!(!output.contains("BODY_SECRET"));
+        for secret in [
+            "PRIVATE_BODY",
+            "BODY_SECRET",
+            "PRIVATE_METHOD",
+            "PAYLOAD_SECRET",
+            "RESPONSE_HEADER_SECRET",
+        ] {
+            assert!(!output.contains(secret), "leaked {secret}");
+        }
     }
 
     #[tokio::test]
@@ -656,10 +944,21 @@ mod tests {
                 observation.request("tools/call", Some("get_weight_history"));
             }
             match payload["kind"].as_str().unwrap() {
+                "oversize" => super::super::tool_success(
+                    json!("RPC_SECRET"),
+                    &format!("LARGE_TEXT_SECRET{}", "x".repeat(MAX_TEXT_BYTES)),
+                    json!({"entries":[]}),
+                    observation,
+                ),
                 "success" => super::super::tool_success(
                     json!("RPC_SECRET"),
                     "SUMMARY_SECRET",
-                    json!({"entries":[{"date":"2099-12-31", "weightKg": 123.4, "name":"VALUE_SECRET"}]}),
+                    json!({"entries":[{"date":"2099-12-31", "weightKg": 123.4, "name":"VALUE_SECRET", "nutrition":987.654}]}),
+                    observation,
+                ),
+                "bad_request" => super::super::tool_failure(
+                    Value::Null,
+                    crate::shared::error::AppError::BadRequest("RAW_ERROR_SECRET".into()),
                     observation,
                 ),
                 "db" => super::super::tool_failure(
@@ -681,7 +980,7 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            for kind in ["success", "db", "internal"] {
+            for kind in ["success", "oversize", "bad_request", "db", "internal"] {
                 let router = || Router::new().route("/mcp", post(endpoint));
                 let payload = json!({"kind":kind}).to_string();
                 let baseline = router().oneshot(request(&payload)).await.unwrap();
@@ -689,10 +988,25 @@ mod tests {
                     .oneshot(request(&payload))
                     .await
                     .unwrap();
-                assert_eq!(response.status(), StatusCode::OK);
-                assert_eq!(
-                    to_bytes(baseline.into_body(), usize::MAX).await.unwrap(),
-                    to_bytes(response.into_body(), usize::MAX).await.unwrap()
+                let bytes = assert_wire(baseline, response, StatusCode::OK).await;
+                let classification = match kind {
+                    "oversize" => {
+                        assert!(bytes > MAX_TEXT_BYTES);
+                        "first_text_json=\"not_checked\""
+                    }
+                    "success" => "first_text_json=\"matches\"",
+                    "bad_request" => "error_class=\"invalid_arguments\"",
+                    "db" => "error_class=\"database_error\"",
+                    _ => "error_class=\"internal_error\"",
+                };
+                assert_event(
+                    &capture.text(),
+                    &[
+                        "event=\"tool_result_prepared\"",
+                        "http_status=200",
+                        &format!("response_bytes={bytes}"),
+                        classification,
+                    ],
                 );
             }
         }
@@ -702,9 +1016,12 @@ mod tests {
         for secret in [
             "RPC_SECRET",
             "SUMMARY_SECRET",
+            "LARGE_TEXT_SECRET",
+            "987.654",
             "VALUE_SECRET",
             "DB_SECRET",
             "ERROR_SECRET",
+            "RAW_ERROR_SECRET",
             "2099-12-31",
             "123.4",
         ] {
@@ -735,8 +1052,25 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        assert_eq!(ids.len(), 3);
-        assert_ne!(ids[0], ids[1]);
+        assert_eq!(ids.len(), 5);
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            ids.len()
+        );
+        let identity = server::build_identity::compiled_identity();
+        for line in output.lines() {
+            let id = line
+                .split("correlation=")
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap();
+            assert_eq!(Uuid::parse_str(id).unwrap().get_version_num(), 4);
+            assert!(ids.contains(&id));
+            assert!(line.contains(&format!("source_sha=\"{}\"", identity.source_sha)));
+            assert!(line.contains(&format!("build_run=\"{}\"", identity.build_run)));
+        }
     }
 
     #[test]
@@ -821,142 +1155,82 @@ mod tests {
         assert!(!within_budget(&deep));
     }
 
-    #[test]
-    fn emission_budget_includes_late_completions_and_summary_under_concurrency() {
-        let start = Instant::now();
-        let budget = Arc::new(Mutex::new(EmissionBudget::new(start)));
-        let allowed = AtomicUsize::new(0);
-        std::thread::scope(|scope| {
-            for _ in 0..40 {
-                let budget = budget.clone();
-                let allowed = &allowed;
-                scope.spawn(move || {
-                    if budget
-                        .lock()
-                        .unwrap()
-                        .permit(start, Priority::KnownToolResult)
-                        .0
-                    {
-                        allowed.fetch_add(1, Ordering::Relaxed);
-                    }
-                });
-            }
-        });
-        assert_eq!(
-            allowed.load(Ordering::Relaxed),
-            usize::from(EVENTS_PER_WINDOW)
-        );
-        let mut budget = budget.lock().unwrap();
-        let (admitted, summary) = budget.permit(start + WINDOW, Priority::KnownToolResult);
-        assert!(admitted);
-        assert_eq!(summary, Some(20));
-        let mut emissions = 2; // summary and the first late/current event
-        for _ in 0..40 {
-            if budget.permit(start + WINDOW, Priority::KnownToolResult).0 {
-                emissions += 1;
-            }
-        }
-        assert_eq!(emissions, EVENTS_PER_WINDOW);
-        budget.suppressed = u64::MAX;
-        assert!(!budget.permit(start + WINDOW, Priority::KnownToolResult).0);
-        assert_eq!(budget.suppressed, u64::MAX);
-    }
+    const CLASSES: [(EventClass, u8); CLASS_COUNT] = [
+        (EventClass::Background, 8),
+        (EventClass::KnownToolSuccess, 12),
+        (EventClass::MethodNotAllowed, 8),
+        (EventClass::OtherClientError, 8),
+        (EventClass::ServerError, 8),
+        (EventClass::Abandoned, 8),
+        (EventClass::ToolError, 8),
+        (EventClass::JsonRpcError, 8),
+    ];
 
     #[test]
-    fn mixed_emissions_and_rollover_summary_share_the_eight_twenty_limits() {
+    fn independent_exact_quota_boundaries_survive_concurrency_and_rollover() {
         let start = Instant::now();
-        let budget = Arc::new(Mutex::new(EmissionBudget::new(start)));
-        let total = AtomicUsize::new(0);
-        let background = AtomicUsize::new(0);
+        let budget = Mutex::new(EmissionBudget::new(start));
+        let admitted: [AtomicUsize; CLASS_COUNT] = std::array::from_fn(|_| AtomicUsize::new(0));
         std::thread::scope(|scope| {
-            for index in 0..24 {
-                let budget = budget.clone();
-                let total = &total;
-                let background = &background;
+            for contender in 0..16 {
+                let budget = &budget;
+                let admitted = &admitted;
                 scope.spawn(move || {
-                    let priority = if index % 2 == 0 {
-                        Priority::Background
-                    } else {
-                        Priority::KnownToolResult
-                    };
-                    if budget.lock().unwrap().permit(start, priority).0 {
-                        total.fetch_add(1, Ordering::Relaxed);
-                        if priority == Priority::Background {
-                            background.fetch_add(1, Ordering::Relaxed);
+                    for (class, limit) in CLASSES {
+                        for _ in (contender..limit + class as u8 + 1).step_by(16) {
+                            let (allowed, summary) = budget.lock().unwrap().permit(start, class);
+                            assert!(summary.is_none());
+                            if allowed {
+                                admitted[class as usize].fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     }
                 });
             }
         });
-        assert_eq!(total.load(Ordering::Relaxed), 20);
-        assert_eq!(background.load(Ordering::Relaxed), 8);
-        let mut budget = budget.lock().unwrap();
-        let (admitted, summary) = budget.permit(start + WINDOW, Priority::Background);
-        assert!(admitted);
-        assert_eq!(summary, Some(4));
-        assert_eq!((budget.emitted, budget.background_emitted), (2, 2));
-        for _ in 0..6 {
-            assert!(budget.permit(start + WINDOW, Priority::Background).0);
-        }
-        assert!(!budget.permit(start + WINDOW, Priority::Background).0);
-        for _ in 0..12 {
-            assert!(budget.permit(start + WINDOW, Priority::KnownToolResult).0);
-        }
-        assert!(!budget.permit(start + WINDOW, Priority::KnownToolResult).0);
-        assert_eq!((budget.emitted, budget.background_emitted), (20, 8));
-        let (admitted, summary) = budget.permit(start + WINDOW + WINDOW, Priority::KnownToolResult);
-        assert!(admitted);
-        assert_eq!(summary, Some(2));
-        assert_eq!((budget.emitted, budget.background_emitted), (2, 1));
-    }
-
-    #[test]
-    fn known_error_priority_and_unknown_labels_use_handler_classification() {
-        let capture = Capture::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(logging_filter(None))
-            .with_ansi(false)
-            .with_writer(capture.clone())
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
-            let observer = Arc::new(Observer::new());
-            for _ in 0..BACKGROUND_EVENTS_PER_WINDOW {
-                assert!(observer.permit(Priority::Background));
-            }
-            let known = Observation::new(observer.clone());
-            known.request("tools/call", Some("get_weight_history"));
-            let response = super::super::tool_failure(
-                Value::Null,
-                crate::shared::error::AppError::Internal("ERROR_SECRET".into()),
-                Some(&known),
+        let mut budget = budget.into_inner().unwrap();
+        for (class, limit) in CLASSES {
+            assert_eq!(
+                admitted[class as usize].load(Ordering::Relaxed),
+                usize::from(limit)
             );
-            assert_eq!(response.status(), StatusCode::OK);
-            for (method, tool) in [
-                ("tools/call", "UNKNOWN_SECRET"),
-                ("ping", "get_weight_history"),
-            ] {
-                let observation = Observation::new(observer.clone());
-                observation.request(method, Some(tool));
-                observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
-                    panic!("background result must not be inspected after its quota is exhausted")
-                });
+        }
+        let now = start + WINDOW;
+        let (allowed, summary) = budget.permit(now, EventClass::Background);
+        assert!(allowed);
+        assert_eq!(summary, Some([1, 2, 3, 4, 5, 6, 7, 8]));
+        for (class, limit) in CLASSES {
+            for _ in budget.admitted[class as usize]..limit {
+                assert_eq!(budget.permit(now, class), (true, None));
             }
-            let budget = observer.budget.lock().unwrap();
-            assert_eq!((budget.emitted, budget.background_emitted), (9, 8));
-            assert_eq!(budget.suppressed, 2);
-        });
-        let output = capture.text();
-        assert_eq!(output.lines().count(), 1);
-        assert!(output.contains("event=\"tool_result_prepared\""));
-        assert!(output.contains("outcome=\"tool_error\""));
-        assert!(output.contains("error_class=\"internal_error\""));
-        assert!(!output.contains("http_status="));
-        assert!(!output.contains("ERROR_SECRET"));
-        assert!(!output.contains("UNKNOWN_SECRET"));
+            assert_eq!(budget.permit(now, class), (false, None));
+        }
+        assert_eq!(
+            budget
+                .admitted
+                .iter()
+                .map(|&count| usize::from(count))
+                .sum::<usize>()
+                + 1,
+            69
+        );
+        budget.suppressed = [u64::MAX; CLASS_COUNT];
+        for (class, _) in CLASSES {
+            assert_eq!(budget.permit(now, class), (false, None));
+        }
+        assert_eq!(budget.suppressed, [u64::MAX; CLASS_COUNT]);
+        assert_eq!(
+            budget.permit(now + WINDOW, EventClass::Abandoned),
+            (true, Some([u64::MAX; CLASS_COUNT]))
+        );
+        assert_eq!(
+            budget.permit(now + WINDOW + WINDOW, EventClass::ServerError),
+            (true, None)
+        );
     }
 
     #[test]
-    fn denied_tool_result_never_inspects_or_emits_later_as_abandonment() {
+    fn denied_or_duplicate_tool_hooks_skip_inspection_and_normal_completion() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -965,32 +1239,43 @@ mod tests {
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             let observer = Arc::new(Observer::new());
-            observer.budget.lock().unwrap().emitted = EVENTS_PER_WINDOW;
-            let observation = Observation::new(observer.clone());
-            observation.request("tools/call", Some("get_weight_history"));
-            let completion = Completion {
-                observation: observation.clone(),
-                completed: false,
-            };
-            observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
-                panic!("denied terminal performed shape work")
-            });
-            assert!(observation.0.details.lock().unwrap().terminal_attempted);
-            assert_eq!(observer.budget.lock().unwrap().suppressed, 1);
-            // A repeated helper hook or late Drop must not acquire a fresh
-            // window's permit after the original terminal attempt was denied.
-            observer.budget.lock().unwrap().started -= WINDOW;
-            observation.with_result_inspector(&json!({"isError":false}), "none", |_, _| {
-                panic!("duplicate inspection")
-            });
-            drop(completion);
-            assert_eq!(observer.budget.lock().unwrap().emitted, EVENTS_PER_WINDOW);
+            for class in [
+                EventClass::Background,
+                EventClass::KnownToolSuccess,
+                EventClass::ToolError,
+            ] {
+                for _ in 0..class.limit() {
+                    assert!(observer.permit(class));
+                }
+            }
+            let response = Json(json!({"prepared":true})).into_response();
+            for (method, tool, is_error) in [
+                ("tools/call", "get_weight_history", false),
+                ("tools/call", "UNKNOWN_SECRET", false),
+                ("ping", "get_weight_history", false),
+                ("tools/call", "get_weight_history", true),
+                ("tools/call", "UNKNOWN_SECRET", true),
+            ] {
+                let observation = Observation::new(observer.clone(), &Method::POST);
+                observation.request(method, Some(tool));
+                let result = json!({"isError":is_error});
+                for _ in 0..2 {
+                    observation.with_result_inspector(&response, &result, "none", |_, _| {
+                        panic!("denied or duplicate hook performed inspection")
+                    });
+                }
+                observation.response_prepared(&response);
+            }
+            assert_eq!(
+                observer.budget.lock().unwrap().suppressed,
+                [2, 1, 0, 0, 0, 0, 2, 0]
+            );
         });
         assert!(capture.text().is_empty());
     }
 
     #[test]
-    fn late_known_result_acquires_only_current_window_and_marks_its_stage() {
+    fn late_tool_preparation_and_drop_use_current_window_and_emit_one_summary() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -999,24 +1284,35 @@ mod tests {
             .finish();
         tracing::subscriber::with_default(subscriber, || {
             let observer = Arc::new(Observer::new());
-            let observation = Observation::new(observer.clone());
-            observation.request("tools/call", Some("get_weight_history"));
+            let tool = Observation::new(observer.clone(), &Method::POST);
+            tool.request("tools/call", Some("get_weight_history"));
+            let completion = Completion {
+                observation: Observation::new(observer.clone(), &Method::GET),
+                completed: false,
+            };
             {
                 let mut budget = observer.budget.lock().unwrap();
-                budget.emitted = EVENTS_PER_WINDOW;
-                budget.background_emitted = BACKGROUND_EVENTS_PER_WINDOW;
-                budget.suppressed = 5;
+                for (class, limit) in CLASSES {
+                    budget.admitted[class as usize] = limit;
+                }
+                budget.suppressed = [1, 2, 3, 4, 5, 6, 7, 8];
                 budget.started -= WINDOW;
             }
-            let before = observation.elapsed_ms();
+            let before = tool.elapsed_ms();
             let response = super::super::tool_success(
                 Value::Null,
                 "RESULT_SECRET",
                 json!({"entries":[]}),
-                Some(&observation),
+                Some(&tool),
             );
-            let after = observation.elapsed_ms();
-            assert_eq!(response.status(), StatusCode::OK);
+            let after = tool.elapsed_ms();
+            tool.response_prepared(&response);
+            drop(completion);
+            assert_eq!(
+                observer.budget.lock().unwrap().admitted,
+                [0, 1, 0, 0, 0, 1, 0, 0]
+            );
+
             let output = capture.text();
             let terminal = output
                 .lines()
@@ -1032,38 +1328,64 @@ mod tests {
                 .parse::<u64>()
                 .unwrap();
             assert!((before..=after).contains(&duration));
-            assert!(!terminal.contains("http_status="));
-            // The event already exists at the sync helper boundary. The outer
-            // response completion and cancellation cannot replace its clock.
-            observation.background("response_prepared", 200);
-            drop(Completion {
-                observation: observation.clone(),
-                completed: false,
-            });
-            let budget = observer.budget.lock().unwrap();
-            assert_eq!((budget.emitted, budget.background_emitted), (2, 1));
-            assert_eq!(capture.text().lines().count(), 2); // one summary + one terminal
         });
         let output = capture.text();
-        assert!(output.contains("event=\"suppressed\""));
-        assert!(output.contains("suppressed_events=5"));
+        assert_eq!(output.lines().count(), 3);
+        assert_event(
+            &output,
+            &[
+                "event=\"suppressed\"",
+                "suppressed_background=1",
+                "suppressed_known_tool_success=2",
+                "suppressed_method_not_allowed=3",
+                "suppressed_other_client_error=4",
+                "suppressed_server_error=5",
+                "suppressed_abandoned=6",
+                "suppressed_tool_error=7",
+                "suppressed_json_rpc_error=8",
+            ],
+        );
+        let summary = output
+            .lines()
+            .find(|line| line.contains("event=\"suppressed\""))
+            .unwrap();
+        assert!(!summary.contains("correlation="));
         assert!(!output.contains("event=\"response_prepared\""));
-        assert!(!output.contains("event=\"abandoned\""));
         assert!(!output.contains("RESULT_SECRET"));
     }
 
     #[tokio::test]
-    async fn cancellation_after_real_result_hook_does_not_emit_a_second_terminal() {
-        async fn pending_after_result(observation: Option<Extension<Observation>>) -> Response {
-            let Extension(observation) = observation.unwrap();
+    async fn route_completion_records_http_error_and_drop_independently_of_the_tool_hook() {
+        fn prepare_tool(observation: &Observation) -> Response {
             observation.request("tools/call", Some("get_weight_history"));
-            let _prepared = super::super::tool_success(
+            super::super::tool_success(
                 Value::Null,
                 "RESULT_SECRET",
                 json!({"entries":[]}),
-                Some(&observation),
-            );
-            std::future::pending().await
+                Some(observation),
+            )
+        }
+
+        async fn endpoint(
+            Extension(observation): Extension<Observation>,
+            Json(payload): Json<Value>,
+        ) -> Response {
+            if payload["action"] == "drop_before" {
+                return pending().await;
+            }
+            if payload["action"] == "failed_conversion" {
+                let response = StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                observation.with_result_inspector(&response, &Value::Null, "none", |_, _| {
+                    panic!("HTTP errors must not be inspected at the tool hook")
+                });
+                return response;
+            }
+            let prepared = prepare_tool(&observation);
+            match payload["action"].as_str() {
+                Some("drop_after") => pending().await,
+                Some("http_error") => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                _ => prepared,
+            }
         }
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
@@ -1072,32 +1394,86 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            let mut future = Box::pin(
-                observe_with(
-                    Router::new().route("/mcp", post(pending_after_result)),
-                    Arc::new(Observer::new()),
-                )
-                .oneshot(request("{}")),
+            let observer = Arc::new(Observer::new());
+            let router = observe_with(
+                Router::new().route("/mcp", post(endpoint)),
+                observer.clone(),
             );
-            std::future::poll_fn(|cx| {
-                assert!(future.as_mut().poll(cx).is_pending());
-                std::task::Poll::Ready(())
-            })
-            .await;
-            drop(future);
+            for (limit, expected) in [(0, 1), (EventClass::KnownToolSuccess.limit(), 0)] {
+                observer.budget.lock().unwrap().admitted[EventClass::KnownToolSuccess as usize] =
+                    limit;
+                let before = capture.text().len();
+                let response = router.clone().oneshot(request("{}")).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let output = capture.text();
+                let events = &output[before..];
+                assert_eq!(
+                    events.matches("event=\"tool_result_prepared\"").count(),
+                    expected
+                );
+                assert!(!events.contains("event=\"response_prepared\""));
+            }
+            let before = capture.text().len();
+            for action in ["failed_conversion", "http_error"] {
+                for _ in 0..5 {
+                    let response = router
+                        .clone()
+                        .oneshot(request(&json!({"action": action}).to_string()))
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            }
+            assert!(!capture.text()[before..].contains("event=\"tool_result_prepared\""));
+            let success = EventClass::KnownToolSuccess;
+            observer.budget.lock().unwrap().admitted[success as usize] = success.limit() - 1;
+            for (action, count) in [("drop_before", 4), ("drop_after", 6)] {
+                let body = json!({"action": action}).to_string();
+                for _ in 0..count {
+                    poll_and_drop(router.clone(), &body).await;
+                }
+            }
+            assert_eq!(
+                capture.text()[before..]
+                    .matches("event=\"tool_result_prepared\"")
+                    .count(),
+                1
+            );
+            let budget = observer.budget.lock().unwrap();
+            for class in [EventClass::ServerError, EventClass::Abandoned] {
+                assert_eq!(budget.admitted[class as usize], class.limit());
+                assert_eq!(budget.suppressed[class as usize], 2);
+            }
         }
         .with_subscriber(subscriber)
         .await;
+
         let output = capture.text();
         assert_eq!(
-            output
-                .lines()
-                .filter(|line| line.contains("event=\"tool_result_prepared\""))
-                .count(),
-            1
+            output.matches("error_class=\"http_server_error\"").count(),
+            8
         );
-        assert!(!output.contains("event=\"response_prepared\""));
-        assert!(!output.contains("event=\"abandoned\""));
+        let drops: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("event=\"abandoned\""))
+            .collect();
+        assert_eq!(drops.len(), 8);
+        assert!(
+            drops
+                .iter()
+                .any(|line| line.contains("tool=\"get_weight_history\""))
+        );
+        assert!(
+            drops
+                .iter()
+                .any(|line| line.contains("tool=\"not_applicable\""))
+        );
+        for line in drops {
+            assert!(line.contains("outcome=\"abandoned\""));
+            assert!(line.contains("error_class=\"abandoned\""));
+            assert!(!line.contains("http_status="));
+            assert!(!line.contains("response_bytes="));
+        }
     }
 
     #[tokio::test]
@@ -1125,17 +1501,12 @@ mod tests {
         }
         .with_subscriber(subscriber)
         .await;
-        assert_eq!(observer.budget.lock().unwrap().emitted, 0);
+        assert_eq!(observer.budget.lock().unwrap().admitted, [0; CLASS_COUNT]);
         assert!(capture.text().is_empty());
     }
 
     #[tokio::test]
-    async fn suppressed_arrivals_keep_context_and_abandonment_is_truthful() {
-        async fn endpoint(observation: Option<Extension<Observation>>) -> StatusCode {
-            let Extension(observation) = observation.expect("context survives arrival suppression");
-            observation.request("ping", None);
-            StatusCode::ACCEPTED
-        }
+    async fn exact_empty_and_unknown_size_bodies_report_only_available_sizes() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -1143,49 +1514,55 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            let observer = Arc::new(Observer::new());
-            observer.budget.lock().unwrap().emitted = EVENTS_PER_WINDOW;
-            let response = observe_with(
-                Router::new().route("/mcp", post(endpoint)),
-                observer.clone(),
-            )
-            .oneshot(request("{}"))
-            .await
-            .unwrap();
+            let router = observe_with(handler_router(), Arc::new(Observer::new()));
+            let response = router
+                .oneshot(request(
+                    r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                ))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
-            observer.budget.lock().unwrap().started -= WINDOW;
-            observe_with(Router::new().route("/mcp", post(endpoint)), observer)
+            assert!(
+                to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            let router = Router::new().route(
+                "/mcp",
+                post(|| async {
+                    Body::from_stream(futures_util::stream::once(async {
+                        Ok::<_, std::convert::Infallible>("STREAM_SECRET")
+                    }))
+                }),
+            );
+            let response = observe_with(router, Arc::new(Observer::new()))
                 .oneshot(request("{}"))
                 .await
                 .unwrap();
-            async fn pending(observation: Option<Extension<Observation>>) -> Response {
-                observation
-                    .unwrap()
-                    .0
-                    .request("tools/call", Some("get_weight_history"));
-                std::future::pending().await
-            }
-            let mut future = Box::pin(
-                observe_with(
-                    Router::new().route("/mcp", post(pending)),
-                    Arc::new(Observer::new()),
-                )
-                .oneshot(request("{}")),
+            assert!(response.body().size_hint().exact().is_none());
+            assert_eq!(
+                to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+                "STREAM_SECRET"
             );
-            std::future::poll_fn(|cx| {
-                assert!(future.as_mut().poll(cx).is_pending());
-                std::task::Poll::Ready(())
-            })
-            .await;
-            drop(future);
         }
         .with_subscriber(subscriber)
         .await;
         let output = capture.text();
-        assert!(output.contains("event=\"suppressed\""));
-        assert!(output.contains("suppressed_events=2"));
-        assert!(output.contains("event=\"abandoned\""));
-        assert!(output.contains("outcome=\"abandoned\""));
+        assert_event(
+            &output,
+            &[
+                "event=\"response_prepared\"",
+                "http_status=202",
+                "response_bytes=0",
+            ],
+        );
+        let unknown = output
+            .lines()
+            .find(|line| line.contains("http_status=200"))
+            .unwrap();
+        assert!(!unknown.contains("response_bytes="));
+        assert!(!output.contains("STREAM_SECRET"));
     }
 
     #[test]
@@ -1247,42 +1624,98 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         tracing::subscriber::with_default(subscriber, || {
-            let observation = Observation::new(Arc::new(Observer::new()));
-            let details = Details {
+            let observation = Observation::new(Arc::new(Observer::new()), &Method::DELETE);
+            let request_details = Details {
                 method: "not_observed",
                 tool: "get_weight_history",
                 outcome: "notification_accepted",
-                error_class: "invalid_arguments",
-                terminal_attempted: true,
+                error_class: "method_not_allowed",
+                tool_preparation_attempted: false,
+            };
+            let tool_details = Details {
+                method: "tools_call",
+                tool: "get_weight_history",
+                outcome: "tool_success",
+                error_class: "none",
+                tool_preparation_attempted: true,
             };
             let shape = Shape {
-                content_blocks: Some(usize::MAX),
-                text_blocks: Some(usize::MAX),
+                content_blocks: Some(MAX_CONTENT_BLOCKS),
+                text_blocks: Some(MAX_CONTENT_BLOCKS),
                 structured: true,
                 collection_count: Some(usize::MAX),
                 checked_entries: MAX_ENTRIES,
-                entry_inspection: "not_applicable",
-                date_strings: "not_applicable",
-                weight_numbers: "not_applicable",
-                first_text_json: "not_applicable",
+                entry_inspection: "complete",
+                date_strings: "not_all",
+                weight_numbers: "not_all",
+                first_text_json: "invalid_json",
             };
             let span =
                 tracing::info_span!(target: TARGET, "private_parent", private = "SPAN_SECRET");
             let _entered = span.enter();
-            for (event, status, priority) in [
-                ("tool_result_prepared", None, Priority::KnownToolResult),
-                ("response_prepared", Some(599), Priority::Background),
+            observation.arrived();
+            let fields = || ResponseFields {
+                status: Some(599),
+                bytes: Some(u64::MAX),
+            };
+            for shape in [
+                shape,
+                Shape {
+                    content_blocks: Some(usize::MAX),
+                    text_blocks: None,
+                    ..shape
+                },
             ] {
-                assert!(observation.0.observer.permit(priority));
-                observation.write_event(event, status, details, shape, u64::MAX);
+                observation.write_event(
+                    "tool_result_prepared",
+                    fields(),
+                    tool_details,
+                    shape,
+                    u64::MAX,
+                );
             }
+            observation.write_event(
+                "tool_result_prepared",
+                fields(),
+                Details {
+                    outcome: "tool_error",
+                    error_class: "invalid_arguments",
+                    ..tool_details
+                },
+                Shape {
+                    content_blocks: Some(usize::MAX),
+                    first_text_json: "invalid_json",
+                    structured: true,
+                    ..Shape::default()
+                },
+                u64::MAX,
+            );
+            observation.write_event(
+                "response_prepared",
+                fields(),
+                request_details,
+                Shape::default(),
+                u64::MAX,
+            );
+            observation.write_event(
+                "abandoned",
+                ResponseFields::default(),
+                Details {
+                    outcome: "abandoned",
+                    error_class: "abandoned",
+                    ..request_details
+                },
+                Shape::default(),
+                u64::MAX,
+            );
+            write_summary([u64::MAX; CLASS_COUNT]);
         });
         let identity = server::build_identity::compiled_identity();
         // Duration, count widths and all labels already use conservative maxima;
         // account for full compile identity lengths in an unknown local build.
         let margin = 40 - identity.source_sha.len() + 20 - identity.build_run.len();
         let output = capture.text();
-        assert_eq!(output.lines().count(), 2);
+        assert_eq!(output.lines().count(), 7);
         assert!(!output.contains("SPAN_SECRET"));
         assert!(!output.contains("private_parent"));
         for line in output.lines() {
@@ -1307,24 +1740,16 @@ async fn observe_request(
     if !tracing::enabled!(target: TARGET, tracing::Level::INFO) {
         return next.run(request).await;
     }
-    // Context survives arrival suppression; only the authenticated handler can
-    // classify a known tool result for the reserved global headroom.
-    let observation = Observation::new(observer.clone());
-    if observer.permit(Priority::Background) {
-        let build = server::build_identity::compiled_identity();
-        tracing::info!(target: TARGET, parent: None, event = "arrived", correlation = %observation.0.correlation,
-            source_sha = build.source_sha, build_run = build.build_run);
-    }
+    let observation = Observation::new(observer, request.method());
+    observation.arrived();
     request.extensions_mut().insert(observation.clone());
     let mut completion = Completion {
         observation,
         completed: false,
     };
     let response = next.run(request).await;
-    completion
-        .observation
-        .background("response_prepared", response.status().as_u16());
     completion.completed = true;
+    completion.observation.response_prepared(&response);
     response
 }
 
