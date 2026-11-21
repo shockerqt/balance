@@ -688,14 +688,27 @@ async fn call_tool(
                     "limit must be between 1 and 20".into(),
                 ));
             }
-            let foods = db
+            let result = db
                 .sync
                 .search_food_templates(user_id, query, &args.source, args.limit)
                 .await?;
-            let count = foods.len();
+            let count = result.foods.len();
+            let summary = if result.has_more {
+                let mut summary = format!(
+                    "Se muestran {count} alimentos. Hay más coincidencias. Refina la búsqueda por nombre, marca o `source`."
+                );
+                if args.limit < 20 {
+                    summary.push_str(" También puedes aumentar `limit` hasta 20.");
+                }
+                summary
+            } else if count == 0 {
+                "No se encontraron alimentos. Prueba la búsqueda en el otro idioma (español o inglés).".into()
+            } else {
+                format!("Se encontraron {count} alimentos.")
+            };
             Ok((
-                format!("Se encontraron {count} alimentos."),
-                json!({ "foods": foods }),
+                summary,
+                json!({ "foods": result.foods, "hasMore": result.has_more }),
             ))
         }
         "get_daily_log" => {
@@ -1362,7 +1375,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "search_foods",
             "title": "Buscar en el catálogo de alimentos",
-            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre, marca o categoría. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
+            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre o marca, sin distinguir mayúsculas ni acentos. El catálogo combina nombres en español e inglés. Si no hay resultados, vuelve a buscar en el otro idioma antes de considerar una creación. Si hasMore es true, refina la búsqueda para explorar más coincidencias. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1719,8 +1732,11 @@ fn create_food_input_schema() -> Value {
 fn foods_output_schema() -> Value {
     json!({
         "type": "object",
-        "properties": { "foods": { "type": "array", "items": food_schema() } },
-        "required": ["foods"],
+        "properties": {
+            "foods": { "type": "array", "items": food_schema() },
+            "hasMore": { "type": "boolean" }
+        },
+        "required": ["foods", "hasMore"],
         "additionalProperties": false
     })
 }
@@ -2921,6 +2937,40 @@ mod tests {
         );
 
         let search_tool = tool_definition(&tools, "search_foods");
+        assert_eq!(
+            search_tool["annotations"],
+            json!({
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+            })
+        );
+        let search_input = &search_tool["inputSchema"];
+        assert_eq!(search_input["properties"]["source"]["default"], "all");
+        assert_eq!(search_input["properties"]["limit"]["default"], 10);
+        let search_input = validator(search_input, true);
+        for source in ["all", "personal", "official"] {
+            assert_valid(
+                &search_input,
+                &json!({"query": "x", "source": source, "limit": 1}),
+            );
+        }
+        assert_valid(
+            &search_input,
+            &json!({"query": "á".repeat(120), "limit": 20}),
+        );
+        for invalid in [
+            json!({}),
+            json!({"query": ""}),
+            json!({"query": "á".repeat(121)}),
+            json!({"query": "x", "source": "other"}),
+            json!({"query": "x", "limit": 0}),
+            json!({"query": "x", "limit": 21}),
+            json!({"query": "x", "category": "fruit"}),
+        ] {
+            assert!(!search_input.is_valid(&invalid), "{invalid}");
+        }
         let search_output = validator(&search_tool["outputSchema"], true);
         let create_output = validator(&create_tool["outputSchema"], true);
         let log_output = validator(&log_tool["outputSchema"], true);
@@ -2949,8 +2999,15 @@ mod tests {
         assert_eq!(log["nutrition"]["extendedNutrition"]["ironMg"], 0.6);
         assert_eq!(log["nutrition"]["sodiumMg"], 0.0);
         assert!(log["nutrition"].get("fiber").is_none());
-        assert_valid(&search_output, &json!({"foods": [food]}));
-        assert_valid(&search_output, &json!({"foods": []}));
+        assert_valid(&search_output, &json!({"foods": [food], "hasMore": true}));
+        assert_valid(&search_output, &json!({"foods": [], "hasMore": false}));
+        for invalid in [
+            json!({"foods": []}),
+            json!({"foods": [], "hasMore": "false"}),
+            json!({"foods": [], "hasMore": false, "total": 0}),
+        ] {
+            assert!(!search_output.is_valid(&invalid), "{invalid}");
+        }
         assert_valid(
             &create_output,
             &json!({"status": "alreadyCreated", "food": food}),
@@ -3141,11 +3198,39 @@ mod tests {
     }
 
     impl ContractFixture {
+        fn new(db: Database, user_id: i32) -> Self {
+            let tools = tool_definitions();
+            let compile = |key: &str| {
+                tools
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|tool| {
+                        (
+                            tool["name"].as_str().unwrap().to_owned(),
+                            validator(&tool[key], true),
+                        )
+                    })
+                    .collect()
+            };
+            Self {
+                db: Arc::new(db),
+                hub: SyncHub::default(),
+                user_id,
+                input: compile("inputSchema"),
+                output: compile("outputSchema"),
+            }
+        }
+
         async fn call(&self, name: &str, args: Value) -> Value {
             dispatch(&self.db, &self.hub, self.user_id, name, args).await
         }
 
         async fn success(&self, name: &str, args: Value) -> Value {
+            self.success_with_summary(name, args).await.0
+        }
+
+        async fn success_with_summary(&self, name: &str, args: Value) -> (Value, String) {
             assert_valid(&self.input[name], &args);
             let result = self.call(name, args).await;
             assert_eq!(result["isError"], false, "{name}: {result}");
@@ -3156,13 +3241,17 @@ mod tests {
             assert_eq!(content[0]["type"], "text");
             let text = content[0]["text"].as_str().unwrap();
             let embedded = embedded_json(text);
-            assert!(text.strip_suffix(embedded).unwrap().ends_with("\n\n"));
-            assert!(!text.strip_suffix(embedded).unwrap().trim().is_empty());
+            let summary = text
+                .strip_suffix(embedded)
+                .unwrap()
+                .strip_suffix("\n\n")
+                .unwrap();
+            assert!(!summary.trim().is_empty());
             assert_eq!(
                 serde_json::from_str::<Value>(embedded).unwrap(),
                 *structured
             );
-            structured.clone()
+            (structured.clone(), summary.to_owned())
         }
 
         async fn seed_food(&self, id: Uuid, name: &str, details: &FoodDetails) {
@@ -3238,27 +3327,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tools = tool_definitions();
-        let compile = |key: &str| {
-            tools
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|tool| {
-                    (
-                        tool["name"].as_str().unwrap().to_owned(),
-                        validator(&tool[key], true),
-                    )
-                })
-                .collect()
-        };
-        let fixture = ContractFixture {
-            db: Arc::new(db),
-            hub: SyncHub::default(),
-            user_id: user.id,
-            input: compile("inputSchema"),
-            output: compile("outputSchema"),
-        };
+        let fixture = ContractFixture::new(db, user.id);
         assert_authenticated_rejections_are_inert(&fixture, oidc, subject).await;
         dispatch_weight_contract(&fixture).await;
         dispatch_food_contract(&fixture).await;
@@ -3529,7 +3598,7 @@ mod tests {
                 json!({"query": Uuid::new_v4().to_string(), "source": "personal"}),
             )
             .await;
-        assert_eq!(search["foods"], json!([]));
+        assert_eq!(search, json!({"foods": [], "hasMore": false}));
 
         for date in [DAY, "0001-01-02", "9999-01-02"] {
             let empty = fixture
@@ -4086,6 +4155,12 @@ mod tests {
 
         assert!(search_description.contains("exclusivamente"));
         assert!(search_description.contains("catálogo"));
+        assert!(search_description.contains("por nombre o marca"));
+        assert!(!search_description.contains("categoría"));
+        assert!(search_description.contains("nombres en español e inglés"));
+        assert!(search_description.contains("vuelve a buscar en el otro idioma"));
+        assert!(search_description.contains("hasMore"));
+        assert!(search_description.contains("foodId"));
         assert!(search_description.contains("NUNCA consulta consumos"));
         assert!(search_description.contains("usa get_daily_log"));
         assert!(daily_description.contains("consumos ya registrados"));
@@ -4541,6 +4616,287 @@ mod tests {
         };
         let output_without_brand = consumption_output(&consumption_without_brand).unwrap();
         assert!(output_without_brand.get("brand").is_none());
+    }
+
+    async fn food_search_fixture(rows: Value) -> Option<(ContractFixture, String)> {
+        let (db, schema) = crate::connectors::user::isolated_identity_test_database().await?;
+        sqlx::query("INSERT INTO users (id, email) VALUES (1, 'search@example.invalid'), (2, 'other@example.invalid')")
+            .execute(&db.sync.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO meal_templates (id, user_id, name, details, is_official, updated_at, deleted_at)
+            SELECT lpad(to_hex(id), 32, '0')::uuid, user_id, name,
+                   $2::jsonb || jsonb_strip_nulls(jsonb_build_object('brand', brand, 'category', category)),
+                   COALESCE(official, user_id IS NULL), 1, deleted_at
+            FROM jsonb_to_recordset($1) AS input(
+                id integer, user_id integer, name text, brand text, category text,
+                official boolean, deleted_at bigint
+            )
+            "#,
+        )
+        .bind(rows)
+        .bind(json!(iron_food_details()))
+        .execute(&db.sync.pool)
+        .await
+        .unwrap();
+        Some((ContractFixture::new(db, 1), schema))
+    }
+
+    fn assert_food_search_ids(
+        payload: &Value,
+        expected: impl IntoIterator<Item = u128>,
+        has_more: bool,
+    ) {
+        let expected: Vec<_> = expected.into_iter().map(Uuid::from_u128).collect();
+        let actual: Vec<Uuid> = payload["foods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|food| serde_json::from_value(food["id"].clone()).unwrap())
+            .collect();
+        assert_eq!(actual, expected, "{payload}");
+        assert_eq!(payload["hasMore"], has_more, "{payload}");
+    }
+
+    #[tokio::test]
+    async fn mcp_food_search_folds_names_and_brands_and_escapes_literals() {
+        let decomposed = "Melo\u{301}n";
+        let brand = "Ñuñoá";
+        let long_query = "á".repeat(120);
+        let Some((fixture, schema)) = food_search_fixture(json!([
+            {"id": 1, "name": "Plátano"},
+            {"id": 2, "name": decomposed, "brand": brand},
+            {"id": 3, "name": "Té 50%"},
+            {"id": 4, "name": "Té 500"},
+            {"id": 5, "name": "Lote_A"},
+            {"id": 6, "name": "LoteXA"},
+            {"id": 7, "name": "Especia", "brand": "A\\B"},
+            {"id": 8, "name": "Aromática", "brand": "AB"},
+            {"id": 9, "name": "Fruta", "category": "Solo categoría"},
+            {"id": 10, "name": long_query},
+            {"id": 11, "name": "q"}
+        ]))
+        .await
+        else {
+            return;
+        };
+        for (query, id, name) in [
+            ("platano", 1, "Plátano"),
+            ("  PLÁTANO  ", 1, "Plátano"),
+            ("PLA\u{301}TANO", 1, "Plátano"),
+            ("Melón", 2, decomposed),
+            ("MELO\u{301}N", 2, decomposed),
+            ("NUNOA", 2, decomposed),
+            ("50%", 3, "Té 50%"),
+            ("lote_a", 5, "Lote_A"),
+            ("a\\b", 7, "Especia"),
+        ] {
+            let payload = fixture
+                .success("search_foods", json!({"query": query}))
+                .await;
+            assert_food_search_ids(&payload, [id], false);
+            assert_eq!(payload["foods"][0]["name"], name);
+            if id == 2 {
+                assert_eq!(payload["foods"][0]["details"]["brand"], brand);
+            }
+        }
+        for query in ["inexistente", "\u{301}\u{36f}", "solo categoria"] {
+            let (payload, summary) = fixture
+                .success_with_summary("search_foods", json!({"query": query}))
+                .await;
+            assert_eq!(payload, json!({"foods": [], "hasMore": false}));
+            assert!(summary.contains("otro idioma"));
+        }
+
+        // Runtime length checks apply after trimming; the advertised schema counts the raw string.
+        for (query, id) in [(format!(" {long_query} "), 10), (" q ".into(), 11)] {
+            let result = fixture.call("search_foods", json!({"query": query})).await;
+            assert_eq!(result["isError"], false, "{result}");
+            assert_food_search_ids(&result["structuredContent"], [id], false);
+        }
+        for args in [
+            json!({"query": "   "}),
+            json!({"query": format!("{long_query}á")}),
+            json!({"query": "x", "source": "other"}),
+            json!({"query": "x", "limit": 0}),
+            json!({"query": "x", "limit": 21}),
+            json!({"query": "x", "date": "2026-11-21"}),
+        ] {
+            let result = fixture.call("search_foods", args).await;
+            assert_tool_error(&result, "invalid_arguments");
+        }
+
+        crate::connectors::user::cleanup_identity_test_database(&fixture.db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn mcp_food_search_expands_whole_query_aliases_to_name_tokens() {
+        let Some((fixture, schema)) = food_search_fixture(json!([
+            {"id": 1, "name": "Chicken"},
+            {"id": 2, "name": "Pollo (chicken)"},
+            {"id": 3, "name": "Fondo de Pollo"},
+            {"id": 4, "name": "Fondo", "brand": "Chicken"},
+            {"id": 5, "name": "aChicken"},
+            {"id": 6, "name": "Chicken2"},
+            {"id": 7, "name": "2Chicken"},
+            {"id": 8, "name": "βChicken"},
+            {"id": 9, "name": "Chickenβ"},
+            {"id": 10, "name": "Chicken-plate"},
+            {"id": 11, "name": "Papaya"},
+            {"id": 12, "name": "Papas"},
+            {"id": 13, "name": "Patatas"},
+            {"id": 14, "name": "Potatoes"},
+            {"id": 15, "name": "Aguacate"},
+            {"id": 16, "name": "Avocados"},
+            {"id": 17, "name": "Palta"},
+            {"id": 18, "name": "Paltas"},
+            {"id": 19, "name": "Aguacates"},
+            {"id": 20, "name": "Chicken stock"}
+        ]))
+        .await
+        else {
+            return;
+        };
+        for (query, mut expected) in [
+            ("PÓLLO", vec![1, 10, 20, 3, 2]),
+            ("chickens", vec![1, 10, 20, 3, 2]),
+            ("pollos", vec![1, 10, 20, 3, 2]),
+            ("pollo chicken", vec![]),
+            ("fondo de pollo", vec![3]),
+            ("potatoes", vec![14, 12, 13]),
+            ("papa", vec![12, 11, 13, 14]),
+            ("patata", vec![12, 13, 14]),
+            ("palta", vec![17, 15, 19, 16, 18]),
+            ("avocado", vec![15, 19, 16, 17, 18]),
+            ("aguacates", vec![19, 15, 16, 17, 18]),
+        ] {
+            let payload = fixture
+                .success("search_foods", json!({"query": query}))
+                .await;
+            let mut actual: Vec<_> = payload["foods"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|food| {
+                    serde_json::from_value::<Uuid>(food["id"].clone())
+                        .unwrap()
+                        .as_u128()
+                })
+                .collect();
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(actual, expected, "{query}: {payload}");
+            assert_eq!(payload["hasMore"], false);
+        }
+        let payload = fixture
+            .success("search_foods", json!({"query": "chicken"}))
+            .await;
+        let foods = payload["foods"].as_array().unwrap();
+        assert_eq!(foods[0]["id"], json!(Uuid::from_u128(1)));
+        assert_eq!(foods[1]["id"], json!(Uuid::from_u128(4)));
+        assert!(
+            foods
+                .iter()
+                .any(|food| food["id"] == json!(Uuid::from_u128(3)))
+        );
+        assert!(
+            foods
+                .iter()
+                .any(|food| food["id"] == json!(Uuid::from_u128(5)))
+        );
+
+        crate::connectors::user::cleanup_identity_test_database(&fixture.db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn mcp_food_search_ranks_visible_rows_and_refines_partial_results() {
+        let mut rows = vec![
+            json!({"id": 1, "name": "Guayába"}),
+            json!({"id": 2, "name": "Guayába"}),
+            json!({"id": 3, "name": "Guayába", "user_id": 1}),
+            json!({"id": 4, "name": "Z Bebida", "brand": "Guaya\u{301}ba"}),
+            json!({"id": 5, "name": "A Bebida", "brand": "GUAYÁBA"}),
+            json!({"id": 6, "name": "A Bebida", "brand": "Guayába"}),
+            json!({"id": 7, "name": "A Agua", "brand": "Guayába", "user_id": 1}),
+            json!({"id": 8, "name": "Z Guayaba", "user_id": 2, "official": true}),
+            json!({"id": 9, "name": "A Guayaba"}),
+            json!({"id": 10, "name": "A Guayaba"}),
+            json!({"id": 11, "name": "A Guayaba", "user_id": 1}),
+            json!({"id": 12, "name": "Guayába", "user_id": 2}),
+            json!({"id": 13, "name": "Guayába", "deleted_at": 2}),
+            json!({"id": 14, "name": "Guayába", "user_id": 1, "deleted_at": 2}),
+            json!({"id": 15, "name": "GUAYABA"}),
+        ];
+        rows.extend(
+            (1..=21).map(|lot| json!({"id": 100 + lot, "name": format!("Avena lote {lot:02}")})),
+        );
+        let Some((fixture, schema)) = food_search_fixture(json!(rows)).await else {
+            return;
+        };
+        // Exact name variants sort by stored name according to the database locale.
+        let exact_official: Vec<_> = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM meal_templates WHERE id = ANY($1) ORDER BY name, id",
+        )
+        .bind([1, 2, 15].map(Uuid::from_u128).as_slice())
+        .fetch_all(&fixture.db.sync.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|id| id.as_u128())
+        .collect();
+        for (args, exact, remaining) in [
+            (
+                json!({"query": "GUAYABA", "limit": 13}),
+                exact_official.clone(),
+                vec![3, 5, 6, 4, 7, 9, 10, 8, 11],
+            ),
+            (
+                json!({"query": "GUAYABA", "source": "official", "limit": 9}),
+                exact_official,
+                vec![5, 6, 4, 9, 10, 8],
+            ),
+            (
+                json!({"query": "GUAYABA", "source": "personal", "limit": 3}),
+                vec![3],
+                vec![7, 11],
+            ),
+        ] {
+            let result = fixture.success("search_foods", args).await;
+            assert_food_search_ids(&result, exact.into_iter().chain(remaining), false);
+        }
+        let other = dispatch(
+            &fixture.db,
+            &fixture.hub,
+            2,
+            "search_foods",
+            json!({
+                "query": "guayaba", "source": "personal"
+            }),
+        )
+        .await;
+        assert_food_search_ids(&other["structuredContent"], [12], false);
+
+        for (args, count) in [
+            (json!({"query": "avena lote"}), 10),
+            (json!({"query": "avena lote", "limit": 1}), 1),
+            (json!({"query": "avena lote", "limit": 20}), 20),
+        ] {
+            let (result, summary) = fixture.success_with_summary("search_foods", args).await;
+            assert_food_search_ids(&result, 101..=100 + count, true);
+            assert!(summary.starts_with(&format!(
+                "Se muestran {count} alimentos. Hay más coincidencias."
+            )));
+            assert!(summary.contains("Refina la búsqueda por nombre, marca o `source`"));
+            assert_eq!(summary.contains("aumentar `limit` hasta 20"), count < 20);
+            assert!(!summary.contains("21"));
+        }
+        let refined = fixture
+            .success("search_foods", json!({"query": "avena lote 21"}))
+            .await;
+        assert_food_search_ids(&refined, [121], false);
+        crate::connectors::user::cleanup_identity_test_database(&fixture.db, &schema).await;
     }
 
     #[tokio::test]
