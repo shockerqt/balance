@@ -16,15 +16,15 @@ modified. Operators can explicitly disable the target with
 `RUST_LOG=error,balance_mcp_observation=info` under their existing configuration
 workflow. This task does not authorize changing production service configuration.
 
-Only requests reaching the MCP route are observed. The wrapper runs outside its
-existing authentication and JSON extractors, preserving their rejection bodies,
-status codes and OAuth challenges. CORS/proxy/network rejection before this route
-is not observed. No request/response body buffering or second authentication
-layer is added.
+The exact-path MCP observer wraps POST authentication and message handling
+as well as the method fallback. A GET that passes the transport guards reaches
+that fallback and returns an observed 405. The Origin guard (403), explicit
+protocol version guard (400) and dedicated CORS preflight (200) run outside
+the observer. Proxy and network rejections can also occur upstream. The observer
+uses prepared response metadata and its existing bounded result inspection.
 
-The new events and the two former raw MCP database/internal-error logs are safe
-by construction. Existing unrelated auth/shared/WSS logs are not certified or
-changed by this task. Do not export a raw service journal as a diagnostic report.
+Use bounded observation events for reports. The service journal can include
+messages from other logging targets.
 
 ## Events and fields
 
@@ -45,8 +45,12 @@ Unknown JSON-RPC methods and tools become `unknown`. Before JSON extraction,
   and handler outcome for protocol and HTTP rejection paths. HTTP 200 can
   carry `json_rpc_error`. Returned HTTP errors use `http_rejected` with
   `auth_unauthorized` for 401, `http_forbidden` for 403, `method_not_allowed`
-  for 405, `json_rejected` for marked JSON extractor errors, and
-  `http_client_error` or `http_server_error` for remaining 4xx or 5xx responses.
+  for 405 and `json_rejected` for marked JSON extractor errors. The MCP
+  handler labels its HTTP 400 rejections `json_parse_error` for malformed JSON,
+  `invalid_envelope` for invalid JSON-RPC messages, `unsolicited_response`
+  for client responses and `unsupported_notification` for unsupported
+  notifications. Remaining 4xx or 5xx responses use `http_client_error` or
+  `http_server_error`, respectively.
   A normal tool preparation attempt deduplicates normal response logging even
   when its admission was denied. A returned HTTP error is observed separately.
 - `abandoned` records a polled route future dropping before it returns a
@@ -107,11 +111,11 @@ outcomes when classifying route completion.
 | Arrival, successful protocol response, or tool success outside an allowlisted `tools/call` | 8 | `suppressed_background` |
 | Allowlisted `tools/call` success | 12 | `suppressed_known_tool_success` |
 | HTTP 405 | 8 | `suppressed_method_not_allowed` |
-| Other HTTP 4xx, including 401, 403 and extractor 422 | 8 | `suppressed_other_client_error` |
+| Other HTTP 4xx, including 400, 401, 413 and 415 | 8 | `suppressed_other_client_error` |
 | HTTP 5xx | 8 | `suppressed_server_error` |
 | Abandoned route future | 8 | `suppressed_abandoned` |
-| Known or unknown tool error | 8 | `suppressed_tool_error` |
-| JSON-RPC error | 8 | `suppressed_json_rpc_error` |
+| Known tool error | 8 | `suppressed_tool_error` |
+| HTTP 200 JSON-RPC error, including unknown tools | 8 | `suppressed_json_rpc_error` |
 | Carried suppression summary | 1 | |
 
 Every attempt uses the current window, including late responses and drops.
@@ -172,9 +176,14 @@ before writing an archive, comparing it to the verified source and manifest run.
 No ARM binary is executed by inspection. Missing, stale, ambiguous or unknown
 compiled identity rejects production packaging.
 
-Delivery uses the existing immutable API build, read-only promotion plan and
-explicit approval of that exact artifact and expected-current source. Preserve
-the previous binary and existing health-failure rollback. After promotion, verify
-local/public health, source/run and new safe events. Record observation acceptance
-separately from Spark's actual display acceptance. No migration, key rotation,
-OAuth/Eri change, new logging backend, APK or OTA is part of this work.
+API promotion follows the immutable build artifact, read-only promotion plan
+and explicit approval of the artifact and expected-current source. For a target
+with approved browser origins, record the applied Infrastructure revision,
+environment and API service, with sanitized evidence that the service's next
+start will load a valid `MCP_ALLOWED_ORIGINS` with exactly those origins.
+Missing, empty, malformed, mismatched or unverified configuration blocks
+promotion for that target. After promotion, verify local and public health,
+source/run and safe observation events. Also verify the live approved-origin
+preflight (200), invalid explicit version on approved-origin OPTIONS (400)
+and browser-visible Bearer challenge (401). Keep the delivery record linked to
+the exact source, plan, approval, artifact and postchecks. [API delivery](delivery.md#api)
