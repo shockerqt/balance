@@ -1,15 +1,18 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Extension, Json, Router,
     extract::rejection::JsonRejection,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
+    http::{HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{MethodRouter, get, post},
 };
 use chrono::NaiveDate;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{MapAccess, Visitor},
+};
+use serde_json::{Value, json, value::RawValue};
 use uuid::Uuid;
 
 use crate::{
@@ -38,8 +41,13 @@ const AUTHORIZATION_SERVER: &str = "https://auth.shocker.cl/realms/balance";
 const TIMEZONE: &str = "America/Santiago";
 const SERVER_INSTRUCTIONS: &str = "Usa get_daily_log para consultar consumos y search_foods exclusivamente para el catálogo. Nunca uses search_foods para consultar consumos, historial o fechas. Usa get_weight_history, set_weight y delete_weight_log únicamente para peso corporal. Si el seguimiento de peso está desactivado, indica que debe habilitarse en Configuración de la app. Para varios días de comidas llama get_daily_log una vez por fecha exacta; una consulta de peso puede usar un rango. Omite date únicamente cuando el usuario dice hoy; hoy se interpreta en America/Santiago.";
 
+pub fn mcp_post() -> MethodRouter {
+    post(mcp_post_handler)
+}
+
+#[cfg(test)]
 pub fn mcp_routes() -> Router {
-    Router::new().route("/mcp", post(mcp_post_handler))
+    Router::new().route("/mcp", mcp_post())
 }
 
 pub fn mcp_metadata_routes(api: &OidcConfig, mcp: &OidcConfig) -> Router {
@@ -88,12 +96,92 @@ async fn oauth_protected_resource_metadata() -> impl IntoResponse {
     }))
 }
 
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    id: Option<Value>,
-    method: String,
-    params: Option<Value>,
+const LATEST_VERSION: &str = "2025-11-25";
+const JUNE_VERSION: &str = "2025-06-18";
+pub const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+
+pub fn supports_version(version: &HeaderValue) -> bool {
+    version == LATEST_VERSION || version == JUNE_VERSION
+}
+
+#[derive(Default)]
+struct Envelope<'a> {
+    fields: HashMap<String, &'a RawValue>,
+    duplicate: bool,
+}
+
+impl<'de> Deserialize<'de> for Envelope<'de> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct EnvelopeVisitor;
+
+        impl<'de> Visitor<'de> for EnvelopeVisitor {
+            type Value = Envelope<'de>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON-RPC object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Envelope<'de>, A::Error> {
+                let mut envelope = Envelope::default();
+                while let Some(name) = map.next_key::<String>()? {
+                    let value = map.next_value()?;
+                    envelope.duplicate |= envelope.fields.insert(name, value).is_some();
+                }
+                Ok(envelope)
+            }
+        }
+
+        deserializer.deserialize_map(EnvelopeVisitor)
+    }
+}
+
+fn valid_id(value: &RawValue) -> bool {
+    let value = value.get();
+    if value.starts_with('"') {
+        serde_json::from_str::<String>(value).is_ok()
+    } else {
+        value.parse::<i64>().is_ok() || value.parse::<u64>().is_ok()
+    }
+}
+
+fn valid_client_error(error: &RawValue) -> bool {
+    if !error.get().starts_with('{') {
+        return false;
+    }
+    serde_json::from_str::<HashMap<String, &RawValue>>(error.get()).is_ok_and(|error| {
+        error.get("code").is_some_and(|code| {
+            let code = code.get();
+            code.strip_prefix('-')
+                .unwrap_or(code)
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+        }) && error
+            .get("message")
+            .is_some_and(|message| serde_json::from_str::<String>(message.get()).is_ok())
+    })
+}
+
+fn initialization_version(params: Option<&Value>) -> Option<&'static str> {
+    let params = params?.as_object()?;
+    let proposal = params.get("protocolVersion")?.as_str()?;
+    let bytes = proposal.as_bytes();
+    if bytes.len() != 10
+        || !bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return None;
+    }
+    params.get("capabilities")?.as_object()?;
+    let client = params.get("clientInfo")?.as_object()?;
+    client.get("name")?.as_str()?;
+    client.get("version")?.as_str()?;
+    Some(if proposal == JUNE_VERSION {
+        JUNE_VERSION
+    } else {
+        LATEST_VERSION
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,79 +299,176 @@ fn default_weight_limit() -> i64 {
 }
 
 #[derive(Clone, Copy)]
-struct JsonExtractorRejected;
+struct MessageRejection(&'static str);
+
+fn reject_message(code: i32, id: Option<&RawValue>) -> Response {
+    let (message, label) = match code {
+        -32700 => ("Parse error", "json_parse_error"),
+        _ => ("Invalid Request", "invalid_envelope"),
+    };
+    let mut response = (StatusCode::BAD_REQUEST, json_rpc_error(id, code, message)).into_response();
+    response.extensions_mut().insert(MessageRejection(label));
+    response
+}
+
+fn reject_without_reply(label: &'static str) -> Response {
+    let mut response = StatusCode::BAD_REQUEST.into_response();
+    response.extensions_mut().insert(MessageRejection(label));
+    response
+}
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+struct DispatchCount(Arc<std::sync::atomic::AtomicUsize>);
 
 async fn mcp_post_handler(
     Extension(db): Extension<Arc<Database>>,
     Extension(sync_hub): Extension<SyncHub>,
     Extension(user): Extension<CurrentUser>,
     observation: Option<Extension<observation::Observation>>,
-    payload: Result<Json<JsonRpcRequest>, JsonRejection>,
-) -> impl IntoResponse {
-    let Json(payload) = match payload {
-        Ok(payload) => payload,
+    #[cfg(test)] dispatch_count: Option<Extension<DispatchCount>>,
+    payload: Result<Json<Box<RawValue>>, JsonRejection>,
+) -> Response {
+    let raw = match payload {
+        Ok(Json(raw)) => raw,
+        Err(JsonRejection::JsonSyntaxError(_) | JsonRejection::JsonDataError(_)) => {
+            return reject_message(-32700, None);
+        }
         Err(rejection) => {
             let mut response = rejection.into_response();
-            response.extensions_mut().insert(JsonExtractorRejected);
+            response
+                .extensions_mut()
+                .insert(MessageRejection("json_rejected"));
             return response;
         }
     };
-    let observation = observation.as_ref().map(|Extension(value)| value);
-    if let Some(observation) = observation {
-        observation.request(
-            &payload.method,
-            (payload.method == "tools/call").then(|| {
-                payload
-                    .params
-                    .as_ref()
-                    .and_then(|p| p.get("name"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-            }),
-        );
+    // RawValue checks the complete JSON text without decoding a batch's entries.
+    if !raw.get().starts_with('{') {
+        return reject_message(-32600, None);
     }
-    if payload.jsonrpc != "2.0" {
+    let Envelope {
+        mut fields,
+        duplicate,
+    } = match serde_json::from_str(raw.get()) {
+        Ok(envelope) => envelope,
+        Err(_) => return reject_message(-32700, None),
+    };
+    if duplicate {
+        return reject_message(-32600, None);
+    }
+    let id = fields.remove("id");
+    if id.is_some_and(|id| !valid_id(id)) {
+        return reject_message(-32600, None);
+    }
+    let method = fields.remove("method");
+    let params = fields.remove("params");
+    let is_rpc_2 = fields.remove("jsonrpc").is_some_and(|version| {
+        serde_json::from_str::<String>(version.get()).is_ok_and(|version| version == "2.0")
+    });
+
+    if fields.contains_key("result") || fields.contains_key("error") {
+        let valid_response = match (fields.remove("result"), fields.remove("error")) {
+            (Some(result), None) => id.is_some() && result.get().starts_with('{'),
+            (None, Some(error)) => valid_client_error(error),
+            _ => false,
+        };
+        return if is_rpc_2 && method.is_none() && params.is_none() && valid_response {
+            reject_without_reply("unsolicited_response")
+        } else {
+            reject_message(-32600, None)
+        };
+    }
+    let Some(method) = method.and_then(|method| serde_json::from_str::<String>(method.get()).ok())
+    else {
+        return reject_message(-32600, None);
+    };
+    let method = method.as_str();
+    if !is_rpc_2 {
+        return reject_message(-32600, id);
+    }
+
+    let observation = observation.as_ref().map(|Extension(value)| value);
+    let notification_only = matches!(
+        method,
+        "notifications/initialized" | "notifications/cancelled"
+    );
+    let Some(id) = id else {
+        if notification_only {
+            if let Some(observation) = observation {
+                observation.request(method, None);
+                observation.outcome("notification_accepted");
+            }
+            // The stateless transport has no in-flight request registry to cancel.
+            return StatusCode::ACCEPTED.into_response();
+        }
+        return reject_without_reply("unsupported_notification");
+    };
+    if notification_only {
+        return reject_message(-32600, Some(id));
+    }
+
+    let params = params.map(|raw| serde_json::from_str::<Value>(raw.get()).unwrap_or(Value::Null));
+    let params = params.as_ref();
+    let tool_name = (method == "tools/call").then(|| {
+        params
+            .and_then(|params| params.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    });
+    if let Some(observation) = observation {
+        observation.request(method, tool_name);
+    }
+
+    // Headerless operations use the common single-message behavior of 2025-03-26.
+    // Explicit supported versions share those same operations.
+    let rpc_error = |code, message| {
         if let Some(observation) = observation {
             observation.outcome("json_rpc_error");
         }
-        return json_rpc_error(payload.id, -32600, "Invalid JSON-RPC version");
-    }
-    let id = payload.id.unwrap_or(Value::Null);
-    match payload.method.as_str() {
-        "initialize" => Json(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "protocolVersion": "2025-11-25",
-                "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "balance", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": SERVER_INSTRUCTIONS
-            }
-        }))
-        .into_response(),
-        "notifications/initialized" => {
-            if let Some(observation) = observation {
-                observation.outcome("notification_accepted");
-            }
-            StatusCode::ACCEPTED.into_response()
+        json_rpc_error(Some(id), code, message)
+    };
+    match method {
+        "initialize" => {
+            let Some(version) = initialization_version(params) else {
+                return rpc_error(-32602, "Invalid initialize parameters");
+            };
+            json_rpc_result(
+                id,
+                &json!({
+                    "protocolVersion": version,
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": "balance", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": SERVER_INSTRUCTIONS
+                }),
+            )
         }
-        "ping" => Json(json!({"jsonrpc": "2.0", "id": id, "result": {}})).into_response(),
-        "tools/list" => Json(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": { "tools": tool_definitions() }
-        }))
-        .into_response(),
+        "ping" | "tools/list" => {
+            if params.is_some_and(|params| !params.is_object()) {
+                return rpc_error(-32602, "Invalid params");
+            }
+            let result = if method == "ping" {
+                json!({})
+            } else {
+                json!({"tools": tool_definitions()})
+            };
+            json_rpc_result(id, &result)
+        }
         "tools/call" => {
-            let params = payload.params.unwrap_or_else(|| json!({}));
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let args = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
+            let name = tool_name.unwrap_or_default();
+            let arguments = params.and_then(|params| params.get("arguments"));
+            if name.is_empty() || arguments.is_some_and(|args| !args.is_object()) {
+                return rpc_error(-32602, "Invalid tools/call parameters");
+            }
+            if known_tool(name).is_none() {
+                return rpc_error(-32602, "Unknown tool");
+            }
+            let args = arguments.cloned().unwrap_or_else(|| json!({}));
+            #[cfg(test)]
+            if let Some(Extension(dispatch_count)) = dispatch_count {
+                dispatch_count
+                    .0
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let mut food_log_committed = false;
             let result = call_tool(&db, user.id, name, args, &mut food_log_committed).await;
             let collection = if food_log_committed {
@@ -301,12 +486,22 @@ async fn mcp_post_handler(
                 Err(error) => tool_failure(id, error, observation),
             }
         }
-        _ => {
-            if let Some(observation) = observation {
-                observation.outcome("json_rpc_error");
-            }
-            json_rpc_error(Some(id), -32601, "Method not found")
-        }
+        _ => rpc_error(-32601, "Method not found"),
+    }
+}
+
+fn known_tool(tool: &str) -> Option<&'static str> {
+    match tool {
+        "search_foods" => Some("search_foods"),
+        "get_daily_log" => Some("get_daily_log"),
+        "create_food" => Some("create_food"),
+        "log_food" => Some("log_food"),
+        "update_food_log" => Some("update_food_log"),
+        "delete_food_log" => Some("delete_food_log"),
+        "get_weight_history" => Some("get_weight_history"),
+        "set_weight" => Some("set_weight"),
+        "delete_weight_log" => Some("delete_weight_log"),
+        _ => None,
     }
 }
 
@@ -910,28 +1105,25 @@ pub(crate) fn embedded_json(text: &str) -> &str {
 }
 
 fn tool_success(
-    id: Value,
+    id: impl Serialize,
     summary: &str,
     structured: Value,
     observation: Option<&observation::Observation>,
 ) -> axum::response::Response {
-    let envelope = json!({
-        "jsonrpc": "2.0", "id": id,
-        "result": {
-            "content": [{ "type": "text", "text": readable_tool_text(summary, &structured) }],
-            "structuredContent": structured,
-            "isError": false
-        }
+    let result = json!({
+        "content": [{ "type": "text", "text": readable_tool_text(summary, &structured) }],
+        "structuredContent": structured,
+        "isError": false
     });
-    let response = Json(&envelope).into_response();
+    let response = json_rpc_result(id, &result);
     if let Some(observation) = observation {
-        observation.result(&response, &envelope["result"], "none");
+        observation.result(&response, &result, "none");
     }
     response
 }
 
 fn tool_failure(
-    id: Value,
+    id: impl Serialize,
     error: AppError,
     observation: Option<&observation::Observation>,
 ) -> axum::response::Response {
@@ -950,27 +1142,48 @@ fn tool_failure(
             ("internal_error", "Internal operation failed".into())
         }
     };
-    let envelope = json!({
-        "jsonrpc": "2.0", "id": id,
-        "result": {
-            "content": [{ "type": "text", "text": message }],
-            "structuredContent": { "error": { "code": code, "message": message } },
-            "isError": true
-        }
+    let result = json!({
+        "content": [{ "type": "text", "text": message }],
+        "structuredContent": { "error": { "code": code, "message": message } },
+        "isError": true
     });
-    let response = Json(&envelope).into_response();
+    let response = json_rpc_result(id, &result);
     if let Some(observation) = observation {
-        observation.result(&response, &envelope["result"], code);
+        observation.result(&response, &result, code);
     }
     response
 }
 
-fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> axum::response::Response {
-    Json(json!({
-        "jsonrpc": "2.0",
-        "id": id.unwrap_or(Value::Null),
-        "error": { "code": code, "message": message }
-    }))
+fn json_rpc_result(id: impl Serialize, result: &Value) -> Response {
+    #[derive(Serialize)]
+    struct Reply<'a, I> {
+        jsonrpc: &'static str,
+        id: I,
+        result: &'a Value,
+    }
+
+    Json(Reply {
+        jsonrpc: "2.0",
+        id,
+        result,
+    })
+    .into_response()
+}
+
+fn json_rpc_error(id: Option<&RawValue>, code: i32, message: &str) -> Response {
+    #[derive(Serialize)]
+    struct ErrorReply<'a> {
+        jsonrpc: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<&'a RawValue>,
+        error: Value,
+    }
+
+    Json(ErrorReply {
+        jsonrpc: "2.0",
+        id,
+        error: json!({ "code": code, "message": message }),
+    })
     .into_response()
 }
 
@@ -1476,6 +1689,412 @@ fn non_negative_number_schema() -> Value {
 mod tests {
     use super::*;
 
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, header},
+    };
+    use tower::ServiceExt;
+
+    fn handler_router(db: Arc<Database>, hub: SyncHub, user_id: i32) -> Router {
+        mcp_routes()
+            .layer(Extension(db))
+            .layer(Extension(hub))
+            .layer(Extension(CurrentUser { id: user_id }))
+    }
+
+    fn protocol_fixture() -> (Router, DispatchCount) {
+        use crate::connectors::{
+            imports::ImportDatasource, sync::SyncDatasource, user::UserDatasource,
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://synthetic@127.0.0.1:1/unused")
+            .unwrap();
+        let db = Arc::new(Database {
+            user: UserDatasource { pool: pool.clone() },
+            sync: SyncDatasource::new(pool.clone()),
+            imports: ImportDatasource::new(pool),
+        });
+        // Supply the authenticated identity at the auth/handler boundary.
+        let count = DispatchCount::default();
+        (
+            crate::mcp_transport(
+                handler_router(db, SyncHub::default(), 1),
+                Default::default(),
+            )
+            .layer(Extension(count.clone())),
+            count,
+        )
+    }
+
+    fn rpc_request(body: impl Into<Body>) -> Request<Body> {
+        Request::post("/mcp")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body.into())
+            .unwrap()
+    }
+
+    async fn reply_body(response: Response, status: StatusCode) -> Value {
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    async fn assert_bad_message(response: Response, code: i32, id: Option<Value>) {
+        let reply = reply_body(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(reply["jsonrpc"], "2.0");
+        assert_eq!(reply["error"]["code"], code);
+        assert_eq!(reply.get("id"), id.as_ref());
+        assert_eq!(
+            reply.as_object().unwrap().len(),
+            2 + usize::from(id.is_some())
+        );
+    }
+
+    async fn assert_empty(response: Response, status: StatusCode) {
+        assert_eq!(response.status(), status);
+        assert!(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    impl DispatchCount {
+        fn calls(&self) -> usize {
+            self.0.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_unsolicited_responses() {
+        let (app, count) = protocol_fixture();
+        assert_unsolicited_responses(&app, |body| rpc_request(body.to_owned())).await;
+        assert_eq!(count.calls(), 0);
+    }
+
+    async fn assert_unsolicited_responses(app: &Router, request: impl Fn(&str) -> Request<Body>) {
+        for body in [
+            r#"{"jsonrpc":"2.0","id":"reply","result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params"}}"#,
+            r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params"}}"#,
+        ] {
+            assert_empty(
+                app.clone().oneshot(request(body)).await.unwrap(),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        }
+        for body in [
+            r#"{"jsonrpc":"2.0","result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":[]}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":1,"message":"error"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{},"method":"tools/call"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{},"params":null}"#,
+            r#"{"jsonrpc":"2.0","error":{"code":1.5,"message":"error"}}"#,
+            r#"{"jsonrpc":"2.0","error":{"code":1,"message":false}}"#,
+        ] {
+            assert_bad_message(
+                app.clone().oneshot(request(body)).await.unwrap(),
+                -32600,
+                None,
+            )
+            .await;
+        }
+        for id in [json!(null), json!(1.5), json!(false), json!({}), json!([])] {
+            let body = json!({"jsonrpc":"2.0","id":id,"error":{"code":1,"message":"error"}});
+            assert_bad_message(
+                app.clone()
+                    .oneshot(request(&body.to_string()))
+                    .await
+                    .unwrap(),
+                -32600,
+                None,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_duplicate_envelope_members() {
+        let (app, count) = protocol_fixture();
+        assert_duplicate_envelope_members(&app, |body| rpc_request(body.to_owned())).await;
+        assert_eq!(count.calls(), 0);
+    }
+
+    async fn assert_duplicate_envelope_members(
+        app: &Router,
+        request: impl Fn(&str) -> Request<Body>,
+    ) {
+        for body in [
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","method":"tools/list"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}"#,
+            r#"{"jsonrpc":"2.0","id":1e1000,"id":2,"method":"ping"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{},"params":{}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","m\u0065thod":"ping"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping","ignored":1,"ignored":2}"#,
+        ] {
+            assert_bad_message(
+                app.clone().oneshot(request(body)).await.unwrap(),
+                -32600,
+                None,
+            )
+            .await;
+        }
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{"nested":1,"nested":2}}"#;
+        let reply = reply_body(
+            app.clone().oneshot(request(body)).await.unwrap(),
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(reply["result"], json!({}));
+        let body = r#"{"jsonrpc":"2.0","id":1,"id":2,"method":"ping",}"#;
+        assert_bad_message(
+            app.clone().oneshot(request(body)).await.unwrap(),
+            -32700,
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mcp_single_message_ids_and_notifications() {
+        let (app, count) = protocol_fixture();
+        for id in [
+            json!("opaque-001"),
+            json!(-9_007_199_254_740_993_i64),
+            json!(i64::MIN),
+            json!(u64::MAX),
+        ] {
+            let body = json!({"jsonrpc":"2.0","id":id,"method":"ping"});
+            let reply = reply_body(
+                app.clone()
+                    .oneshot(rpc_request(body.to_string()))
+                    .await
+                    .unwrap(),
+                StatusCode::OK,
+            )
+            .await;
+            assert_eq!(reply, json!({"jsonrpc":"2.0","id":id,"result":{}}));
+        }
+        let response = app
+            .clone()
+            .oneshot(rpc_request(r#"{"jsonrpc":"2.0","id":-0,"method":"ping"}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let reply: HashMap<String, &RawValue> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(reply["id"].get(), "-0");
+
+        for id in [
+            json!(null),
+            json!(1.5),
+            json!(1.0),
+            json!(true),
+            json!({}),
+            json!([]),
+        ] {
+            let body = json!({"jsonrpc":"2.0","id":id,"method":"ping"});
+            assert_bad_message(
+                app.clone()
+                    .oneshot(rpc_request(body.to_string()))
+                    .await
+                    .unwrap(),
+                -32600,
+                None,
+            )
+            .await;
+        }
+        for (body, id) in [
+            ("null", None),
+            ("{}", None),
+            (r#"{"jsonrpc":"2.0","id":1,"method":false}"#, None),
+            (
+                r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#,
+                Some(json!(1)),
+            ),
+            (
+                r#"{"jsonrpc":"2.0","id":1,"method":"notifications/initialized"}"#,
+                Some(json!(1)),
+            ),
+            (
+                r#"{"jsonrpc":"2.0","id":1,"method":"notifications/cancelled"}"#,
+                Some(json!(1)),
+            ),
+        ] {
+            assert_bad_message(
+                app.clone().oneshot(rpc_request(body)).await.unwrap(),
+                -32600,
+                id,
+            )
+            .await;
+        }
+        for (body, status) in [
+            (
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                StatusCode::ACCEPTED,
+            ),
+            (
+                r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"unknown"}}"#,
+                StatusCode::ACCEPTED,
+            ),
+            (
+                r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":true}"#,
+                StatusCode::ACCEPTED,
+            ),
+            (
+                r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_food"}}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                r#"{"jsonrpc":"2.0","method":"ping"}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            assert_empty(
+                app.clone().oneshot(rpc_request(body)).await.unwrap(),
+                status,
+            )
+            .await;
+        }
+        assert_eq!(count.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn mcp_negotiates_versions_and_rejects_invalid_method_params() {
+        let (app, count) = protocol_fixture();
+        let initialize =
+            |params: Value| json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":params});
+        let params = |proposal: &str| {
+            json!({
+                "protocolVersion": proposal, "capabilities": {},
+                "clientInfo": {"name":"client","version":"1"}
+            })
+        };
+        for (header, proposed, version) in [
+            (None, LATEST_VERSION, LATEST_VERSION),
+            (None, JUNE_VERSION, JUNE_VERSION),
+            (Some(JUNE_VERSION), JUNE_VERSION, JUNE_VERSION),
+            (Some(LATEST_VERSION), "2025-03-26", LATEST_VERSION),
+        ] {
+            let mut request = rpc_request(initialize(params(proposed)).to_string());
+            if let Some(header) = header {
+                request
+                    .headers_mut()
+                    .insert(PROTOCOL_VERSION_HEADER, HeaderValue::from_static(header));
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert!(!response.headers().contains_key("mcp-session-id"));
+            let reply = reply_body(response, StatusCode::OK).await;
+            assert_eq!(reply["result"]["protocolVersion"], version);
+        }
+        for bad in [
+            json!(null),
+            json!({}),
+            json!([]),
+            params("bad-version"),
+            params("2025-1-01"),
+            json!({"protocolVersion":LATEST_VERSION,"capabilities":[],"clientInfo":{"name":"c","version":"1"}}),
+            json!({"protocolVersion":LATEST_VERSION,"capabilities":{},"clientInfo":{"name":"c"}}),
+            json!({"protocolVersion":LATEST_VERSION,"capabilities":{},"clientInfo":{"name":"c","version":1}}),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(rpc_request(initialize(bad).to_string()))
+                .await
+                .unwrap();
+            assert_eq!(
+                reply_body(response, StatusCode::OK).await["error"]["code"],
+                -32602
+            );
+        }
+        for (method, params, code) in [
+            ("unknown", json!({}), -32601),
+            ("ping", json!([]), -32602),
+            ("tools/list", json!(null), -32602),
+            ("tools/call", json!([]), -32602),
+            ("tools/call", json!({"name":""}), -32602),
+            ("tools/call", json!({"name":4}), -32602),
+            (
+                "tools/call",
+                json!({"name":"log_food","arguments":[]}),
+                -32602,
+            ),
+            (
+                "tools/call",
+                json!({"name":"log_food","arguments":null}),
+                -32602,
+            ),
+            ("tools/call", json!({"name":"unknown"}), -32602),
+        ] {
+            let body = json!({"jsonrpc":"2.0","id":"rpc","method":method,"params":params});
+            let response = app
+                .clone()
+                .oneshot(rpc_request(body.to_string()))
+                .await
+                .unwrap();
+            let reply = reply_body(response, StatusCode::OK).await;
+            assert_eq!(reply["error"]["code"], code);
+            assert_eq!(reply["id"], "rpc");
+        }
+        assert_eq!(count.calls(), 0);
+        let body =
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_foods"}}"#;
+        let reply = reply_body(
+            app.oneshot(rpc_request(body)).await.unwrap(),
+            StatusCode::OK,
+        )
+        .await;
+        assert_tool_error(&reply["result"], "invalid_arguments");
+        assert_eq!(count.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_rejects_batches_and_preserves_json_extractor_limits() {
+        let (app, count) = protocol_fixture();
+        for body in [
+            "[]",
+            "[1e1000]",
+            r#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#,
+            r#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]"#,
+            r#"[true,{"jsonrpc":"2.0","id":1,"method":"tools/list"}]"#,
+        ] {
+            for header in [None, Some(LATEST_VERSION)] {
+                let mut request = rpc_request(body);
+                if let Some(header) = header {
+                    request
+                        .headers_mut()
+                        .insert(PROTOCOL_VERSION_HEADER, HeaderValue::from_static(header));
+                }
+                assert_bad_message(app.clone().oneshot(request).await.unwrap(), -32600, None).await;
+            }
+        }
+        for body in ["{", "[}", "{} {}"] {
+            assert_bad_message(
+                app.clone().oneshot(rpc_request(body)).await.unwrap(),
+                -32700,
+                None,
+            )
+            .await;
+        }
+        let wrong_type = Request::post("/mcp")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("{}"))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(wrong_type).await.unwrap().status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+        );
+        let oversized = rpc_request(" ".repeat(2 * 1024 * 1024 + 1));
+        assert_eq!(
+            app.oneshot(oversized).await.unwrap().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(count.calls(), 0);
+    }
+
     fn validator(schema: &Value, formats: bool) -> jsonschema::Validator {
         jsonschema::draft202012::options()
             .should_validate_formats(formats)
@@ -1824,25 +2443,18 @@ mod tests {
         name: &str,
         args: Value,
     ) -> Value {
-        let response = mcp_post_handler(
-            Extension(db.clone()),
-            Extension(hub.clone()),
-            Extension(CurrentUser { id: user_id }),
-            None,
-            Ok(Json(JsonRpcRequest {
-                jsonrpc: "2.0".into(),
-                id: Some(json!(1)),
-                method: "tools/call".into(),
-                params: Some(json!({"name": name, "arguments": args})),
-            })),
-        )
-        .await
-        .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        let request = rpc_request(
+            json!({
+                "jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":name,"arguments":args}
+            })
+            .to_string(),
+        );
+        let response = handler_router(db.clone(), hub.clone(), user_id)
+            .oneshot(request)
             .await
             .unwrap();
-        let envelope: Value = serde_json::from_slice(&body).unwrap();
+        let envelope = reply_body(response, StatusCode::OK).await;
         assert_eq!(envelope["jsonrpc"], "2.0");
         assert_eq!(envelope["id"], 1);
         envelope["result"].clone()
@@ -1980,17 +2592,28 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_dispatch_contract_postgres() {
-        let Ok(database_url) = std::env::var("BALANCE_TEST_DATABASE_URL") else {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
             return;
         };
-        let db = Arc::new(Database::new(&database_url).await.unwrap());
-        let scope = Uuid::new_v4();
-        // Keep fixture users outside the IDs used by older tests.
-        let user_id = 1_000_000 + (scope.as_u128() % 1_000_000_000) as i32;
-        sqlx::query("INSERT INTO users (id, email) VALUES ($1, $2)")
-            .bind(user_id)
-            .bind(format!("bal080-{scope}@example.invalid"))
-            .execute(&db.sync.pool)
+        let oidc = OidcConfig::test_cached_subject_config().mcp_config();
+        let subject = "mcp-contract-fixture";
+        let user = db
+            .user
+            .provision_identity(
+                oidc.issuer(),
+                subject,
+                &NewUser {
+                    email: "mcp-contract@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
             .await
             .unwrap();
 
@@ -2009,21 +2632,82 @@ mod tests {
                 .collect()
         };
         let fixture = ContractFixture {
-            db,
+            db: Arc::new(db),
             hub: SyncHub::default(),
-            user_id,
+            user_id: user.id,
             input: compile("inputSchema"),
             output: compile("outputSchema"),
         };
+        assert_authenticated_rejections_are_inert(&fixture, oidc, subject).await;
         dispatch_weight_contract(&fixture).await;
         dispatch_food_contract(&fixture).await;
         dispatch_nutrition_overflow(&fixture).await;
 
-        sqlx::query("DELETE FROM users WHERE id = $1")
-            .bind(user_id)
-            .execute(&fixture.db.sync.pool)
-            .await
-            .unwrap();
+        cleanup_identity_test_database(&fixture.db, &schema).await;
+    }
+
+    async fn assert_authenticated_rejections_are_inert(
+        fixture: &ContractFixture,
+        oidc: OidcConfig,
+        subject: &str,
+    ) {
+        let mut jwt_header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        jwt_header.typ = Some("at+jwt".into());
+        jwt_header.kid = Some("public-test-only".into());
+        let token = jsonwebtoken::encode(
+            &jwt_header,
+            &json!({
+                "sub": subject,
+                "iss": oidc.issuer(),
+                "aud": oidc.resource().unwrap(),
+                "exp": chrono::Utc::now().timestamp() + 120,
+            }),
+            &jsonwebtoken::EncodingKey::from_rsa_pem(include_bytes!(
+                "../auth/fixtures/PUBLIC-TEST-ONLY-active-private.pem"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let authorization = HeaderValue::from_str(&format!("Bearer {token}")).unwrap();
+        let request = |body: &str| {
+            let mut request = rpc_request(body.to_owned());
+            request
+                .headers_mut()
+                .insert(header::AUTHORIZATION, authorization.clone());
+            request
+        };
+
+        let count = DispatchCount::default();
+        let router = crate::mcp_transport(crate::mcp_authenticated(oidc), Default::default())
+            .layer(Extension(fixture.db.clone()))
+            .layer(Extension(fixture.hub.clone()))
+            .layer(Extension(count.clone()));
+        let mut events = fixture.hub.subscribe();
+        assert_unsolicited_responses(&router, &request).await;
+        assert_duplicate_envelope_members(&router, &request).await;
+        assert_eq!(count.calls(), 0);
+
+        let args = create_args(Uuid::new_v4());
+        assert_valid(&fixture.input["create_food"], &args);
+        let params = json!({"name":"create_food","arguments":args});
+        let duplicate = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{}},"params":{params}}}"#
+        );
+        let mutation = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":params});
+        let batch = json!([mutation]).to_string();
+        for body in [duplicate, batch] {
+            let response = router.clone().oneshot(request(&body)).await.unwrap();
+            assert_bad_message(response, -32600, None).await;
+            assert_eq!(count.calls(), 0);
+            assert_no_invalidation(&mut events);
+            let stored: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE user_id = $1")
+                    .bind(fixture.user_id)
+                    .fetch_one(&fixture.db.sync.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, 0);
+        }
     }
 
     async fn dispatch_weight_contract(fixture: &ContractFixture) {
@@ -2971,7 +3655,8 @@ mod tests {
 
     #[test]
     fn test_json_rpc_error_response_envelope() {
-        let res = json_rpc_error(Some(json!(5)), -32601, "Method not found");
+        let id = serde_json::value::to_raw_value(&5).unwrap();
+        let res = json_rpc_error(Some(&id), -32601, "Method not found");
         let val = extract_json_response(res);
 
         assert_eq!(val["jsonrpc"], "2.0");

@@ -215,13 +215,14 @@ impl Observation {
         details.method = match method {
             "initialize" => "initialize",
             "notifications/initialized" => "initialized",
+            "notifications/cancelled" => "cancelled",
             "ping" => "ping",
             "tools/list" => "tools_list",
             "tools/call" => "tools_call",
             _ => "unknown",
         };
         details.tool = tool.map_or("not_applicable", |tool| {
-            known_tool(tool).unwrap_or("unknown")
+            super::known_tool(tool).unwrap_or("unknown")
         });
         details.outcome = "protocol_success";
     }
@@ -267,7 +268,7 @@ impl Observation {
         };
         let class = if is_error {
             EventClass::ToolError
-        } else if details.method == "tools_call" && known_tool(details.tool).is_some() {
+        } else if details.method == "tools_call" && super::known_tool(details.tool).is_some() {
             EventClass::KnownToolSuccess
         } else {
             EventClass::Background
@@ -288,19 +289,15 @@ impl Observation {
         let status = response.status();
         let class = if status.is_client_error() || status.is_server_error() {
             details.outcome = "http_rejected";
-            details.error_class = match status {
-                StatusCode::UNAUTHORIZED => "auth_unauthorized",
-                StatusCode::FORBIDDEN => "http_forbidden",
-                StatusCode::METHOD_NOT_ALLOWED => "method_not_allowed",
-                _ if response
-                    .extensions()
-                    .get::<super::JsonExtractorRejected>()
-                    .is_some() =>
-                {
-                    "json_rejected"
-                }
-                _ if status.is_client_error() => "http_client_error",
-                _ => "http_server_error",
+            details.error_class = match response.extensions().get::<super::MessageRejection>() {
+                Some(rejection) => rejection.0,
+                None => match status {
+                    StatusCode::UNAUTHORIZED => "auth_unauthorized",
+                    StatusCode::FORBIDDEN => "http_forbidden",
+                    StatusCode::METHOD_NOT_ALLOWED => "method_not_allowed",
+                    _ if status.is_client_error() => "http_client_error",
+                    _ => "http_server_error",
+                },
             };
             match status {
                 StatusCode::METHOD_NOT_ALLOWED => EventClass::MethodNotAllowed,
@@ -391,21 +388,6 @@ impl ResponseFields {
     }
 }
 
-fn known_tool(tool: &str) -> Option<&'static str> {
-    match tool {
-        "search_foods" => Some("search_foods"),
-        "get_daily_log" => Some("get_daily_log"),
-        "create_food" => Some("create_food"),
-        "log_food" => Some("log_food"),
-        "update_food_log" => Some("update_food_log"),
-        "delete_food_log" => Some("delete_food_log"),
-        "get_weight_history" => Some("get_weight_history"),
-        "set_weight" => Some("set_weight"),
-        "delete_weight_log" => Some("delete_weight_log"),
-        _ => None,
-    }
-}
-
 struct Completion {
     observation: Observation,
     completed: bool,
@@ -426,10 +408,7 @@ mod tests {
         db::Database, imports::ImportDatasource, sync::SyncDatasource, user::UserDatasource,
     };
     use crate::modules::{
-        auth::{
-            middleware::{CurrentUser, auth},
-            oidc::OidcConfig,
-        },
+        auth::{middleware::CurrentUser, oidc::OidcConfig},
         sync::hub::SyncHub,
     };
     use axum::{
@@ -499,57 +478,33 @@ mod tests {
             .layer(Extension(CurrentUser { id: 987654321 }))
     }
 
-    // Protocol paths use the real handler; only the query result is supplied by
-    // a synthetic fixture, then passed through the real final-result helper.
+    // Only the query result is synthetic. Use the actual final-result helper.
     async fn history_fixture_handler(
-        db: Extension<Arc<Database>>,
-        hub: Extension<SyncHub>,
-        user: Extension<CurrentUser>,
         observation: Option<Extension<Observation>>,
-        Json(payload): Json<super::super::JsonRpcRequest>,
+        Json(payload): Json<Value>,
     ) -> Response {
-        if payload.method == "tools/call"
-            && payload
-                .params
-                .as_ref()
-                .and_then(|p| p.get("name"))
-                .and_then(Value::as_str)
-                == Some("get_weight_history")
-        {
-            let observation = observation.as_ref().map(|Extension(value)| value);
-            if let Some(observation) = observation {
-                observation.request("tools/call", Some("get_weight_history"));
-            }
-            return super::super::tool_success(
-                payload.id.unwrap_or(Value::Null),
-                "RESULT_SECRET",
-                json!({"entries":[
-                    {"date":"2099-01-01","weightKg":123.4},
-                    {"date":"2099-01-02","weightKg":234.5},
-                    {"date":"2099-01-03","weightKg":345.6}
-                ]}),
-                observation,
-            );
+        let observation = observation.as_ref().map(|Extension(value)| value);
+        if let Some(observation) = observation {
+            observation.request("tools/call", Some("get_weight_history"));
         }
-        super::super::mcp_post_handler(db, hub, user, observation, Ok(Json(payload)))
-            .await
-            .into_response()
+        super::super::tool_success(
+            payload["id"].clone(),
+            "RESULT_SECRET",
+            json!({"entries":[
+                {"date":"2099-01-01","weightKg":123.4},
+                {"date":"2099-01-02","weightKg":234.5},
+                {"date":"2099-01-03","weightKg":345.6}
+            ]}),
+            observation,
+        )
     }
 
     fn history_fixture_router() -> Router {
-        Router::new()
-            .route("/mcp", post(history_fixture_handler))
-            .layer(Extension(lazy_database()))
-            .layer(Extension(SyncHub::default()))
-            .layer(Extension(CurrentUser { id: 987654321 }))
+        Router::new().route("/mcp", post(history_fixture_handler))
     }
 
     fn auth_router() -> Router {
-        super::super::mcp_routes()
-            .route_layer(middleware::from_fn_with_state(
-                OidcConfig::test_cached_subject_config().mcp_config(),
-                auth,
-            ))
+        crate::mcp_authenticated(OidcConfig::test_cached_subject_config().mcp_config())
             .layer(Extension(lazy_database()))
     }
 
@@ -605,12 +560,36 @@ mod tests {
             let handler = observe_with(handler_router(), observer.clone());
             for _ in 0..10 {
                 let response = handler.clone().oneshot(request(
-                    r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"initialize"}"#,
+                    r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"observation-test","version":"1"}}}"#,
                 )).await.unwrap();
                 assert_eq!(response.status(), StatusCode::OK);
             }
+            let origin = "https://observation.example.invalid";
+            let production = crate::mcp_transport(
+                observe_with(auth_router(), observer.clone()),
+                crate::McpAllowedOrigins::parse(origin).unwrap(),
+            );
+            let before = capture.text();
+            for (origin, version, status) in [
+                (origin, None, StatusCode::OK),
+                (origin, Some("VERSION_SECRET"), StatusCode::BAD_REQUEST),
+                ("https://origin-secret.example.invalid", Some("VERSION_SECRET"), StatusCode::FORBIDDEN),
+            ] {
+                let mut preflight = HttpRequest::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/mcp")
+                    .header(header::ORIGIN, origin)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, crate::PROTOCOL_VERSION_HEADER);
+                if let Some(version) = version {
+                    preflight = preflight.header(crate::PROTOCOL_VERSION_HEADER, version);
+                }
+                let response = production.clone().oneshot(preflight.body(Body::empty()).unwrap()).await.unwrap();
+                assert_eq!(response.status(), status);
+            }
+            assert_eq!(capture.text(), before, "transport guards and preflight bypass observation");
             for attempt in 0..10 {
-                let response = handler.clone().oneshot(
+                let response = production.clone().oneshot(
                     HttpRequest::get("/mcp").body(Body::empty()).unwrap(),
                 ).await.unwrap();
                 assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
@@ -633,7 +612,7 @@ mod tests {
             poll_and_drop(observe_with(pending_router, observer.clone()), "{}").await;
 
             for (body, status) in [
-                ("[]", StatusCode::UNPROCESSABLE_ENTITY),
+                ("[]", StatusCode::BAD_REQUEST),
                 (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"search_foods","arguments":{}}}"#, StatusCode::OK),
                 (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"tools/call","params":{"name":"UNKNOWN_SECRET"}}"#, StatusCode::OK),
                 (r#"{"jsonrpc":"2.0","id":"RPC_SECRET","method":"METHOD_SECRET"}"#, StatusCode::OK),
@@ -646,14 +625,14 @@ mod tests {
             assert_eq!(response.status(), StatusCode::OK);
             let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap().len();
             assert_event(&capture.text(), &["outcome=\"tool_success\"", &format!("response_bytes={bytes}")]);
-            assert_eq!(observer.budget.lock().unwrap().admitted, [8, 1, 8, 3, 1, 1, 2, 1]);
+            assert_eq!(observer.budget.lock().unwrap().admitted, [8, 1, 8, 3, 1, 1, 1, 2]);
         }.with_subscriber(subscriber).await;
 
         let output = capture.text();
         for (status, class) in [
             (401, "auth_unauthorized"),
             (403, "http_forbidden"),
-            (422, "json_rejected"),
+            (400, "invalid_envelope"),
             (500, "http_server_error"),
         ] {
             assert_event(
@@ -664,17 +643,15 @@ mod tests {
                 ],
             );
         }
-        for tool in ["search_foods", "unknown"] {
-            assert_event(
-                &output,
-                &[
-                    "http_status=200",
-                    "outcome=\"tool_error\"",
-                    "error_class=\"invalid_arguments\"",
-                    &format!("tool=\"{tool}\""),
-                ],
-            );
-        }
+        assert_event(
+            &output,
+            &[
+                "http_status=200",
+                "outcome=\"tool_error\"",
+                "error_class=\"invalid_arguments\"",
+                "tool=\"search_foods\"",
+            ],
+        );
         assert_event(&output, &["http_status=200", "outcome=\"json_rpc_error\""]);
         assert_event(&output, &["event=\"abandoned\""]);
         let terminal = output
@@ -734,17 +711,18 @@ mod tests {
             .with_writer(capture.clone())
             .finish();
         async {
-            for (payload, outcome) in [
-                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"METHOD_SECRET","params":{"secret":"ARG_SECRET"}}), "json_rpc_error"),
-                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/call","params":{"name":"TOOL_SECRET","arguments":{"secret":"ARG_SECRET"}}}), "tool_error"),
-                (json!({"jsonrpc":"bad","id":"ID_SECRET","method":"ping"}), "json_rpc_error"),
-                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/list"}), "protocol_success"),
+            for (payload, status, outcome) in [
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"METHOD_SECRET","params":{"secret":"ARG_SECRET"}}), StatusCode::OK, "json_rpc_error"),
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/call","params":{"name":"TOOL_SECRET","arguments":{"secret":"ARG_SECRET"}}}), StatusCode::OK, "json_rpc_error"),
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/call","params":{"name":"search_foods","arguments":{"secret":"ARG_SECRET"}}}), StatusCode::OK, "tool_error"),
+                (json!({"jsonrpc":"bad","id":"ID_SECRET","method":"ping"}), StatusCode::BAD_REQUEST, "http_rejected"),
+                (json!({"jsonrpc":"2.0","id":"ID_SECRET","method":"tools/list"}), StatusCode::OK, "protocol_success"),
             ] {
                 let raw = payload.to_string();
                 let baseline = handler_router().oneshot(request(&raw)).await.unwrap();
                 let observed = observe_with(handler_router(), Arc::new(Observer::new())).oneshot(request(&raw)).await.unwrap();
-                let bytes = assert_wire(baseline, observed, StatusCode::OK).await;
-                assert_event(&capture.text(), &["http_status=200", &format!("outcome=\"{outcome}\""),
+                let bytes = assert_wire(baseline, observed, status).await;
+                assert_event(&capture.text(), &[&format!("http_status={}", status.as_u16()), &format!("outcome=\"{outcome}\""),
                     &format!("response_bytes={bytes}")]);
             }
         }.with_subscriber(subscriber).await;
@@ -769,7 +747,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_metadata_preserves_stock_rejection_wire_and_distinguishes_the_extractor() {
+    async fn http_metadata_distinguishes_rejection_classes_and_preserves_stock_auth() {
         let capture = Capture::default();
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(logging_filter(None))
@@ -801,32 +779,63 @@ mod tests {
                 ],
             );
 
-            for (body, status) in [
+            for (body, class, code) in [
                 (
-                    "{\"jsonrpc\":, \"BODY_SECRET\": true}",
-                    StatusCode::BAD_REQUEST,
+                    r#"{"jsonrpc":, "BODY_SECRET": true}"#,
+                    "json_parse_error",
+                    -32700,
                 ),
                 (
                     r#"[{"jsonrpc":"2.0","method":"BODY_SECRET"}]"#,
-                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_envelope",
+                    -32600,
                 ),
             ] {
-                let stock = Router::new().route(
-                    "/mcp",
-                    post(|Json(_): Json<super::super::JsonRpcRequest>| async { StatusCode::OK }),
-                );
-                let baseline = stock.oneshot(request(body)).await.unwrap();
                 let observed = observe_with(handler_router(), Arc::new(Observer::new()))
                     .oneshot(request(body))
                     .await
                     .unwrap();
-                let bytes = assert_wire(baseline, observed, status).await;
+                assert_eq!(observed.status(), StatusCode::BAD_REQUEST);
+                let bytes = to_bytes(observed.into_body(), usize::MAX).await.unwrap();
+                let envelope: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(envelope["error"]["code"], code);
                 assert_event(
                     &capture.text(),
                     &[
-                        &format!("http_status={}", status.as_u16()),
-                        "error_class=\"json_rejected\"",
-                        &format!("response_bytes={bytes}"),
+                        "http_status=400",
+                        &format!("error_class=\"{class}\""),
+                        &format!("response_bytes={}", bytes.len()),
+                    ],
+                );
+            }
+
+            for (body, label) in [
+                (
+                    r#"{"jsonrpc":"2.0","error":{"code":1,"message":"BODY_SECRET"}}"#,
+                    "unsolicited_response",
+                ),
+                (
+                    r#"{"jsonrpc":"2.0","method":"BODY_SECRET"}"#,
+                    "unsupported_notification",
+                ),
+            ] {
+                let response = observe_with(handler_router(), Arc::new(Observer::new()))
+                    .oneshot(request(body))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                assert!(
+                    to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+                assert_event(
+                    &capture.text(),
+                    &[
+                        "http_status=400",
+                        &format!("error_class=\"{label}\""),
+                        "response_bytes=0",
                     ],
                 );
             }
@@ -1254,7 +1263,7 @@ mod tests {
                 ("tools/call", "UNKNOWN_SECRET", false),
                 ("ping", "get_weight_history", false),
                 ("tools/call", "get_weight_history", true),
-                ("tools/call", "UNKNOWN_SECRET", true),
+                ("tools/call", "search_foods", true),
             ] {
                 let observation = Observation::new(observer.clone(), &Method::POST);
                 observation.request(method, Some(tool));
@@ -1629,7 +1638,7 @@ mod tests {
                 method: "not_observed",
                 tool: "get_weight_history",
                 outcome: "notification_accepted",
-                error_class: "method_not_allowed",
+                error_class: "unsupported_notification",
                 tool_preparation_attempted: false,
             };
             let tool_details = Details {

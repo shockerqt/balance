@@ -428,7 +428,7 @@ mod tests {
                 request = request.header("Authorization", format!("Bearer {token}"));
             }
             let body = if method == "POST" {
-                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"http-test","version":"1"}}}"#
             } else {
                 ""
             };
