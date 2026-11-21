@@ -45,8 +45,12 @@ Unknown JSON-RPC methods and tools become `unknown`. Before JSON extraction,
   and handler outcome for protocol and HTTP rejection paths. HTTP 200 can
   carry `json_rpc_error`. Returned HTTP errors use `http_rejected` with
   `auth_unauthorized` for 401, `http_forbidden` for 403, `method_not_allowed`
-  for 405, `json_rejected` for marked JSON extractor errors, and
-  `http_client_error` or `http_server_error` for remaining 4xx or 5xx responses.
+  for 405 and `json_rejected` for marked JSON extractor errors. The MCP
+  handler labels its HTTP 400 rejections `json_parse_error` for malformed JSON,
+  `invalid_envelope` for invalid JSON-RPC messages, `unsolicited_response`
+  for client responses and `unsupported_notification` for unsupported
+  notifications. Remaining 4xx or 5xx responses use `http_client_error` or
+  `http_server_error`, respectively.
   A normal tool preparation attempt deduplicates normal response logging even
   when its admission was denied. A returned HTTP error is observed separately.
 - `abandoned` records a polled route future dropping before it returns a

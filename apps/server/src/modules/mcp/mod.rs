@@ -161,9 +161,9 @@ fn valid_client_error(error: &RawValue) -> bool {
     })
 }
 
-fn initialization_version(params: Option<&Value>) -> Option<&'static str> {
-    let params = params?.as_object()?;
-    let proposal = params.get("protocolVersion")?.as_str()?;
+fn initialization_version(params: Option<&RawValue>) -> Option<&'static str> {
+    let params: HashMap<String, &RawValue> = serde_json::from_str(params?.get()).ok()?;
+    let proposal: String = serde_json::from_str(params.get("protocolVersion")?.get()).ok()?;
     let bytes = proposal.as_bytes();
     if bytes.len() != 10
         || !bytes.iter().enumerate().all(|(index, byte)| match index {
@@ -173,10 +173,13 @@ fn initialization_version(params: Option<&Value>) -> Option<&'static str> {
     {
         return None;
     }
-    params.get("capabilities")?.as_object()?;
-    let client = params.get("clientInfo")?.as_object()?;
-    client.get("name")?.as_str()?;
-    client.get("version")?.as_str()?;
+    if !params.get("capabilities")?.get().starts_with('{') {
+        return None;
+    }
+    let client: HashMap<String, &RawValue> =
+        serde_json::from_str(params.get("clientInfo")?.get()).ok()?;
+    serde_json::from_str::<String>(client.get("name")?.get()).ok()?;
+    serde_json::from_str::<String>(client.get("version")?.get()).ok()?;
     Some(if proposal == JUNE_VERSION {
         JUNE_VERSION
     } else {
@@ -407,16 +410,23 @@ async fn mcp_post_handler(
         return reject_message(-32600, Some(id));
     }
 
-    let params = params.map(|raw| serde_json::from_str::<Value>(raw.get()).unwrap_or(Value::Null));
-    let params = params.as_ref();
-    let tool_name = (method == "tools/call").then(|| {
-        params
-            .and_then(|params| params.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    });
+    // Decode only the fields needed for routing. Nested values stay raw until used.
+    let tool_params = if method == "tools/call" {
+        params.and_then(|params| {
+            serde_json::from_str::<HashMap<String, &RawValue>>(params.get()).ok()
+        })
+    } else {
+        None
+    };
+    let tool_name = tool_params
+        .as_ref()
+        .and_then(|params| params.get("name"))
+        .and_then(|name| serde_json::from_str::<String>(name.get()).ok());
     if let Some(observation) = observation {
-        observation.request(method, tool_name);
+        observation.request(
+            method,
+            (method == "tools/call").then(|| tool_name.as_deref().unwrap_or_default()),
+        );
     }
 
     // Headerless operations use the common single-message behavior of 2025-03-26.
@@ -443,7 +453,7 @@ async fn mcp_post_handler(
             )
         }
         "ping" | "tools/list" => {
-            if params.is_some_and(|params| !params.is_object()) {
+            if params.is_some_and(|params| !params.get().starts_with('{')) {
                 return rpc_error(-32602, "Invalid params");
             }
             let result = if method == "ping" {
@@ -454,15 +464,26 @@ async fn mcp_post_handler(
             json_rpc_result(id, &result)
         }
         "tools/call" => {
-            let name = tool_name.unwrap_or_default();
-            let arguments = params.and_then(|params| params.get("arguments"));
-            if name.is_empty() || arguments.is_some_and(|args| !args.is_object()) {
+            let name = tool_name.as_deref().unwrap_or_default();
+            let arguments = tool_params
+                .as_ref()
+                .and_then(|params| params.get("arguments"));
+            if name.is_empty() || arguments.is_some_and(|args| !args.get().starts_with('{')) {
                 return rpc_error(-32602, "Invalid tools/call parameters");
             }
             if known_tool(name).is_none() {
                 return rpc_error(-32602, "Unknown tool");
             }
-            let args = arguments.cloned().unwrap_or_else(|| json!({}));
+            let Ok(args) = arguments.map_or_else(
+                || Ok(json!({})),
+                |arguments| serde_json::from_str(arguments.get()),
+            ) else {
+                return tool_failure(
+                    id,
+                    AppError::BadRequest("Invalid tool arguments".into()),
+                    observation,
+                );
+            };
             #[cfg(test)]
             if let Some(Extension(dispatch_count)) = dispatch_count {
                 dispatch_count
@@ -2049,6 +2070,50 @@ mod tests {
         .await;
         assert_tool_error(&reply["result"], "invalid_arguments");
         assert_eq!(count.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_routes_requests_with_deeply_nested_params() {
+        let (app, count) = protocol_fixture();
+        let nested = format!("{}0{}", "[".repeat(160), "]".repeat(160));
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"{JUNE_VERSION}","capabilities":{{"experimental":{{"extension":{nested}}}}},"clientInfo":{{"name":"client","version":"1"}}}}}}"#
+        );
+        let reply = reply_body(
+            app.clone().oneshot(rpc_request(body)).await.unwrap(),
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(reply["result"]["protocolVersion"], JUNE_VERSION);
+
+        for method in ["ping", "tools/list"] {
+            let body = format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"{method}","params":{{"_meta":{nested}}}}}"#
+            );
+            let reply = reply_body(
+                app.clone().oneshot(rpc_request(body)).await.unwrap(),
+                StatusCode::OK,
+            )
+            .await;
+            assert!(reply["result"].is_object());
+        }
+
+        for invalid_query in [nested.as_str(), "1e1000"] {
+            let body = format!(
+                r#"{{"jsonrpc":"2.0","id":"tool","method":"tools/call","params":{{"name":"search_foods","arguments":{{"query":{invalid_query}}}}}}}"#
+            );
+            let reply = reply_body(
+                app.clone().oneshot(rpc_request(body)).await.unwrap(),
+                StatusCode::OK,
+            )
+            .await;
+            assert_eq!(reply["id"], "tool");
+            assert_eq!(
+                assert_tool_error(&reply["result"], "invalid_arguments"),
+                "Invalid tool arguments"
+            );
+        }
+        assert_eq!(count.calls(), 0);
     }
 
     #[tokio::test]
