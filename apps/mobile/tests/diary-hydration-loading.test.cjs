@@ -87,6 +87,7 @@ function createHarness(initialToday = '2026-11-15') {
     'react-native': { View: host('View'), Alert: { alert() {} } },
     'expo-router': { useRouter: () => ({ push() {} }), useFocusEffect: fn => React.useEffect(fn, [fn]) },
     'expo-router/react-navigation': { useIsFocused: () => true },
+    'expo-crypto': { randomUUID: () => require('node:crypto').randomUUID() },
     'react-native-reanimated': {
       __esModule: true,
       default: { View: host('AnimatedView') },

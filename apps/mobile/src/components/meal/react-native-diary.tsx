@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { randomUUID } from 'expo-crypto';
 import { useIsFocused } from 'expo-router/react-navigation';
 import Animated, { useAnimatedStyle, useAnimatedReaction, runOnJS, type SharedValue, useSharedValue } from 'react-native-reanimated';
 import { Button, Card, Text } from '@/components/ui';
-import { useMealActions, useMealDay, useMealHydrated, type LoggedFoodItem } from '@/hooks/use-meal-store';
+import { useMealActions, useMealDay, useMealHydrated, useMealStore, type LoggedFoodItem } from '@/hooks/use-meal-store';
 import { usePreferencesStore } from '@/hooks/use-preferences-store';
-import { useFoodSelection } from '@/hooks/use-food-selection';
+import { useFoodSelection, type FoodSelection } from '@/hooks/use-food-selection';
 import { logsDateStore, useLogsDateRevision, useLogsSelectedDate } from '@/hooks/use-logs-date';
 import { currentTimeString, dateIdToEpochDay, todayId } from '@/lib/dates';
 import { DateStripHeader } from './date-strip-header';
@@ -14,6 +15,10 @@ import { StickyMacroHeader } from './sticky-macro-header';
 import { NativeDayWindow } from './native-day-window';
 import { MealGroupFeed } from './meal-group-feed';
 import type { HourRailFeedHandle } from './hour-rail-feed';
+import { prepareSelectionCopy, selectionCopyPlanIsCurrent, type SelectionCopyPlan } from './native/copy-selection-contract';
+
+/** Source snapshot of a diary-level copy: the IDs and the revisions seen when copying. */
+type CopyClipboard = { sourceDate: string; ids: string[]; revisions: Record<string, number> };
 
 export function ReactNativeDiary({ today = todayId(), active: tabActive = true }: { today?: string; active?: boolean }) {
   const routeFocused = useIsFocused();
@@ -24,6 +29,9 @@ export function ReactNativeDiary({ today = todayId(), active: tabActive = true }
   const targetCalories = preference.dailyCalorieTarget ?? 2200;
   const showMacros = preference.diaryMacrosEnabled === true;
   const [lockedDate, setLockedDate] = useState<string | null>(null);
+  // Lives as long as the diary, so the copied foods can be pasted on several days.
+  const [clipboard, setClipboard] = useState<CopyClipboard | null>(null);
+  const closeClipboard = useCallback(() => setClipboard(null), []);
   const headerScroll = useSharedValue(0);
   const activeDay = useSharedValue(dateIdToEpochDay(date));
   const [compact, setCompact] = useState(false);
@@ -49,11 +57,12 @@ export function ReactNativeDiary({ today = todayId(), active: tabActive = true }
         targetCalories={targetCalories}
         showMacros={showMacros}
         onSelection={selectionChanged}
+        onClipboard={setClipboard}
         headerScroll={headerScroll}
         activeDay={activeDay}
       />
     ),
-    [selectionChanged, today, targetCalories, showMacros, headerScroll, activeDay]
+    [selectionChanged, setClipboard, today, targetCalories, showMacros, headerScroll, activeDay]
   );
   return <View style={{ flex: 1 }}>
     <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, overflow: 'hidden' }, headerStyle]}>
@@ -61,6 +70,7 @@ export function ReactNativeDiary({ today = todayId(), active: tabActive = true }
     </Animated.View>
     <NativeDayWindow dateId={date} revision={revision} readRevision={logsDateStore.getRevision}
       active={active} scrollEnabled={lockedDate !== date} position={position} interaction={interaction} onSettle={settle} renderDay={renderDay} />
+    {clipboard && lockedDate !== date ? <ClipboardBar clipboard={clipboard} date={date} onClose={closeClipboard} /> : null}
   </View>;
 }
 
@@ -70,6 +80,7 @@ const DiaryDay = React.memo(function DiaryDay({
   targetCalories,
   showMacros,
   onSelection,
+  onClipboard,
   headerScroll,
   activeDay,
 }: {
@@ -80,6 +91,7 @@ const DiaryDay = React.memo(function DiaryDay({
   headerScroll: SharedValue<number>;
   activeDay: SharedValue<number>;
   onSelection: (date: string, selected: boolean) => void;
+  onClipboard: (clipboard: CopyClipboard) => void;
 }) {
   const router = useRouter();
   const scrollOffset = useSharedValue(0);
@@ -130,7 +142,7 @@ const DiaryDay = React.memo(function DiaryDay({
     if (live() && !selection.isSelectionMode && log.foods.some(f => f.id === food.id))
       router.push({ pathname: '/food-edit', params: { dateId: date, foodId: food.id } });
   };
-  const openBatch = (pathname: '/batch-copy' | '/batch-move') => {
+  const openBatch = (pathname: '/batch-move') => {
     if (!live() || !selection.selectedCount) return;
     // The destination obtains canonical revisions before accepting any mutation.
     router.push({ pathname, params: { dateId: date, ids: Array.from(selection.selectedIds).join(',') } });
@@ -208,13 +220,118 @@ const DiaryDay = React.memo(function DiaryDay({
       onLongPressGroup={ids => { if (live()) selection.startFromGroup(ids); }}
       onToggleSelectFood={id => { if (live()) selection.toggleFood(id); }}
       onToggleSelectGroup={ids => { if (live()) selection.toggleGroup(ids); }} />
-    {selection.isSelectionMode ? <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingVertical: 12, gap: 8 }}>
-      <Button title={`${selection.selectedCount} seleccionados · Cancelar`} variant="secondary" size="md" onPress={selection.clear} />
-      <View style={{ flexDirection: 'row', gap: 6 }}>
-        <Button title="Mover" size="md" style={{ flex: 1, paddingHorizontal: 6 }} onPress={() => openBatch('/batch-move')} />
-        <Button title="Copiar" size="md" style={{ flex: 1, paddingHorizontal: 6 }} onPress={() => openBatch('/batch-copy')} />
-        <Button title="Eliminar" size="md" variant="danger" style={{ flex: 1, paddingHorizontal: 6 }} onPress={remove} />
-      </View>
-    </View> : null}
+    {selection.isSelectionMode ? <SelectionBar date={date} today={today} selection={selection} live={live}
+      onMove={() => openBatch('/batch-move')} onRemove={remove} onClipboard={onClipboard} /> : null}
   </View>;
 });
+
+const barStyle = { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingVertical: 12, gap: 8 } as const;
+const barRowStyle = { flexDirection: 'row', gap: 6 } as const;
+const barButtonStyle = { flex: 1, paddingHorizontal: 6 } as const;
+
+/* Mounted only while a selection or the clipboard is visible, so the full
+   document subscription never re-renders the diary pages. */
+function useSelectionPaste() {
+  const { mealDocuments } = useMealStore();
+  const { registerMealLogs } = useMealActions();
+  const documents = useRef(mealDocuments);
+  useLayoutEffect(() => { documents.current = mealDocuments; }, [mealDocuments]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const saving = useRef(false);
+  const [busy, setBusy] = useState(false);
+  // One frozen plan per intention (source, revisions and destination). Retrying
+  // after a failed receipt keeps its IDs; a different intention never replays it.
+  const frozen = useRef<{ key: string; plan: SelectionCopyPlan } | null>(null);
+  const revisionsOf = (ids: string[]) => {
+    const byId = new Map(documents.current.map(doc => [doc.id, doc]));
+    return Object.fromEntries(ids.flatMap(id => { const doc = byId.get(id); return doc ? [[id, doc.updatedAt]] : []; }));
+  };
+  const paste = async (source: CopyClipboard, destinationDate: string): Promise<boolean> => {
+    if (saving.current) return false;
+    saving.current = true; setBusy(true);
+    try {
+      const key = JSON.stringify([source.sourceDate, source.ids, source.revisions, destinationDate]);
+      let plan: SelectionCopyPlan;
+      try {
+        if (frozen.current?.key === key) {
+          if (!selectionCopyPlanIsCurrent(frozen.current.plan, documents.current))
+            throw new Error('Los registros cambiaron. Vuelve a seleccionarlos antes de copiar.');
+        } else {
+          frozen.current = { key, plan: prepareSelectionCopy({ ...source, operationId: randomUUID(), destinationDate }, documents.current, randomUUID) };
+        }
+        plan = frozen.current.plan;
+      } catch (error) {
+        frozen.current = null;
+        Alert.alert('No se pudo copiar', error instanceof Error ? error.message : 'Revisa los datos.');
+        return false;
+      }
+      try { await registerMealLogs(plan.documents); } catch {
+        Alert.alert('No se pudo copiar', 'No se pudo guardar en el teléfono. Conservamos los datos para que puedas reintentar.');
+        return false;
+      }
+      // Completed: the next paste, even on the same day, is a new intention.
+      frozen.current = null;
+      return true;
+    } finally {
+      saving.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  return { saving: busy, paste, revisionsOf };
+}
+
+function SelectionBar({ date, today, selection, live, onMove, onRemove, onClipboard }: {
+  date: string;
+  today: string;
+  selection: FoodSelection;
+  live: () => boolean;
+  onMove: () => void;
+  onRemove: () => void;
+  onClipboard: (clipboard: CopyClipboard) => void;
+}) {
+  const copies = useSelectionPaste();
+  const capture = (): CopyClipboard | null => {
+    if (!live() || !selection.selectedCount) return null;
+    const ids = Array.from(selection.selectedIds);
+    return { sourceDate: date, ids, revisions: copies.revisionsOf(ids) };
+  };
+  const copy = () => {
+    const clipboard = capture();
+    if (!clipboard) return;
+    onClipboard(clipboard);
+    // Clearing the selection unlocks day paging so the user can paste elsewhere.
+    selection.clear();
+  };
+  const copyToToday = async () => {
+    const clipboard = capture();
+    if (clipboard && await copies.paste(clipboard, today)) { selection.clear(); logsDateStore.set(today); }
+  };
+  return <View style={barStyle}>
+    <Button title={`${selection.selectedCount} seleccionados · Cancelar`} variant="secondary" size="md" onPress={selection.clear} />
+    {date !== today ? <Button title="Copiar a Hoy" variant="secondary" size="md" loading={copies.saving} onPress={copyToToday} /> : null}
+    <View style={barRowStyle}>
+      <Button title="Mover" size="md" style={barButtonStyle} onPress={onMove} />
+      <Button title="Copiar" size="md" style={barButtonStyle} onPress={copy} />
+      <Button title="Eliminar" size="md" variant="danger" style={barButtonStyle} onPress={onRemove} />
+    </View>
+  </View>;
+}
+
+function ClipboardBar({ clipboard, date, onClose }: { clipboard: CopyClipboard; date: string; onClose: () => void }) {
+  const router = useRouter();
+  const copies = useSelectionPaste();
+  const toDate = () => {
+    if (copies.saving) return;
+    router.push({ pathname: '/batch-copy', params: { dateId: clipboard.sourceDate, ids: clipboard.ids.join(','), revisions: JSON.stringify(clipboard.revisions) } });
+    onClose();
+  };
+  // Stays open after pasting so the same foods can be pasted on several days.
+  return <View style={barStyle}>
+    <Button title={`${clipboard.ids.length} copiados · Cancelar`} variant="secondary" size="md" disabled={copies.saving} onPress={onClose} />
+    <View style={barRowStyle}>
+      <Button title="Pegar aquí" size="md" style={barButtonStyle} loading={copies.saving} onPress={() => { void copies.paste(clipboard, date); }} />
+      <Button title="A fecha…" size="md" variant="secondary" style={barButtonStyle} disabled={copies.saving} onPress={toDate} />
+    </View>
+  </View>;
+}

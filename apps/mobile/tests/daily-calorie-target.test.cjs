@@ -47,6 +47,7 @@ async function harness(populated, initialDoc) {
     react:React,'react/jsx-runtime':local('react/jsx-runtime'),'react-native':native,
     'expo-router':{Stack:{Screen:host('Stack')},useRouter:()=>({push(){}}),useFocusEffect:fn=>React.useEffect(fn,[fn])},
     'expo-router/react-navigation':{useIsFocused:()=>true},
+    'expo-crypto':{randomUUID:()=>require('node:crypto').randomUUID()},'./native/copy-selection-contract':load('src/components/meal/native/copy-selection-contract.ts',{'@/lib/dates':local('./src/lib/dates.ts'),'@/services/sync/types':types}),
     'react-native-reanimated':{__esModule:true,default:{View:host('AnimatedView')},useSharedValue:v=>React.useRef({value:v}).current,useAnimatedStyle:fn=>fn(),useAnimatedReaction(){},runOnJS:fn=>fn},
     '@/components/ui':ui,'@/hooks/use-preferences-store':preferences,
     '@/hooks/use-auth':{useAuth:()=>({isGuest:true})},

@@ -1,4 +1,4 @@
-import { epochForChileDateTime, toDateId } from '@/lib/dates';
+import { chileTimeString, epochForChileDateTime, toDateId } from '@/lib/dates';
 import { isDateId, isMealLogDoc, type MealLogDoc } from '@/services/sync/types';
 
 export type SelectionCopyInput = {
@@ -7,7 +7,8 @@ export type SelectionCopyInput = {
   ids: string[];
   revisions: Record<string, number>;
   destinationDate: string;
-  time: string;
+  /** A non-empty HH:mm moves every copy to that time; omitted, null or empty keeps each original Chile time. */
+  time?: string | null;
 };
 
 export type SelectionCopyPlan = {
@@ -32,9 +33,19 @@ export function prepareSelectionCopy(
   if (!isCopyOperationId(input.operationId) || !isDateId(input.sourceDate) ||
       !isDateId(input.destinationDate) || !Number.isSafeInteger(now) || now <= 0)
     return fail('Elige una fecha y hora válidas.');
-  const consumedAt = epochForChileDateTime(input.destinationDate, input.time);
-  if (consumedAt === null || consumedAt <= 0)
-    return fail('Esa fecha y hora no existen en el horario de Chile.');
+  if (input.time !== undefined && input.time !== null && typeof input.time !== 'string')
+    return fail('Elige una fecha y hora válidas.');
+  const override = input.time ? input.time : null;
+  let fixedConsumedAt: number | null = null;
+  if (override !== null) {
+    fixedConsumedAt = epochForChileDateTime(input.destinationDate, override);
+    if (fixedConsumedAt === null || fixedConsumedAt <= 0)
+      return fail('Esa fecha y hora no existen en el horario de Chile.');
+  } else {
+    // Validate the destination day itself before any source-specific hour.
+    const midday = epochForChileDateTime(input.destinationDate, '12:00');
+    if (midday === null || midday <= 0) return fail('Esa fecha no existe en el horario de Chile.');
+  }
   if (!Array.isArray(input.ids) || !input.ids.length || new Set(input.ids).size !== input.ids.length ||
       !input.revisions || typeof input.revisions !== 'object' || Array.isArray(input.revisions) ||
       Object.keys(input.revisions).length !== input.ids.length)
@@ -49,8 +60,18 @@ export function prepareSelectionCopy(
       return fail('Los registros cambiaron. Vuelve a seleccionarlos antes de copiar.');
     return source;
   });
+  // Resolve every destination instant before allocating any ID: one nonexistent
+  // DST hour rejects the whole batch instead of producing a partial copy.
+  const consumedAts = sources.map(source => {
+    if (fixedConsumedAt !== null) return fixedConsumedAt;
+    const time = chileTimeString(source.consumedAt);
+    const consumedAt = epochForChileDateTime(input.destinationDate, time);
+    if (consumedAt === null || consumedAt <= 0)
+      return fail(`Las ${time} no existen el ${input.destinationDate} en el horario de Chile. Elige una hora.`);
+    return consumedAt;
+  });
   const allocated = new Set(byId.keys());
-  const copies = sources.map(source => {
+  const copies = sources.map((source, index) => {
     const id = nextId();
     if (!UUID.test(id) || allocated.has(id)) return fail('No se pudo preparar la copia. Reintenta.');
     allocated.add(id);
@@ -60,7 +81,7 @@ export function prepareSelectionCopy(
     const copy = JSON.parse(JSON.stringify(source)) as MealLogDoc;
     delete copy.provenance;
     copy.id = id;
-    copy.consumedAt = consumedAt;
+    copy.consumedAt = consumedAts[index];
     copy.updatedAt = now;
     copy._deleted = false;
     copy.copySource = { id: source.id, updatedAt: source.updatedAt };
