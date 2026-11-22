@@ -365,6 +365,18 @@ test('RN copy rejects an original hour inside the Chilean DST gap and accepts an
   } finally { await h.close(); }
 });
 
+test('RN copy does not treat an empty chosen time as the original hours', async () => {
+  const h = await harness('react-native-copy-screen');
+  try {
+    await h.fill('Fecha de destino', '2026-11-01'); await h.click('Elegir una hora'); await h.fill('Hora de destino', '');
+    assert.equal(h.button('Copiar registros').props.disabled, true);
+    await h.click('Copiar registros');
+    assert.equal(h.writes.length, 0); assert.ok(h.text().includes('Elige una hora de destino.'));
+    await h.fill('Hora de destino', '10:00'); await h.click('Copiar registros');
+    assert.equal(h.writes.length, 1); assert.equal(dates.chileTimeString(h.writes[0][0].consumedAt), '10:00');
+  } finally { await h.close(); }
+});
+
 async function clipboardDiary({ start = '2026-10-16', today = date, commit = async () => {} } = {}) {
   const navigation = local('./src/lib/log-navigation.ts');
   const nav = navigation.createLogNavigation(start);
