@@ -10,6 +10,35 @@ use crate::shared::error::AppError;
 pub const FOOD_SCHEMA_VERSION: i32 = 2;
 pub const MCP_RECEIPT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_BRAND_CHARS: usize = 120;
+pub const MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES: usize = 3;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicatePersonalFoodCandidate {
+    pub food_id: Uuid,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
+    pub canonical_unit: CanonicalUnit,
+    pub nutrition_per100: NutritionValues,
+    pub portions: Vec<PortionDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DuplicatePersonalFood {
+    pub candidates: Vec<DuplicatePersonalFoodCandidate>,
+    pub has_more_candidates: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum CreatePersonalFoodOutcome {
+    Created(FoodTemplate),
+    AlreadyCreated(FoodTemplate),
+    Duplicate(DuplicatePersonalFood),
+}
+
+#[cfg(test)]
+pub(crate) type AsyncTestHook = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpToolKind {
@@ -1592,7 +1621,7 @@ impl SyncDatasource {
         id: Uuid,
         name: &str,
         details: &FoodDetails,
-    ) -> Result<(FoodTemplate, bool), AppError> {
+    ) -> Result<CreatePersonalFoodOutcome, AppError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::BadRequest("name cannot be empty".into()));
@@ -1600,28 +1629,15 @@ impl SyncDatasource {
         let mut details = details.clone();
         details.normalize();
         details.validate()?;
+        let details = canonical_food_details(&details);
 
-        let duplicate = sqlx::query_scalar::<_, Uuid>(
-            r#"
-            SELECT id
-            FROM meal_templates
-            WHERE user_id = $1
-              AND is_official = FALSE
-              AND deleted_at IS NULL
-              AND lower(btrim(name)) = lower($2)
-              AND id <> $3
-            LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .bind(name)
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if duplicate.is_some() {
-            return Err(AppError::Conflict(
-                "A personal food with the same name already exists".into(),
-            ));
+        let mut tx = self.pool.begin().await?;
+        lock_personal_food_create_key(&mut tx, user_id, name).await?;
+
+        if let Some(duplicate) =
+            find_duplicate_personal_foods_in_tx(&mut tx, user_id, name, id, &details).await?
+        {
+            return Ok(CreatePersonalFoodOutcome::Duplicate(duplicate));
         }
 
         let details_json = serde_json::to_value(&details)
@@ -1641,14 +1657,32 @@ impl SyncDatasource {
         .bind(user_id)
         .bind(name)
         .bind(details_json)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
-        let row = self
-            .get_food_template(user_id, id)
-            .await?
-            .ok_or_else(|| AppError::Conflict("operationId is already in use".into()))?;
-        Ok((row, result.rows_affected() == 1))
+        let row = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
+            FROM meal_templates
+            WHERE id = $1
+              AND deleted_at IS NULL
+              AND (user_id = $2 OR is_official = TRUE)
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(food_template_from_row)
+        .transpose()?
+        .ok_or_else(|| AppError::Conflict("operationId is already in use".into()))?;
+        tx.commit().await?;
+        Ok(if result.rows_affected() == 1 {
+            CreatePersonalFoodOutcome::Created(row)
+        } else {
+            CreatePersonalFoodOutcome::AlreadyCreated(row)
+        })
     }
 
     pub async fn create_mcp_food(
@@ -1657,9 +1691,19 @@ impl SyncDatasource {
         operation_id: Uuid,
         name: &str,
         details: &FoodDetails,
-    ) -> Result<(FoodTemplate, bool), AppError> {
-        self.create_mcp_food_inner(user_id, operation_id, name, details, false)
-            .await
+    ) -> Result<CreatePersonalFoodOutcome, AppError> {
+        self.create_mcp_food_inner(
+            user_id,
+            operation_id,
+            name,
+            details,
+            #[cfg(test)]
+            None,
+            #[cfg(test)]
+            None,
+            false,
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -1670,19 +1714,54 @@ impl SyncDatasource {
         name: &str,
         details: &FoodDetails,
         fail_before_commit: bool,
-    ) -> Result<(FoodTemplate, bool), AppError> {
-        self.create_mcp_food_inner(user_id, operation_id, name, details, fail_before_commit)
-            .await
+    ) -> Result<CreatePersonalFoodOutcome, AppError> {
+        self.create_mcp_food_inner(
+            user_id,
+            operation_id,
+            name,
+            details,
+            None,
+            None,
+            fail_before_commit,
+        )
+        .await
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn create_mcp_food_with_hooks(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        name: &str,
+        details: &FoodDetails,
+        before_name_lock: Option<AsyncTestHook>,
+        after_name_lock: Option<AsyncTestHook>,
+        fail_before_commit: bool,
+    ) -> Result<CreatePersonalFoodOutcome, AppError> {
+        self.create_mcp_food_inner(
+            user_id,
+            operation_id,
+            name,
+            details,
+            before_name_lock,
+            after_name_lock,
+            fail_before_commit,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn create_mcp_food_inner(
         &self,
         user_id: i32,
         operation_id: Uuid,
         name: &str,
         details: &FoodDetails,
+        #[cfg(test)] before_name_lock: Option<AsyncTestHook>,
+        #[cfg(test)] after_name_lock: Option<AsyncTestHook>,
         fail_before_commit: bool,
-    ) -> Result<(FoodTemplate, bool), AppError> {
+    ) -> Result<CreatePersonalFoodOutcome, AppError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::BadRequest("name cannot be empty".into()));
@@ -1697,6 +1776,8 @@ impl SyncDatasource {
         };
 
         let mut tx = self.pool.begin().await?;
+        // Lock ordering: always acquire mcp_receipt lock before personal_food_create
+        // lock so concurrent transactions remain strictly acyclic and deadlock-free.
         lock_mcp_receipt_key(&mut tx, user_id, McpToolKind::CreateFood, operation_id).await?;
 
         if let Some(receipt) =
@@ -1757,30 +1838,35 @@ impl SyncDatasource {
                 ));
             }
             tx.commit().await?;
-            return Ok((food, false));
+            return Ok(CreatePersonalFoodOutcome::AlreadyCreated(food));
         }
 
-        let duplicate = sqlx::query_scalar::<_, Uuid>(
-            r#"
-            SELECT id
-            FROM meal_templates
-            WHERE user_id = $1
-              AND is_official = FALSE
-              AND deleted_at IS NULL
-              AND lower(btrim(name)) = lower($2)
-              AND id <> $3
-            LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .bind(name)
-        .bind(operation_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if duplicate.is_some() {
+        #[cfg(test)]
+        if let Some(hook) = before_name_lock {
+            hook.await;
+        }
+        lock_personal_food_create_key(&mut tx, user_id, name).await?;
+        #[cfg(test)]
+        if let Some(hook) = after_name_lock {
+            hook.await;
+        }
+
+        let operation_id_occupied: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM meal_templates WHERE id = $1)")
+                .bind(operation_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if operation_id_occupied {
             return Err(AppError::Conflict(
-                "A personal food with the same name already exists".into(),
+                "This operationId is already in use without a matching MCP receipt. Inspect current state and generate a new operationId for a new request.".into(),
             ));
+        }
+
+        if let Some(duplicate) =
+            find_duplicate_personal_foods_in_tx(&mut tx, user_id, name, operation_id, &details)
+                .await?
+        {
+            return Ok(CreatePersonalFoodOutcome::Duplicate(duplicate));
         }
 
         let details_json = serde_json::to_value(&details)
@@ -1831,7 +1917,7 @@ impl SyncDatasource {
         }
 
         tx.commit().await?;
-        Ok((food, true))
+        Ok(CreatePersonalFoodOutcome::Created(food))
     }
 
     #[allow(dead_code)]
@@ -2329,6 +2415,111 @@ fn food_template_from_row(row: MealTemplateRow) -> Result<FoodTemplate, AppError
         details,
         updated_at: row.updated_at,
     })
+}
+
+fn decode_stored_food_template(row: MealTemplateRow) -> Result<FoodTemplate, AppError> {
+    let details: FoodDetails = serde_json::from_value(row.details)
+        .map_err(|_| AppError::Internal("Stored personal food details are invalid".into()))?;
+    details
+        .validate()
+        .map_err(|_| AppError::Internal("Stored personal food details are invalid".into()))?;
+    Ok(FoodTemplate {
+        id: row.id,
+        name: row.name,
+        is_official: row.is_official,
+        details,
+        updated_at: row.updated_at,
+    })
+}
+
+fn personal_food_matches_identity(candidate: &FoodDetails, incoming: &FoodDetails) -> bool {
+    let candidate_brand =
+        normalize_optional_brand(candidate.brand.clone()).map(|brand| brand.to_lowercase());
+    let incoming_brand =
+        normalize_optional_brand(incoming.brand.clone()).map(|brand| brand.to_lowercase());
+    candidate_brand == incoming_brand
+        && candidate.canonical_unit == incoming.canonical_unit
+        && canonical_nutrition_values(&candidate.nutrition_per100)
+            == canonical_nutrition_values(&incoming.nutrition_per100)
+}
+
+async fn lock_personal_food_create_key(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    name: &str,
+) -> Result<(), AppError> {
+    // 64-bit hash via hashtextextended; rare collisions between unrelated keys
+    // only serialize those two transactions without affecting correctness.
+    sqlx::query(
+        r#"
+        SELECT pg_advisory_xact_lock(
+            hashtextextended('personal_food_create:' || $1::text || ':' || lower(btrim($2)), 0)
+        )
+        "#,
+    )
+    .bind(user_id)
+    .bind(name)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn find_duplicate_personal_foods_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    name: &str,
+    exclude_id: Uuid,
+    details: &FoodDetails,
+) -> Result<Option<DuplicatePersonalFood>, AppError> {
+    let rows = sqlx::query_as::<_, MealTemplateRow>(
+        r#"
+        SELECT id, user_id, is_official, name, details, source_provider, external_id,
+               updated_at, deleted_at
+        FROM meal_templates
+        WHERE user_id = $1
+          AND is_official = FALSE
+          AND deleted_at IS NULL
+          AND lower(btrim(name)) = lower(btrim($2))
+          AND id <> $3
+        ORDER BY id ASC
+        "#,
+    )
+    .bind(user_id)
+    .bind(name)
+    .bind(exclude_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut matches = Vec::new();
+    for row in rows {
+        let food = decode_stored_food_template(row)?;
+        if personal_food_matches_identity(&food.details, details) {
+            matches.push(food);
+        }
+    }
+
+    if matches.is_empty() {
+        return Ok(None);
+    }
+
+    let has_more_candidates = matches.len() > MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES;
+    let candidates = matches
+        .into_iter()
+        .take(MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES)
+        .map(|food| DuplicatePersonalFoodCandidate {
+            food_id: food.id,
+            name: food.name,
+            brand: normalize_optional_brand(food.details.brand),
+            canonical_unit: food.details.canonical_unit,
+            nutrition_per100: canonical_nutrition_values(&food.details.nutrition_per100),
+            portions: food.details.portions,
+        })
+        .collect();
+
+    Ok(Some(DuplicatePersonalFood {
+        candidates,
+        has_more_candidates,
+    }))
 }
 
 fn food_template_and_baseline_from_row(
@@ -2867,11 +3058,13 @@ mod tests {
             category: Some("fruit".into()),
             typical_time: None,
         };
-        let (food, created) = datasource
+        let CreatePersonalFoodOutcome::Created(food) = datasource
             .create_personal_food(1, food_id, "Manzana BAL-011", &details)
             .await
-            .unwrap();
-        assert!(created);
+            .unwrap()
+        else {
+            panic!("expected created personal food");
+        };
         assert_eq!(food.id, food_id);
         assert!(
             datasource
@@ -3731,12 +3924,12 @@ mod copy_tests {
             category: None,
             typical_time: None,
         };
-        let (_, created) = db
+        let outcome = db
             .sync
             .create_mcp_food(user.id, food_id, "Clock Test Food", &details)
             .await
             .unwrap();
-        assert!(created);
+        assert!(matches!(outcome, CreatePersonalFoodOutcome::Created(_)));
 
         // Initial omitted-time log at 2026-08-10 23:59 Santiago.
         let op_omitted = Uuid::new_v4();
@@ -3899,12 +4092,14 @@ mod copy_tests {
         .unwrap();
         assert_eq!((food_count, receipt_count), (0, 0));
 
-        let (food, created) = db
+        let CreatePersonalFoodOutcome::Created(food) = db
             .sync
             .create_mcp_food(user.id, rollback_food_id, "Rollback Food", &details)
             .await
-            .unwrap();
-        assert!(created);
+            .unwrap()
+        else {
+            panic!("expected created food after rollback retry");
+        };
         assert_eq!(food.id, rollback_food_id);
 
         // 2. Pre-commit rollback on log_food leaves zero orphaned log or receipt, and retry succeeds.
@@ -3960,11 +4155,20 @@ mod copy_tests {
             db.sync
                 .create_mcp_food(user.id, concurrent_food_id, "Concurrent Food", &details),
         );
-        let (food_a, created_a) = res_a.unwrap();
-        let (food_b, created_b) = res_b.unwrap();
-        assert_ne!(created_a, created_b);
-        assert_eq!(food_a.id, food_b.id);
-        assert_eq!(food_a.updated_at, food_b.updated_at);
+        match (res_a.unwrap(), res_b.unwrap()) {
+            (
+                CreatePersonalFoodOutcome::Created(food_a),
+                CreatePersonalFoodOutcome::AlreadyCreated(food_b),
+            )
+            | (
+                CreatePersonalFoodOutcome::AlreadyCreated(food_a),
+                CreatePersonalFoodOutcome::Created(food_b),
+            ) => {
+                assert_eq!(food_a.id, food_b.id);
+                assert_eq!(food_a.updated_at, food_b.updated_at);
+            }
+            other => panic!("expected one Created and one AlreadyCreated, got {other:?}"),
+        }
 
         // 4. Concurrent competing-intent create_mcp_consumption calls: one commits, one conflicts.
         let competing_log_id = Uuid::new_v4();
@@ -4009,6 +4213,388 @@ mod copy_tests {
                 .await
                 .unwrap();
         assert_eq!(remaining_receipts, 0);
+
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn bal081_create_food_concurrency() {
+        use crate::connectors::user::NewUser;
+        use std::time::Duration;
+        use tokio::sync::oneshot;
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let provision = |sub: &str, email: &str| {
+            let db_user = db.user.clone();
+            let sub = sub.to_owned();
+            let email = email.to_owned();
+            async move {
+                db_user
+                    .provision_identity(
+                        "https://issuer.example.invalid",
+                        &sub,
+                        &NewUser {
+                            email,
+                            name: None,
+                            given_name: None,
+                            family_name: None,
+                            picture: None,
+                        },
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        let user_a = provision("bal081-user-a", "bal081-a@example.invalid").await;
+        let user_b = provision("bal081-user-b", "bal081-b@example.invalid").await;
+
+        let base_details = |brand: Option<&str>, unit: CanonicalUnit| FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: unit,
+            nutrition_per100: NutritionValues {
+                calories: 120.0,
+                protein: 10.0,
+                carbs: 12.0,
+                fat: 3.5,
+                fiber: None,
+                sodium_mg: Some(45.0),
+                cholesterol_mg: None,
+                extended_nutrition: BTreeMap::new(),
+            },
+            portions: vec![PortionDefinition {
+                id: "pote".into(),
+                name: "1 pote".into(),
+                portion_quantity: 1.0,
+                canonical_quantity: 125.0,
+            }],
+            chilean_seals: vec!["alto en azúcares".into()],
+            brand: brand.map(str::to_owned),
+            category: Some("lacteos".into()),
+            typical_time: Some("08:30".into()),
+        };
+
+        // AC-3: Official and tombstoned rows with identical name/details do NOT block creation.
+        let official_id = Uuid::new_v4();
+        let tombstoned_id = Uuid::new_v4();
+        let initial_details = base_details(Some("  Lácteos Ñuble  "), CanonicalUnit::G);
+        let initial_json = serde_json::to_value(&initial_details).unwrap();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+             VALUES ($1, NULL, TRUE, 'Yogurt Griego', $2, 1000, NULL), \
+                    ($3, $4, FALSE, 'Yogurt Griego', $2, 1000, 1001)",
+        )
+        .bind(official_id)
+        .bind(&initial_json)
+        .bind(tombstoned_id)
+        .bind(user_a.id)
+        .execute(&db.sync.pool)
+        .await
+        .unwrap();
+
+        // AC-3: Deterministic two-connection contention on the same (user_id, lower(btrim(name)))
+        // advisory lock yields one Created winner and one Duplicate pointing to the winner.
+        let op_race_a = Uuid::new_v4();
+        let op_race_b = Uuid::new_v4();
+        let (lock_acquired_tx, lock_acquired_rx) = oneshot::channel::<()>();
+        let (release_lock_tx, release_lock_rx) = oneshot::channel::<()>();
+
+        let sync_a = db.sync.clone();
+        let details_a = initial_details.clone();
+        let task_a = tokio::spawn(async move {
+            sync_a
+                .create_mcp_food_with_hooks(
+                    user_a.id,
+                    op_race_a,
+                    "  Yogurt Griego  ",
+                    &details_a,
+                    None,
+                    Some(Box::pin(async move {
+                        let _ = lock_acquired_tx.send(());
+                        let _ = tokio::time::timeout(Duration::from_secs(5), release_lock_rx).await;
+                    })),
+                    false,
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), lock_acquired_rx)
+            .await
+            .expect("task A should acquire advisory lock")
+            .unwrap();
+
+        let sync_b = db.sync.clone();
+        let mut details_b = base_details(Some("lácteos ñuble"), CanonicalUnit::G);
+        details_b.portions.clear();
+        details_b.chilean_seals.clear();
+        details_b.category = Some("otro".into());
+        details_b.typical_time = None;
+        let task_b = tokio::spawn(async move {
+            sync_b
+                .create_mcp_food(user_a.id, op_race_b, "yogurt griego", &details_b)
+                .await
+        });
+
+        // Prove task B is genuinely waiting on PostgreSQL's advisory lock.
+        let mut saw_waiting_lock = false;
+        for _ in 0..100 {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted",
+            )
+            .fetch_one(&db.sync.pool)
+            .await
+            .unwrap();
+            if waiting >= 1 {
+                saw_waiting_lock = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            saw_waiting_lock,
+            "expected second connection to block on personal_food_create advisory lock"
+        );
+
+        let _ = release_lock_tx.send(());
+        let outcome_a = task_a.await.unwrap().unwrap();
+        let outcome_b = task_b.await.unwrap().unwrap();
+        let CreatePersonalFoodOutcome::Created(winner) = outcome_a else {
+            panic!("expected task A to win creation, got {outcome_a:?}");
+        };
+        assert_eq!(winner.id, op_race_a);
+        let CreatePersonalFoodOutcome::Duplicate(dup) = outcome_b else {
+            panic!("expected task B to see duplicate, got {outcome_b:?}");
+        };
+        assert!(!dup.has_more_candidates);
+        assert_eq!(dup.candidates.len(), 1);
+        assert_eq!(dup.candidates[0].food_id, winner.id);
+        assert_eq!(dup.candidates[0].brand.as_deref(), Some("Lácteos Ñuble"));
+        assert_eq!(dup.candidates[0].portions.len(), 1);
+
+        // Losing operationId must not exist in meal_templates or mcp_mutation_receipts.
+        let (loser_foods, loser_receipts): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM meal_templates WHERE id = $1), \
+                    (SELECT count(*) FROM mcp_mutation_receipts WHERE operation_id = $1)",
+        )
+        .bind(op_race_b)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert_eq!((loser_foods, loser_receipts), (0, 0));
+
+        // AC-3: Separate owner receives independent Created for identical food.
+        let user_b_food = Uuid::new_v4();
+        let outcome_user_b = db
+            .sync
+            .create_mcp_food(user_b.id, user_b_food, "Yogurt Griego", &initial_details)
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome_user_b,
+            CreatePersonalFoodOutcome::Created(ref food) if food.id == user_b_food
+        ));
+
+        // AC-1: Exact identity normalization & distinct variant preservation.
+        // -0.0 vs 0.0 and metadata-only differences match as Duplicate.
+        let mut neg_zero_details = initial_details.clone();
+        neg_zero_details.nutrition_per100.calories = 120.0;
+        neg_zero_details.brand = Some("LÁCTEOS ÑUBLE".into());
+        neg_zero_details.portions.clear();
+        let dup_case = db
+            .sync
+            .create_mcp_food(
+                user_a.id,
+                Uuid::new_v4(),
+                "YOGURT GRIEGO",
+                &neg_zero_details,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(dup_case, CreatePersonalFoodOutcome::Duplicate(_)));
+
+        // Distinct variants MUST succeed:
+        // 1) Different brand, 2) Missing brand vs branded, 3) Different unit (ml vs g),
+        // 4) Optional fiber None vs Some(0.0), 5) Extended nutrition absent vs 0.0,
+        // 6) Accent difference, 7) Substring difference.
+        let mut diff_brand = initial_details.clone();
+        diff_brand.brand = Some("Otra Marca".into());
+        let mut no_brand = initial_details.clone();
+        no_brand.brand = None;
+        let diff_unit = base_details(Some("Lácteos Ñuble"), CanonicalUnit::Ml);
+        let mut fiber_zero = initial_details.clone();
+        fiber_zero.nutrition_per100.fiber = Some(0.0);
+        let mut extended_zero = initial_details.clone();
+        extended_zero
+            .nutrition_per100
+            .extended_nutrition
+            .insert("ironMg".into(), 0.0);
+
+        for (label, name, variant) in [
+            ("diff_brand", "Yogurt Griego", diff_brand),
+            ("no_brand", "Yogurt Griego", no_brand),
+            ("diff_unit", "Yogurt Griego", diff_unit),
+            ("fiber_zero", "Yogurt Griego", fiber_zero),
+            ("extended_zero", "Yogurt Griego", extended_zero),
+            ("accent", "Yogúrt Griego", initial_details.clone()),
+            (
+                "substring",
+                "Yogurt Griego Natural",
+                initial_details.clone(),
+            ),
+        ] {
+            let op_id = Uuid::new_v4();
+            let outcome = db
+                .sync
+                .create_mcp_food(user_a.id, op_id, name, &variant)
+                .await
+                .unwrap();
+            assert!(
+                matches!(outcome, CreatePersonalFoodOutcome::Created(ref f) if f.id == op_id),
+                "variant {label} should create cleanly, got {outcome:?}"
+            );
+        }
+
+        // Blank brand ("   ") matches None brand as Duplicate.
+        let mut blank_brand = initial_details.clone();
+        blank_brand.brand = Some("   ".into());
+        let blank_dup = db
+            .sync
+            .create_mcp_food(user_a.id, Uuid::new_v4(), "Yogurt Griego", &blank_brand)
+            .await
+            .unwrap();
+        assert!(matches!(blank_dup, CreatePersonalFoodOutcome::Duplicate(_)));
+
+        // AC-4: BAL-078 replay & operationId collision precedence even when an active same-name
+        // duplicate row exists.
+        let replay = db
+            .sync
+            .create_mcp_food(user_a.id, op_race_a, "Yogurt Griego", &initial_details)
+            .await
+            .unwrap();
+        assert!(matches!(
+            replay,
+            CreatePersonalFoodOutcome::AlreadyCreated(ref f) if f.id == op_race_a
+        ));
+
+        let mut changed = initial_details.clone();
+        changed.nutrition_per100.calories = 150.0;
+        let changed_replay = db
+            .sync
+            .create_mcp_food(user_a.id, op_race_a, "Yogurt Griego", &changed)
+            .await;
+        assert!(matches!(changed_replay, Err(AppError::Conflict(_))));
+
+        // Collisions against foreign, official, deleted, and legacy (no-receipt) IDs return
+        // generic AppError::Conflict (never Duplicate).
+        let legacy_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+             VALUES ($1, $2, FALSE, 'Otro Alimento Legacy', $3, 1000, NULL)",
+        )
+        .bind(legacy_id)
+        .bind(user_a.id)
+        .bind(&initial_json)
+        .execute(&db.sync.pool)
+        .await
+        .unwrap();
+        for (label, colliding_id) in [
+            ("foreign", user_b_food),
+            ("official", official_id),
+            ("deleted", tombstoned_id),
+            ("legacy", legacy_id),
+        ] {
+            let err = db
+                .sync
+                .create_mcp_food(user_a.id, colliding_id, "Yogurt Griego", &initial_details)
+                .await;
+            assert!(
+                matches!(err, Err(AppError::Conflict(_))),
+                "collision {label} must return generic Conflict, got {err:?}"
+            );
+        }
+
+        // AC-5: Legacy multi-match ambiguity (4 rows -> top 3 UUID-ascending, has_more_candidates=true;
+        // 2 rows -> 2 items, has_more_candidates=false), preserving existing rows untouched.
+        let multi_details = base_details(Some("LegacyBrand"), CanonicalUnit::G);
+        let multi_json = serde_json::to_value(&multi_details).unwrap();
+        let mut legacy_ids = [
+            Uuid::parse_str("00000000-0000-4000-8000-000000000004").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000002").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000001").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000003").unwrap(),
+        ];
+        for id in legacy_ids {
+            sqlx::query(
+                "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+                 VALUES ($1, $2, FALSE, 'Pan Legacy Multi', $3, 1000, NULL)",
+            )
+            .bind(id)
+            .bind(user_a.id)
+            .bind(&multi_json)
+            .execute(&db.sync.pool)
+            .await
+            .unwrap();
+        }
+        legacy_ids.sort();
+        let multi_op = Uuid::new_v4();
+        let CreatePersonalFoodOutcome::Duplicate(multi_dup) = db
+            .sync
+            .create_mcp_food(user_a.id, multi_op, "pan legacy multi", &multi_details)
+            .await
+            .unwrap()
+        else {
+            panic!("expected multi-match Duplicate");
+        };
+        assert!(multi_dup.has_more_candidates);
+        assert_eq!(multi_dup.candidates.len(), 3);
+        let returned_ids: Vec<Uuid> = multi_dup.candidates.iter().map(|c| c.food_id).collect();
+        assert_eq!(returned_ids, legacy_ids[..3]);
+
+        // All 4 legacy rows remain untouched and multi_op was not inserted.
+        let multi_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM meal_templates WHERE user_id = $1 AND name = 'Pan Legacy Multi' AND deleted_at IS NULL",
+        )
+        .bind(user_a.id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert_eq!(multi_count, 4);
+
+        // AC-5: Malformed in-scope same-name row fails closed with AppError::Internal and no insert.
+        let malformed_id = Uuid::new_v4();
+        let malformed_op = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+             VALUES ($1, $2, FALSE, 'Corrupt Food', $3, 1000, NULL)",
+        )
+        .bind(malformed_id)
+        .bind(user_a.id)
+        .bind(serde_json::json!({
+            "schemaVersion": 999,
+            "canonicalUnit": "g",
+            "nutritionPer100": { "calories": -10.0, "protein": 1.0, "carbs": 1.0, "fat": 1.0 },
+            "portions": [],
+            "chileanSeals": []
+        }))
+        .execute(&db.sync.pool)
+        .await
+        .unwrap();
+        let malformed_err = db
+            .sync
+            .create_mcp_food(user_a.id, malformed_op, "corrupt food", &initial_details)
+            .await;
+        assert!(
+            matches!(malformed_err, Err(AppError::Internal(_))),
+            "expected AppError::Internal for malformed stored row, got {malformed_err:?}"
+        );
+        let malformed_inserted: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE id = $1")
+                .bind(malformed_op)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(malformed_inserted, 0);
 
         cleanup_identity_test_database(&db, &schema).await;
     }
