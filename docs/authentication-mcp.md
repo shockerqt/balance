@@ -108,8 +108,8 @@ los IDs de porciones.
 | --- | --- |
 | `search_foods` | Busca en el catálogo por nombre o marca sin distinguir mayúsculas ni acentos. `query` debe tener de 1 a 120 caracteres tras recortar espacios. `source` acepta `all` (predeterminado), `personal` u `official`. `limit` va de 1 a 20 y por defecto es 10. Pasa el `foods[].id` seleccionado como `log_food.arguments.foodId`. |
 | `get_daily_log` | Lee un día de Santiago por llamada. `date` omitido equivale a hoy. Los consumos conservan una copia de los datos usados en el registro, incluida su nutrición y conversión. La respuesta incluye los totales nutricionales del día. |
-| `create_food` | Crea un alimento personal. `name` admite hasta 160 caracteres, `brand` opcional hasta 120 y `category` hasta 80. Admite hasta 50 porciones con nombre e ID único (hasta 80 caracteres por ID) y hasta cuatro sellos chilenos. Declara la nutrición por 100 g o 100 ml según `canonicalUnit`. Para reintentar la misma creación, reutiliza el mismo `operationId` y los mismos datos. |
-| `log_food` | Pon el `foods[].id` seleccionado en `arguments.foodId`. Envía una `quantity` positiva en g o ml según la unidad canónica. Con `portionId`, la cantidad es el número de porciones de ese tipo. Envía `date` y `time` juntos u omite ambos para usar la fecha y hora actuales. Para reintentar el mismo registro, reutiliza el mismo `operationId` y los mismos datos. |
+| `create_food` | Crea un alimento personal. `name` admite hasta 160 caracteres, `brand` opcional hasta 120 y `category` hasta 80. Admite hasta 50 porciones con nombre e ID opaco único (hasta 80 caracteres por ID) y hasta cuatro sellos chilenos. Declara la nutrición por 100 g o 100 ml según `canonicalUnit`. Genera un `operationId` UUID nuevo en tiempo de ejecución por cada intento nuevo y reutiliza el mismo `operationId` con los mismos datos al reintentar tras una respuesta perdida. |
+| `log_food` | Pon el `foods[].id` opaco seleccionado en `arguments.foodId`. Envía una `quantity` positiva en g o ml según la unidad canónica. Con `portionId`, la cantidad es el número de porciones de ese tipo. Envía `date` y `time` juntos u omite ambos para usar la fecha y hora actuales de Santiago. Genera un `operationId` UUID nuevo en tiempo de ejecución por cada registro nuevo y reutiliza el mismo `operationId` con los mismos datos (incluido si omitiste o enviaste `date` y `time`) al reintentar tras una respuesta perdida. |
 | `update_food_log` | Envía el `logId` y una cantidad positiva, el par `date` y `time`, o ambos cambios. La cantidad aplica la conversión guardada en la entrada histórica. |
 | `delete_food_log` | Confirma el `logId` seleccionado antes de borrar. MCP carece de una herramienta para restaurar la entrada. Si corresponde volver a registrar el consumo, crea una entrada nueva con sus propios identificadores y con la fecha, hora y cantidad originales disponibles. |
 | `get_weight_history` | Requiere activar el seguimiento de peso en Configuración. Envía ambos límites inclusivos (`startDate` y `endDate`) u omite ambos. El rango debe estar ordenado y terminar como máximo hoy en Santiago. `limit` va de 1 a 366 y por defecto es 30. |
@@ -141,12 +141,17 @@ del alimento y si se encuentra en el catálogo. Si hay varios candidatos,
 preséntalos con sus nombres y marcas y pide al usuario elegir un `foodId`.
 Usa `get_daily_log` para consultar consumos.
 
-Si una conexión se corta o expira después de enviar una escritura, conserva la
-identidad y los datos de esa operación para un reintento idempotente. Envía una
-fecha y hora explícitas desde el primer intento de `log_food` cuando debas
-conservar el instante previsto. Para una edición o un borrado de comidas,
-consulta el día correspondiente si debes confirmar el estado antes de repetir
-la acción.
+Si una conexión se corta o expira después de enviar `create_food` o `log_food`,
+conserva exactamente el mismo `operationId` y los mismos argumentos para un
+reintento idempotente: el servidor reconoce el recibo guardado, devuelve el
+resultado original (`alreadyCreated` o `alreadyLogged`) sin volver a evaluar el
+reloj ni el alimento fuente si el registro sigue activo y sin cambios, y
+devuelve `conflict` si cambiaron los argumentos, si el registro fue editado o
+eliminado, o si el UUID ya existe sin un recibo MCP verificado. Ante un
+`conflict`, inspecciona el catálogo o el diario actual antes de confirmar una
+nueva operación con un `operationId` distinto. Para una edición o un borrado de
+comidas, consulta el día correspondiente si debes confirmar el estado antes de
+repetir la acción.
 
 Al reintentar una escritura de peso, envía explícitamente la misma fecha
 prevista en Santiago y, para `set_weight`, el mismo valor. Si omites `date`, el
