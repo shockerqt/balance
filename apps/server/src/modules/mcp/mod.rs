@@ -313,12 +313,16 @@ struct SearchFoodsArgs {
     source: String,
     #[serde(default = "default_limit")]
     limit: i64,
+    #[serde(default)]
+    include_extended_nutrition: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GetDailyLogArgs {
     date: Option<String>,
+    #[serde(default)]
+    include_extended_nutrition: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -692,7 +696,18 @@ async fn call_tool(
                 .sync
                 .search_food_templates(user_id, query, &args.source, args.limit)
                 .await?;
-            let count = result.foods.len();
+            let foods: Vec<_> = result
+                .foods
+                .into_iter()
+                .map(|mut food| {
+                    food.details.nutrition_per100 = read_nutrition_output(
+                        &food.details.nutrition_per100,
+                        args.include_extended_nutrition,
+                    );
+                    food
+                })
+                .collect();
+            let count = foods.len();
             let summary = if result.has_more {
                 let mut summary = format!(
                     "Se muestran {count} alimentos. Hay más coincidencias. Refina la búsqueda por nombre, marca o `source`."
@@ -708,7 +723,7 @@ async fn call_tool(
             };
             Ok((
                 summary,
-                json!({ "foods": result.foods, "hasMore": result.has_more }),
+                json!({ "foods": foods, "hasMore": result.has_more }),
             ))
         }
         "get_daily_log" => {
@@ -721,7 +736,8 @@ async fn call_tool(
                 None => db.sync.current_santiago_date().await?,
             };
             let consumptions = db.sync.get_daily_consumptions(user_id, &date).await?;
-            let (items, totals) = daily_nutrition_output(&consumptions)?;
+            let (items, totals) =
+                daily_nutrition_output(&consumptions, args.include_extended_nutrition)?;
             Ok((
                 format!("Hay {} consumos registrados para {date}.", items.len()),
                 json!({
@@ -1052,7 +1068,10 @@ fn parse_args<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, AppError> 
 fn consumption_output(consumption: &Consumption) -> Result<Value, AppError> {
     let nutrition = consumption.scaled_nutrition();
     check_nutrition_finite(&nutrition)?;
-    Ok(render_consumption(consumption, &nutrition))
+    Ok(render_consumption(
+        consumption,
+        &nutrition_output(&nutrition),
+    ))
 }
 
 fn render_consumption(consumption: &Consumption, nutrition: &NutritionValues) -> Value {
@@ -1083,23 +1102,46 @@ fn render_consumption(consumption: &Consumption, nutrition: &NutritionValues) ->
     item.insert("entry".into(), json!(consumption.entry));
     item.insert("consumedAt".into(), json!(consumption.consumed_at));
     item.insert("updatedAt".into(), json!(consumption.updated_at));
-    item.insert("nutrition".into(), json!(nutrition_output(nutrition)));
+    item.insert("nutrition".into(), json!(nutrition));
     Value::Object(item)
 }
 
 const PUBLIC_NUTRITION_DECIMAL_PLACES: i32 = 6;
+/// Bulk read-tool nutrients (`calories`, `protein`, `carbs`, `fat`, and present `fiber`) round to
+/// 2 decimal places.
+const READ_BULK_NUTRITION_DECIMAL_PLACES: i32 = 2;
+/// Micronutrients (`sodiumMg`, `cholesterolMg`, and `extendedNutrition` entries) round to 6 decimal
+/// places while preserving positive values that would otherwise round to zero.
+const READ_MICRO_NUTRITION_DECIMAL_PLACES: i32 = 6;
 
-fn public_number(value: f64) -> f64 {
-    let factor = 10_f64.powi(PUBLIC_NUTRITION_DECIMAL_PLACES);
+fn round_public_number(value: f64, decimal_places: i32) -> f64 {
+    let factor = 10_f64.powi(decimal_places);
     let scaled = value * factor;
     if !scaled.is_finite() {
-        return value;
+        return if value == 0.0 { 0.0 } else { value };
     }
     let rounded = scaled.round() / factor;
     if rounded == 0.0 { 0.0 } else { rounded }
 }
 
-/// Stabilize numeric MCP output without reducing persisted or calculation precision.
+fn public_number(value: f64) -> f64 {
+    round_public_number(value, PUBLIC_NUTRITION_DECIMAL_PLACES)
+}
+
+fn read_bulk_number(value: f64) -> f64 {
+    round_public_number(value, READ_BULK_NUTRITION_DECIMAL_PLACES)
+}
+
+fn read_micro_number(value: f64) -> f64 {
+    let rounded = round_public_number(value, READ_MICRO_NUTRITION_DECIMAL_PLACES);
+    if rounded == 0.0 && value > 0.0 {
+        value
+    } else {
+        rounded
+    }
+}
+
+/// Stabilize numeric MCP output for mutation responses without reducing persisted or calculation precision.
 fn nutrition_output(value: &NutritionValues) -> NutritionValues {
     NutritionValues {
         calories: public_number(value.calories),
@@ -1114,6 +1156,34 @@ fn nutrition_output(value: &NutritionValues) -> NutritionValues {
             .iter()
             .map(|(name, amount)| (name.clone(), public_number(*amount)))
             .collect(),
+    }
+}
+
+/// Project nutrition values for read tools (`search_foods`, `get_daily_log` items, and totals).
+/// Bulk nutrients (`calories`, `protein`, `carbs`, `fat`, and present `fiber`) round to 2 decimal
+/// places; `sodiumMg`, `cholesterolMg`, and `extendedNutrition` entries round to 6 decimal places
+/// while retaining positive traces that would round to zero.
+fn read_nutrition_output(
+    value: &NutritionValues,
+    include_extended_nutrition: bool,
+) -> NutritionValues {
+    NutritionValues {
+        calories: read_bulk_number(value.calories),
+        protein: read_bulk_number(value.protein),
+        carbs: read_bulk_number(value.carbs),
+        fat: read_bulk_number(value.fat),
+        fiber: value.fiber.map(read_bulk_number),
+        sodium_mg: value.sodium_mg.map(read_micro_number),
+        cholesterol_mg: value.cholesterol_mg.map(read_micro_number),
+        extended_nutrition: if include_extended_nutrition {
+            value
+                .extended_nutrition
+                .iter()
+                .map(|(name, amount)| (name.clone(), read_micro_number(*amount)))
+                .collect()
+        } else {
+            Default::default()
+        },
     }
 }
 
@@ -1143,17 +1213,22 @@ fn check_nutrition_finite(value: &NutritionValues) -> Result<(), AppError> {
 
 fn daily_nutrition_output(
     consumptions: &[Consumption],
+    include_extended_nutrition: bool,
 ) -> Result<(Vec<Value>, NutritionValues), AppError> {
     let mut total = zero_nutrition();
     let mut items = Vec::with_capacity(consumptions.len());
     for consumption in consumptions {
         let nutrition = consumption.scaled_nutrition();
         check_nutrition_finite(&nutrition)?;
-        items.push(render_consumption(consumption, &nutrition));
+        let projected = read_nutrition_output(&nutrition, include_extended_nutrition);
+        items.push(render_consumption(consumption, &projected));
         add_nutrition(&mut total, &nutrition);
     }
     check_nutrition_finite(&total)?;
-    Ok((items, nutrition_output(&total)))
+    Ok((
+        items,
+        read_nutrition_output(&total, include_extended_nutrition),
+    ))
 }
 
 fn zero_nutrition() -> NutritionValues {
@@ -1375,13 +1450,14 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "search_foods",
             "title": "Buscar en el catálogo de alimentos",
-            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre o marca, sin distinguir mayúsculas ni acentos. El catálogo combina nombres en español e inglés. Si no hay resultados, vuelve a buscar en el otro idioma antes de considerar una creación. Si hasMore es true, refina la búsqueda para explorar más coincidencias. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno.",
+            "description": "Busca exclusivamente alimentos disponibles en el catálogo oficial o personal por nombre o marca, sin distinguir mayúsculas ni acentos. El catálogo combina nombres en español e inglés. Si no hay resultados, vuelve a buscar en el otro idioma antes de considerar una creación. Si hasMore es true, refina la búsqueda para explorar más coincidencias. Úsala para elegir un foodId antes de registrar. NUNCA consulta consumos, el diario, el historial ni fechas; para saber qué comió el usuario usa get_daily_log. Si hay varias coincidencias, presenta los candidatos y pide al usuario elegir uno. Por defecto omite extendedNutrition; envía includeExtendedNutrition en true para incluir el detalle nutricional extendido disponible de cada resultado.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "minLength": 1, "maxLength": 120 },
                     "source": { "type": "string", "enum": ["all", "personal", "official"], "default": "all" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 10 }
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 20, "default": 10 },
+                    "includeExtendedNutrition": { "type": "boolean", "default": false }
                 },
                 "required": ["query"],
                 "additionalProperties": false
@@ -1394,10 +1470,13 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "get_daily_log",
             "title": "Consultar consumos por fecha",
-            "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago.",
+            "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago. Por defecto omite extendedNutrition; envía includeExtendedNutrition en true para incluir el detalle nutricional extendido disponible en cada consumo del diario.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "date": nullable_schema(food_date_schema()) },
+                "properties": {
+                    "date": nullable_schema(food_date_schema()),
+                    "includeExtendedNutrition": { "type": "boolean", "default": false }
+                },
                 "additionalProperties": false
             },
             "outputSchema": daily_output_schema(),
@@ -1867,6 +1946,390 @@ mod tests {
         http::{Request, header},
     };
     use tower::ServiceExt;
+
+    const BUDGET_DATE: &str = "2025-01-02";
+    const BUDGET_KEYS: [&str; 35] = [
+        "alcoholG",
+        "vitaminB12Mcg",
+        "thiamineMg",
+        "riboflavinMg",
+        "niacinMg",
+        "pantothenicAcidMg",
+        "pyridoxineMg",
+        "caffeineMg",
+        "calciumMg",
+        "cholineMg",
+        "copperMg",
+        "cysteineG",
+        "monounsaturatedFatG",
+        "polyunsaturatedFatG",
+        "saturatedFatG",
+        "transFatG",
+        "folateMcg",
+        "histidineG",
+        "ironMg",
+        "isoleucineG",
+        "leucineG",
+        "lysineG",
+        "magnesiumMg",
+        "manganeseMg",
+        "methionineG",
+        "omega3AlaG",
+        "omega3DhaG",
+        "omega3EpaG",
+        "omega3G",
+        "omega6G",
+        "phenylalanineG",
+        "phosphorusMg",
+        "potassiumMg",
+        "seleniumMcg",
+        "starchG",
+    ];
+
+    fn budget_consumptions() -> Vec<Consumption> {
+        use crate::connectors::sync::{MealLogEntry, NutritionSnapshot, PortionSnapshot};
+
+        const EPOCH: i64 = 1_735_830_000; // 2025-01-02 12:00 in America/Santiago
+        assert!(
+            BUDGET_KEYS
+                .iter()
+                .all(|key| EXTENDED_NUTRIENT_KEYS.contains(key))
+        );
+        let nutrition_per100 = NutritionValues {
+            calories: 157.24137931034485,
+            protein: 8.7654321,
+            carbs: 28.1234567,
+            fat: 3.1234567,
+            fiber: Some(2.3456789),
+            sodium_mg: Some(21.1234567),
+            cholesterol_mg: Some(1.2345678),
+            extended_nutrition: BUDGET_KEYS
+                .iter()
+                .enumerate()
+                .map(|(index, key)| (key.to_string(), (index + 1) as f64 / 7.0))
+                .collect(),
+        };
+        (1..=17)
+            .map(|index| Consumption {
+                id: Uuid::from_u128(index as u128),
+                template_id: Some(Uuid::from_u128(100)),
+                name: format!("Alimento sintético {index:02}"),
+                snapshot: NutritionSnapshot {
+                    schema_version: FOOD_SCHEMA_VERSION,
+                    canonical_unit: CanonicalUnit::G,
+                    nutrition_per100: nutrition_per100.clone(),
+                    brand: Some("Marca sintética".into()),
+                },
+                canonical_quantity: 125.25,
+                entry: MealLogEntry {
+                    entered_quantity: 1.0,
+                    portion_snapshot: Some(PortionSnapshot {
+                        portion_id: Some("serving".into()),
+                        name: "Porción".into(),
+                        portion_quantity: 1.0,
+                        canonical_quantity: 125.25,
+                    }),
+                },
+                consumed_at: EPOCH + index * 60,
+                updated_at: EPOCH + index * 60 + 1,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn daily_log_synthetic_envelope_budget() {
+        const BASELINE_SHA: &str = "a7a8d448b5a64abb9dd22a74686b385e1a742b3e";
+        const BASELINE_DEFAULT_BYTES: usize = 48_233;
+        const BASELINE_OPT_IN_BYTES: usize = 48_233;
+        const BUDGET_MAX_BYTES: usize = BASELINE_DEFAULT_BYTES * 60 / 100;
+
+        let consumptions = budget_consumptions();
+        let daily_output = validator(&daily_output_schema(), true);
+        let mut measured = [0usize; 2];
+        for (slot, include_extended) in [(0, false), (1, true)] {
+            let date = BUDGET_DATE;
+            let (items, totals) = daily_nutrition_output(&consumptions, include_extended).unwrap();
+            let summary = format!("Hay {} consumos registrados para {date}.", items.len());
+            let payload = json!({
+                "date": date,
+                "timezone": TIMEZONE,
+                "items": items,
+                "totals": totals
+            });
+            let response = tool_success("bal-063-budget", &summary, payload, None);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            measured[slot] = body.len();
+
+            let parsed: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(parsed["id"], "bal-063-budget");
+            let structured = &parsed["result"]["structuredContent"];
+            assert_valid(&daily_output, structured);
+            assert_eq!(structured["items"].as_array().unwrap().len(), 17);
+            assert!(structured["totals"].get("extendedNutrition").is_none());
+            for item in structured["items"].as_array().unwrap() {
+                if include_extended {
+                    let extended = item["nutrition"]["extendedNutrition"].as_object().unwrap();
+                    assert_eq!(extended.len(), BUDGET_KEYS.len());
+                } else {
+                    assert!(item["nutrition"].get("extendedNutrition").is_none());
+                }
+            }
+        }
+
+        let [final_default_bytes, final_opt_in_bytes] = measured;
+        let ratio = final_default_bytes as f64 / BASELINE_DEFAULT_BYTES as f64;
+        println!(
+            "BAL-063 budget baseline_sha={BASELINE_SHA} baseline_default={BASELINE_DEFAULT_BYTES} \
+             baseline_full={BASELINE_OPT_IN_BYTES} final_default={final_default_bytes} \
+             final_opt_in={final_opt_in_bytes} budget_60pct={BUDGET_MAX_BYTES} ratio={ratio:.4}"
+        );
+        assert!(
+            final_default_bytes < final_opt_in_bytes,
+            "expected compact default ({final_default_bytes}) < opt-in ({final_opt_in_bytes})"
+        );
+        assert!(
+            final_default_bytes <= BUDGET_MAX_BYTES,
+            "expected compact default ({final_default_bytes}) <= 60% budget ({BUDGET_MAX_BYTES})"
+        );
+    }
+
+    #[test]
+    fn read_nutrition_projection_rounds_bulk_and_micro_values() {
+        use crate::connectors::sync::{MealLogEntry, NutritionSnapshot};
+
+        let mut source = NutritionValues {
+            calories: 157.24137931034485,
+            protein: 12.3456789,
+            carbs: 28.126,
+            fat: -0.0,
+            fiber: Some(2.3456),
+            sodium_mg: Some(0.00000049),
+            cholesterol_mg: Some(10.1234567),
+            extended_nutrition: [
+                ("ironMg".to_string(), 0.00000049),
+                ("vitaminB12Mcg".to_string(), 0.00000012),
+                ("alcoholG".to_string(), 0.00000033),
+                ("calciumMg".to_string(), 12.1234567),
+                ("folateMcg".to_string(), 0.0),
+                ("zincMg".to_string(), -0.0),
+                ("potassiumMg".to_string(), 1e308),
+            ]
+            .into_iter()
+            .collect(),
+        };
+        let original_source = source.clone();
+
+        let compact = read_nutrition_output(&source, false);
+        assert_eq!(source, original_source);
+        assert_eq!(compact.calories, 157.24);
+        assert_eq!(compact.protein, 12.35);
+        assert_eq!(compact.carbs, 28.13);
+        assert_eq!(compact.fat, 0.0);
+        assert!(compact.fat.is_sign_positive());
+        assert_eq!(compact.fiber, Some(2.35));
+        assert_eq!(compact.sodium_mg, Some(0.00000049));
+        assert_eq!(compact.cholesterol_mg, Some(10.123457));
+        assert!(compact.extended_nutrition.is_empty());
+        let compact_json = serde_json::to_value(&compact).unwrap();
+        assert_eq!(compact_json["calories"], json!(157.24));
+        assert!(compact_json.get("extendedNutrition").is_none());
+
+        let opt_in = read_nutrition_output(&source, true);
+        assert_eq!(opt_in.calories, 157.24);
+        assert_eq!(opt_in.extended_nutrition.get("ironMg"), Some(&0.00000049));
+        assert_eq!(
+            opt_in.extended_nutrition.get("vitaminB12Mcg"),
+            Some(&0.00000012)
+        );
+        assert_eq!(opt_in.extended_nutrition.get("alcoholG"), Some(&0.00000033));
+        assert_eq!(opt_in.extended_nutrition.get("calciumMg"), Some(&12.123457));
+        assert_eq!(opt_in.extended_nutrition.get("folateMcg"), Some(&0.0));
+        let zinc = *opt_in.extended_nutrition.get("zincMg").unwrap();
+        assert_eq!(zinc, 0.0);
+        assert!(zinc.is_sign_positive());
+        assert_eq!(opt_in.extended_nutrition.get("potassiumMg"), Some(&1e308));
+        assert!(
+            opt_in
+                .extended_nutrition
+                .keys()
+                .all(|key| EXTENDED_NUTRIENT_KEYS.contains(&key.as_str()))
+        );
+
+        // Finite decimal-scaling overflow on bulk and micro values returns the original value.
+        source.calories = 1e308;
+        source.sodium_mg = Some(1e308);
+        let overflow_safe = read_nutrition_output(&source, false);
+        assert_eq!(overflow_safe.calories, 1e308);
+        assert_eq!(overflow_safe.sodium_mg, Some(1e308));
+
+        // Totals round after aggregating full-precision scaled values (1.234 + 1.234 = 2.468 -> 2.47).
+        let make_consumption = |index: u128, fiber: Option<f64>| Consumption {
+            id: Uuid::from_u128(index),
+            template_id: None,
+            name: format!("Item {index}"),
+            snapshot: NutritionSnapshot {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100: NutritionValues {
+                    calories: 1.234,
+                    protein: 1.234,
+                    carbs: 1.234,
+                    fat: 1.234,
+                    fiber,
+                    sodium_mg: Some(0.0000004),
+                    cholesterol_mg: Some(0.0),
+                    extended_nutrition: [("ironMg".to_string(), 0.0000004)].into_iter().collect(),
+                },
+                brand: None,
+            },
+            canonical_quantity: 100.0,
+            entry: MealLogEntry {
+                entered_quantity: 100.0,
+                portion_snapshot: None,
+            },
+            consumed_at: 1,
+            updated_at: 1,
+        };
+        let pair = [
+            make_consumption(1, Some(1.234)),
+            make_consumption(2, Some(1.234)),
+        ];
+        for include_extended in [false, true] {
+            let (items, totals) = daily_nutrition_output(&pair, include_extended).unwrap();
+            assert_eq!(pair[0].scaled_nutrition().calories, 1.234);
+            for item in &items {
+                assert_eq!(item["nutrition"]["calories"], json!(1.23));
+                assert_eq!(item["nutrition"]["protein"], json!(1.23));
+                assert_eq!(item["nutrition"]["carbs"], json!(1.23));
+                assert_eq!(item["nutrition"]["fat"], json!(1.23));
+                assert_eq!(item["nutrition"]["fiber"], json!(1.23));
+                assert_eq!(item["nutrition"]["sodiumMg"], json!(0.0000004));
+                assert_eq!(item["nutrition"]["cholesterolMg"], json!(0.0));
+                if include_extended {
+                    assert_eq!(
+                        item["nutrition"]["extendedNutrition"]["ironMg"],
+                        json!(0.0000004)
+                    );
+                } else {
+                    assert!(item["nutrition"].get("extendedNutrition").is_none());
+                }
+            }
+            assert_eq!(totals.calories, 2.47);
+            assert_eq!(totals.protein, 2.47);
+            assert_eq!(totals.carbs, 2.47);
+            assert_eq!(totals.fat, 2.47);
+            assert_eq!(totals.fiber, Some(2.47));
+            assert_eq!(totals.sodium_mg, Some(0.000001));
+            assert_eq!(totals.cholesterol_mg, Some(0.0));
+            assert!(totals.extended_nutrition.is_empty());
+        }
+
+        // Mixed known and missing fiber drops total fiber; explicit zero fiber is preserved; empty day keeps zero fiber.
+        let mixed = [make_consumption(1, Some(1.234)), make_consumption(2, None)];
+        let (_, mixed_totals) = daily_nutrition_output(&mixed, false).unwrap();
+        assert_eq!(mixed_totals.fiber, None);
+        let zero_fiber = [make_consumption(1, Some(0.0))];
+        let (zero_items, zero_totals) = daily_nutrition_output(&zero_fiber, false).unwrap();
+        assert_eq!(zero_items[0]["nutrition"]["fiber"], json!(0.0));
+        assert_eq!(zero_totals.fiber, Some(0.0));
+        let (empty_items, empty_totals) = daily_nutrition_output(&[], true).unwrap();
+        assert!(empty_items.is_empty());
+        assert_eq!(empty_totals, zero_nutrition());
+    }
+
+    #[tokio::test]
+    async fn mcp_observer_classifies_production_daily_log_responses() {
+        use std::io;
+        use tracing::instrument::WithSubscriber;
+
+        #[derive(Clone, Default)]
+        struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+        struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+        impl io::Write for LogWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+            type Writer = LogWriter;
+
+            fn make_writer(&'a self) -> Self::Writer {
+                LogWriter(self.0.clone())
+            }
+        }
+
+        async fn synthetic_daily_endpoint(
+            observation: Option<Extension<observation::Observation>>,
+            Json(payload): Json<Value>,
+        ) -> Response {
+            let observation = observation.as_ref().map(|Extension(value)| value);
+            if let Some(observation) = observation {
+                observation.request("tools/call", Some("get_daily_log"));
+            }
+            let consumptions = budget_consumptions();
+            let (slice, include_extended) = match payload["mode"].as_str().unwrap() {
+                "small" => (&consumptions[..1], false),
+                _ => (&consumptions[..], true),
+            };
+            let (items, totals) = daily_nutrition_output(slice, include_extended).unwrap();
+            let summary = format!(
+                "Hay {} consumos registrados para {BUDGET_DATE}.",
+                items.len()
+            );
+            let body = json!({
+                "date": BUDGET_DATE,
+                "timezone": TIMEZONE,
+                "items": items,
+                "totals": totals
+            });
+            tool_success("bal-063-observer", &summary, body, observation)
+        }
+
+        let capture = LogCapture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(observation::logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+
+        async {
+            let router = observation::observe_routes(
+                Router::new().route("/mcp", post(synthetic_daily_endpoint)),
+            );
+            for (mode, expected) in [
+                ("small", "first_text_json=\"matches\""),
+                ("over_budget", "first_text_json=\"not_checked\""),
+            ] {
+                let response = router
+                    .clone()
+                    .oneshot(rpc_request(json!({"mode": mode}).to_string()))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let _ = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+                assert!(
+                    logs.lines().any(|line| {
+                        line.contains("event=\"tool_result_prepared\"")
+                            && line.contains("tool=\"get_daily_log\"")
+                            && line.contains("http_status=200")
+                            && line.contains(expected)
+                    }),
+                    "missing {expected} for mode={mode} in:\n{logs}"
+                );
+            }
+        }
+        .with_subscriber(subscriber)
+        .await;
+    }
 
     fn handler_router(db: Arc<Database>, hub: SyncHub, user_id: i32) -> Router {
         mcp_routes(AdmissionController::new(
@@ -2835,9 +3298,41 @@ mod tests {
         }
 
         let daily_tool = tool_definition(&tools, "get_daily_log");
+        assert!(
+            daily_tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("includeExtendedNutrition")
+        );
+        assert!(
+            daily_tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("America/Santiago")
+        );
+        assert_eq!(
+            daily_tool["inputSchema"]["properties"]["includeExtendedNutrition"],
+            json!({"type": "boolean", "default": false})
+        );
+        assert!(daily_tool["inputSchema"].get("required").is_none());
         let daily_input = validator(&daily_tool["inputSchema"], true);
-        for args in [json!({}), json!({"date": null})] {
+        for args in [
+            json!({}),
+            json!({"date": null}),
+            json!({"includeExtendedNutrition": false}),
+            json!({"includeExtendedNutrition": true}),
+            json!({"date": "2025-01-02", "includeExtendedNutrition": true}),
+        ] {
             assert_valid(&daily_input, &args);
+        }
+        for invalid in [
+            json!({"includeExtendedNutrition": "true"}),
+            json!({"includeExtendedNutrition": "false"}),
+            json!({"includeExtendedNutrition": 1}),
+            json!({"includeExtendedNutrition": 0}),
+            json!({"includeExtendedNutrition": null}),
+        ] {
+            assert!(!daily_input.is_valid(&invalid), "{invalid}");
         }
         let daily_output = validator(&daily_tool["outputSchema"], true);
         let daily_date = validator(&daily_tool["outputSchema"]["properties"]["date"], false);
@@ -2937,6 +3432,18 @@ mod tests {
         );
 
         let search_tool = tool_definition(&tools, "search_foods");
+        assert!(
+            search_tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("includeExtendedNutrition")
+        );
+        assert!(
+            search_tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("hasMore")
+        );
         assert_eq!(
             search_tool["annotations"],
             json!({
@@ -2949,11 +3456,22 @@ mod tests {
         let search_input = &search_tool["inputSchema"];
         assert_eq!(search_input["properties"]["source"]["default"], "all");
         assert_eq!(search_input["properties"]["limit"]["default"], 10);
+        assert_eq!(
+            search_input["properties"]["includeExtendedNutrition"],
+            json!({"type": "boolean", "default": false})
+        );
+        assert_eq!(search_input["required"], json!(["query"]));
         let search_input = validator(search_input, true);
         for source in ["all", "personal", "official"] {
             assert_valid(
                 &search_input,
                 &json!({"query": "x", "source": source, "limit": 1}),
+            );
+        }
+        for flag in [false, true] {
+            assert_valid(
+                &search_input,
+                &json!({"query": "x", "includeExtendedNutrition": flag}),
             );
         }
         assert_valid(
@@ -2968,6 +3486,9 @@ mod tests {
             json!({"query": "x", "limit": 0}),
             json!({"query": "x", "limit": 21}),
             json!({"query": "x", "category": "fruit"}),
+            json!({"query": "x", "includeExtendedNutrition": "true"}),
+            json!({"query": "x", "includeExtendedNutrition": 1}),
+            json!({"query": "x", "includeExtendedNutrition": null}),
         ] {
             assert!(!search_input.is_valid(&invalid), "{invalid}");
         }
@@ -3014,14 +3535,34 @@ mod tests {
         );
         assert_valid(&log_output, &json!({"status": "logged", "log": log}));
         assert_valid(&update_output, &json!({"status": "updated", "log": log}));
-        let (items, totals) = daily_nutrition_output(std::slice::from_ref(&consumption)).unwrap();
-        let day =
-            json!({"date": "2025-01-02", "timezone": TIMEZONE, "items": items, "totals": totals});
-        assert_valid(&daily_output, &day);
-        assert!(day["totals"].get("fiber").is_none());
-        assert!(day["totals"].get("extendedNutrition").is_none());
-        assert_eq!(day["totals"]["sodiumMg"], 0.0);
-        assert_eq!(day["totals"]["cholesterolMg"], 3.0);
+        for include_extended in [false, true] {
+            let (items, totals) =
+                daily_nutrition_output(std::slice::from_ref(&consumption), include_extended)
+                    .unwrap();
+            let day = json!({
+                "date": "2025-01-02",
+                "timezone": TIMEZONE,
+                "items": items,
+                "totals": totals
+            });
+            assert_valid(&daily_output, &day);
+            assert!(day["totals"].get("fiber").is_none());
+            assert!(day["totals"].get("extendedNutrition").is_none());
+            assert_eq!(day["totals"]["sodiumMg"], 0.0);
+            assert_eq!(day["totals"]["cholesterolMg"], 3.0);
+            if include_extended {
+                assert_eq!(
+                    day["items"][0]["nutrition"]["extendedNutrition"]["ironMg"],
+                    0.6
+                );
+            } else {
+                assert!(
+                    day["items"][0]["nutrition"]
+                        .get("extendedNutrition")
+                        .is_none()
+                );
+            }
+        }
 
         for extended in [
             json!({"extra": 0}),
@@ -3091,7 +3632,12 @@ mod tests {
             .extended_nutrition
             .insert("ironMg".into(), 1e308);
         assert!(consumption_output(&consumption).is_err());
-        assert!(daily_nutrition_output(std::slice::from_ref(&consumption)).is_err());
+        for include_extended in [false, true] {
+            assert!(
+                daily_nutrition_output(std::slice::from_ref(&consumption), include_extended)
+                    .is_err()
+            );
+        }
         consumption
             .snapshot
             .nutrition_per100
@@ -3106,10 +3652,16 @@ mod tests {
                 &log_output,
                 &json!({"status": "logged", "log": consumption_output(&consumption).unwrap()}),
             );
-            assert!(
-                daily_nutrition_output(&[consumption.clone(), consumption.clone()]).is_err(),
-                "{nutrient}"
-            );
+            for include_extended in [false, true] {
+                assert!(
+                    daily_nutrition_output(
+                        &[consumption.clone(), consumption.clone()],
+                        include_extended
+                    )
+                    .is_err(),
+                    "{nutrient}"
+                );
+            }
         }
         assert_eq!(public_number(f64::MAX), f64::MAX);
     }
@@ -3579,34 +4131,83 @@ mod tests {
             2.0
         );
         for (id, query) in [(iron_id, iron_name), (oversized_id, oversized_name)] {
-            let search = fixture
+            let search_default = fixture
                 .success(
                     "search_foods",
                     json!({"query": query, "source": "personal"}),
                 )
                 .await;
-            assert_eq!(search["foods"].as_array().unwrap().len(), 1);
-            assert_eq!(search["foods"][0]["id"], json!(id));
+            let search_false = fixture
+                .success(
+                    "search_foods",
+                    json!({"query": query, "source": "personal", "includeExtendedNutrition": false}),
+                )
+                .await;
+            assert_eq!(search_default, search_false);
+            assert_eq!(search_default["foods"].as_array().unwrap().len(), 1);
+            assert_eq!(search_default["foods"][0]["id"], json!(id));
+            assert!(
+                search_default["foods"][0]["details"]["nutritionPer100"]
+                    .get("extendedNutrition")
+                    .is_none()
+            );
+            assert!(
+                search_default["foods"][0]["details"]["nutritionPer100"]
+                    .get("fiber")
+                    .is_none()
+            );
+
+            let search_opt_in = fixture
+                .success(
+                    "search_foods",
+                    json!({"query": query, "source": "personal", "includeExtendedNutrition": true}),
+                )
+                .await;
+            assert_eq!(search_opt_in["foods"].as_array().unwrap().len(), 1);
+            assert_eq!(search_opt_in["foods"][0]["id"], json!(id));
             assert_eq!(
-                search["foods"][0]["details"]["nutritionPer100"]["extendedNutrition"]["ironMg"],
+                search_opt_in["foods"][0]["details"]["nutritionPer100"]["extendedNutrition"]["ironMg"],
                 2.0
             );
         }
-        let search = fixture
-            .success(
-                "search_foods",
-                json!({"query": Uuid::new_v4().to_string(), "source": "personal"}),
-            )
-            .await;
-        assert_eq!(search, json!({"foods": [], "hasMore": false}));
+        let missing_query = Uuid::new_v4().to_string();
+        for args in [
+            json!({"query": missing_query, "source": "personal"}),
+            json!({"query": missing_query, "source": "personal", "includeExtendedNutrition": false}),
+            json!({"query": missing_query, "source": "personal", "includeExtendedNutrition": true}),
+        ] {
+            let search = fixture.success("search_foods", args).await;
+            assert_eq!(search, json!({"foods": [], "hasMore": false}));
+        }
+        for invalid in [json!("true"), json!(1), Value::Null] {
+            let result = fixture
+                .call(
+                    "search_foods",
+                    json!({"query": "Iron", "includeExtendedNutrition": invalid}),
+                )
+                .await;
+            assert_tool_error(&result, "invalid_arguments");
+            let result = fixture
+                .call(
+                    "get_daily_log",
+                    json!({"date": DAY, "includeExtendedNutrition": invalid}),
+                )
+                .await;
+            assert_tool_error(&result, "invalid_arguments");
+        }
 
         for date in [DAY, "0001-01-02", "9999-01-02"] {
-            let empty = fixture
-                .success("get_daily_log", json!({"date": date}))
-                .await;
-            assert_eq!(empty["date"], date);
-            assert_eq!(empty["items"], json!([]));
-            assert_eq!(empty["totals"], json!(zero_nutrition()));
+            for args in [
+                json!({"date": date}),
+                json!({"date": date, "includeExtendedNutrition": false}),
+                json!({"date": date, "includeExtendedNutrition": true}),
+            ] {
+                let empty = fixture.success("get_daily_log", args).await;
+                assert_eq!(empty["date"], date);
+                assert_eq!(empty["items"], json!([]));
+                assert_eq!(empty["totals"], json!(zero_nutrition()));
+                assert!(empty["totals"].get("extendedNutrition").is_none());
+            }
         }
         for args in [json!({}), json!({"date": null})] {
             let today = fixture.success("get_daily_log", args).await;
@@ -3614,6 +4215,19 @@ mod tests {
         }
 
         let ml_id = dispatch_create_limits(fixture).await;
+        // Opt-in search on a food with an empty extendedNutrition map omits extendedNutrition.
+        let ml_search = fixture
+            .success(
+                "search_foods",
+                json!({"query": format!("MCP {ml_id}"), "source": "personal", "includeExtendedNutrition": true}),
+            )
+            .await;
+        assert_eq!(ml_search["foods"].as_array().unwrap().len(), 1);
+        assert!(
+            ml_search["foods"][0]["details"]["nutritionPer100"]
+                .get("extendedNutrition")
+                .is_none()
+        );
         for (id, unit) in [(iron_id, "g"), (ml_id, "ml")] {
             let args = log_args(id, 1.0, DAY);
             let result = fixture.success("log_food", args).await;
@@ -3723,6 +4337,13 @@ mod tests {
         assert_eq!(large["log"]["nutrition"]["calories"], 1e308);
 
         let daily = fixture.success("get_daily_log", json!({"date": DAY})).await;
+        let daily_false = fixture
+            .success(
+                "get_daily_log",
+                json!({"date": DAY, "includeExtendedNutrition": false}),
+            )
+            .await;
+        assert_eq!(daily, daily_false);
         let items = daily["items"].as_array().unwrap();
         let tiny = items
             .iter()
@@ -3730,14 +4351,33 @@ mod tests {
             .unwrap();
         assert_eq!(tiny["canonicalQuantity"], 0.00000001);
         assert!(tiny["foodId"].is_null());
-        let scoop = items
+        for item in items {
+            assert!(item["nutrition"].get("extendedNutrition").is_none());
+        }
+        assert!(daily["totals"].get("extendedNutrition").is_none());
+        assert!(daily["totals"].get("fiber").is_none());
+        assert_eq!(daily["totals"]["sodiumMg"], 0.0);
+
+        let daily_opt_in = fixture
+            .success(
+                "get_daily_log",
+                json!({"date": DAY, "includeExtendedNutrition": true}),
+            )
+            .await;
+        let opt_in_items = daily_opt_in["items"].as_array().unwrap();
+        let scoop = opt_in_items
             .iter()
             .find(|item| item["id"] == json!(scoop_id))
             .unwrap();
         assert_eq!(scoop["nutrition"]["extendedNutrition"]["ironMg"], 1.2);
-        assert!(daily["totals"].get("extendedNutrition").is_none());
-        assert!(daily["totals"].get("fiber").is_none());
-        assert_eq!(daily["totals"]["sodiumMg"], 0.0);
+        let ml_item = opt_in_items
+            .iter()
+            .find(|item| item["foodId"] == json!(ml_id))
+            .unwrap();
+        assert!(ml_item["nutrition"].get("extendedNutrition").is_none());
+        assert!(daily_opt_in["totals"].get("extendedNutrition").is_none());
+        assert!(daily_opt_in["totals"].get("fiber").is_none());
+        assert_eq!(daily_opt_in["totals"]["sodiumMg"], 0.0);
 
         let deleted = fixture
             .success("delete_food_log", json!({"logId": scoop_id}))
