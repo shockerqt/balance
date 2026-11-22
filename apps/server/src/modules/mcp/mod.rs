@@ -28,8 +28,8 @@ use crate::{
         db::Database,
         sync::{
             CanonicalUnit, Consumption, EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails,
-            MAX_BRAND_CHARS, NutritionValues, PortionDefinition, WeightLogRow, WeightUpsertStatus,
-            deserialize_optional_brand, validate_optional_brand,
+            LogFoodTimeIntent, MAX_BRAND_CHARS, NutritionValues, PortionDefinition, WeightLogRow,
+            WeightUpsertStatus, deserialize_optional_brand, validate_optional_brand,
         },
     },
     modules::{
@@ -621,16 +621,9 @@ async fn mcp_post_handler(
                     .0
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
-            let mut food_log_committed = false;
-            let result = call_tool(&db, user.id, name, args, &mut food_log_committed).await;
-            let collection = if food_log_committed {
-                Some("mealLogs")
-            } else if result.is_ok() {
-                mutated_collection(name)
-            } else {
-                None
-            };
-            if let Some(collection) = collection {
+            let mut mutated_collection: Option<&'static str> = None;
+            let result = call_tool(&db, user.id, name, args, &mut mutated_collection).await;
+            if let Some(collection) = mutated_collection {
                 sync_hub.notify(user.id, collection);
             }
             match result {
@@ -657,21 +650,12 @@ fn known_tool(tool: &str) -> Option<&'static str> {
     }
 }
 
-fn mutated_collection(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        "create_food" => Some("mealTemplates"),
-        "log_food" | "update_food_log" | "delete_food_log" => Some("mealLogs"),
-        "set_weight" | "delete_weight_log" => Some("weightLogs"),
-        _ => None,
-    }
-}
-
 async fn call_tool(
     db: &Database,
     user_id: i32,
     name: &str,
     args: Value,
-    food_log_committed: &mut bool,
+    mutated_collection: &mut Option<&'static str>,
 ) -> Result<(String, Value), AppError> {
     match name {
         "search_foods" => {
@@ -808,8 +792,11 @@ async fn call_tool(
             };
             let (food, created) = db
                 .sync
-                .create_personal_food(user_id, args.operation_id, &args.name, &details)
+                .create_mcp_food(user_id, args.operation_id, &args.name, &details)
                 .await?;
+            if created {
+                *mutated_collection = Some("mealTemplates");
+            }
             Ok((
                 if created {
                     format!("Se creó el alimento {}.", food.name)
@@ -834,25 +821,21 @@ async fn call_tool(
                 )));
             }
             validate_quantity(args.quantity)?;
-            let consumed_at = match resolve_optional_datetime(db, args.date, args.time).await? {
-                Some(consumed_at) => consumed_at,
-                None => {
-                    let (date, time) = db.sync.current_santiago_datetime().await?;
-                    db.sync.local_datetime_to_epoch(&date, &time).await?
-                }
-            };
+            let time_intent = parse_log_food_time_intent(args.date, args.time)?;
             let (consumption, created) = db
                 .sync
-                .create_consumption(
+                .create_mcp_consumption(
                     user_id,
                     args.operation_id,
                     args.food_id,
                     args.quantity,
                     args.portion_id.as_deref(),
-                    consumed_at,
+                    &time_intent,
                 )
                 .await?;
-            *food_log_committed = created;
+            if created {
+                *mutated_collection = Some("mealLogs");
+            }
             Ok((
                 if created {
                     format!("Se registró {}.", consumption.name)
@@ -875,7 +858,7 @@ async fn call_tool(
                 .sync
                 .update_consumption(user_id, args.log_id, args.quantity, consumed_at)
                 .await?;
-            *food_log_committed = true;
+            *mutated_collection = Some("mealLogs");
             Ok((
                 format!("Se actualizó el consumo de {}.", consumption.name),
                 json!({ "status": "updated", "log": consumption_output(&consumption)? }),
@@ -887,6 +870,7 @@ async fn call_tool(
                 .sync
                 .soft_delete_consumption(user_id, args.log_id)
                 .await?;
+            *mutated_collection = Some("mealLogs");
             Ok((
                 format!("Se eliminó el consumo de {}.", consumption.name),
                 json!({
@@ -957,6 +941,7 @@ async fn call_tool(
             let date = resolve_weight_date(db, args.date).await?;
             let grams = weight_kg_to_grams(args.weight_kg)?;
             let (row, status) = db.sync.set_weight(user_id, date, grams).await?;
+            *mutated_collection = Some("weightLogs");
             let status = match status {
                 WeightUpsertStatus::Created => "created",
                 WeightUpsertStatus::Updated => "updated",
@@ -976,6 +961,7 @@ async fn call_tool(
             let args: DeleteWeightLogArgs = parse_args(args)?;
             let date = resolve_weight_date(db, args.date).await?;
             let (row, already_deleted) = db.sync.soft_delete_weight(user_id, date).await?;
+            *mutated_collection = Some("weightLogs");
             Ok((
                 if already_deleted {
                     format!("El peso de {date} ya estaba eliminado.")
@@ -1040,6 +1026,23 @@ fn validate_quantity(quantity: f64) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+fn parse_log_food_time_intent(
+    date: Option<String>,
+    time: Option<String>,
+) -> Result<LogFoodTimeIntent, AppError> {
+    match (date, time) {
+        (None, None) => Ok(LogFoodTimeIntent::Omitted),
+        (Some(date), Some(time)) => {
+            validate_food_date(&date)?;
+            validate_time("time", &time)?;
+            Ok(LogFoodTimeIntent::Explicit { date, time })
+        }
+        _ => Err(AppError::BadRequest(
+            "date and time must be provided together".into(),
+        )),
+    }
 }
 
 async fn resolve_optional_datetime(
@@ -1487,7 +1490,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "create_food",
             "title": "Crear alimento personal",
-            "description": "Crea un alimento personal con nutrición por 100 g o 100 ml según canonicalUnit. Las porciones nombradas son conversiones opcionales con IDs únicos dentro del alimento. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
+            "description": "Crea un alimento personal con nutrición por 100 g o 100 ml según canonicalUnit. Las porciones nombradas son conversiones opcionales con IDs opacos y únicos dentro del alimento. Genera un operationId UUID nuevo en tiempo de ejecución para cada creación nueva y conserva exactamente el mismo operationId y los mismos argumentos al reintentar tras una respuesta perdida. Si reutilizas un operationId con otros argumentos o tras editar o eliminar el alimento, devolverá conflict: inspecciona el catálogo actual y genera un nuevo operationId solo tras confirmar una nueva creación. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
             "inputSchema": create_food_input_schema(),
             "outputSchema": {
                 "type": "object",
@@ -1505,7 +1508,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "log_food",
             "title": "Registrar consumo",
-            "description": "Registra un consumo de un foodId elegido inequívocamente. Sin portionId, quantity se expresa en la unidad canónica del alimento (g o ml). Con portionId, quantity cuenta unidades de esa conversión. Si 2 unidades equivalen a 60 g, quantity de 1 registra 30 g. Omite date y time para registrar la fecha y hora actuales de Santiago; ambos deben enviarse juntos cuando son explícitos.",
+            "description": "Registra un consumo de un foodId opaco elegido inequívocamente. Sin portionId, quantity se expresa en la unidad canónica del alimento (g o ml). Con portionId, quantity cuenta unidades de esa conversión. Si 2 unidades equivalen a 60 g, quantity de 1 registra 30 g. Omite date y time para registrar la fecha y hora actuales de Santiago; ambos deben enviarse juntos cuando son explícitos. Genera un operationId UUID nuevo en tiempo de ejecución para cada registro nuevo y conserva exactamente el mismo operationId y los mismos argumentos (incluido si omitiste o enviaste date y time) al reintentar tras una respuesta perdida. Si reutilizas un operationId con otros argumentos o tras editar o eliminar el consumo, devolverá conflict: consulta el diario actual antes de confirmar un nuevo registro con un nuevo operationId.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2806,9 +2809,6 @@ mod tests {
             reply["result"]["structuredContent"]["status"],
             "alreadyLogged"
         );
-        let replay_event = events.try_recv().unwrap();
-        assert_eq!(replay_event.user_id, fixture.users[*user].0);
-        assert_eq!(replay_event.collection, "mealLogs");
         assert_no_invalidation(&mut events);
         let persisted: Vec<(Uuid, i32)> = sqlx::query_as("SELECT id, user_id FROM meal_logs")
             .fetch_all(&fixture.db.user.pool)
@@ -4122,14 +4122,15 @@ mod tests {
         fixture
             .seed_food(oversized_id, &oversized_name, &oversized)
             .await;
-        let mut replay_create = create_args(iron_id);
-        replay_create["name"] = json!(iron_name);
-        let replay = fixture.success("create_food", replay_create).await;
-        assert_eq!(replay["status"], "alreadyCreated");
-        assert_eq!(
-            replay["food"]["details"]["nutritionPer100"]["extendedNutrition"]["ironMg"],
-            2.0
-        );
+        let mut legacy_collision = create_args(iron_id);
+        legacy_collision["name"] = json!(iron_name);
+        let collision_result = fixture.call("create_food", legacy_collision).await;
+        assert_tool_error(&collision_result, "conflict");
+        let collision_message = collision_result["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap();
+        assert!(!collision_message.contains(&iron_name));
+        assert!(!collision_message.contains("ironMg"));
         for (id, query) in [(iron_id, iron_name), (oversized_id, oversized_name)] {
             let search_default = fixture
                 .success(
@@ -5584,7 +5585,7 @@ mod tests {
                 "fat": 4.0,
                 "brand": format!("  {unique_brand}  ")
             }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5600,7 +5601,7 @@ mod tests {
                 "source": "personal",
                 "limit": 10
             }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5623,7 +5624,7 @@ mod tests {
                 "carbs": 60.0,
                 "fat": 7.0
             }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5641,7 +5642,7 @@ mod tests {
                 "date": "2026-08-10",
                 "time": "09:00"
             }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5659,7 +5660,7 @@ mod tests {
                 "date": "2026-08-10",
                 "time": "09:05"
             }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5670,7 +5671,7 @@ mod tests {
             1,
             "get_daily_log",
             json!({ "date": "2026-08-10" }),
-            &mut false,
+            &mut None,
         )
         .await
         .unwrap();
@@ -5685,6 +5686,358 @@ mod tests {
             .find(|i| i["id"] == log_plain.to_string())
             .unwrap();
         assert!(plain_item.get("brand").is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_mutation_replay_contract_postgres() {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let oidc = OidcConfig::test_cached_subject_config().mcp_config();
+        let user_a = db
+            .user
+            .provision_identity(
+                oidc.issuer(),
+                "mcp-replay-user-a",
+                &NewUser {
+                    email: "mcp-replay-a@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+        let user_b = db
+            .user
+            .provision_identity(
+                oidc.issuer(),
+                "mcp-replay-user-b",
+                &NewUser {
+                    email: "mcp-replay-b@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let fixture = ContractFixture::new(db, user_a.id);
+        let mut events = fixture.hub.subscribe();
+
+        // AC-1 & AC-7: schemas require operationId and descriptions cover retry/conflict contract.
+        let tools = tool_definitions();
+        for tool_name in ["create_food", "log_food"] {
+            let def = tool_definition(&tools, tool_name);
+            let required = def["inputSchema"]["required"].as_array().unwrap();
+            assert!(required.iter().any(|field| field == "operationId"));
+            let description = def["description"].as_str().unwrap();
+            assert!(description.contains("operationId"));
+            assert!(description.contains("conflict"));
+            assert!(description.contains("opaco"));
+        }
+
+        // AC-2 & AC-7: create_food commit emits 1 mealTemplates invalidation; equivalent replay emits 0.
+        let food_op = Uuid::new_v4();
+        let food_payload = json!({
+            "operationId": food_op,
+            "name": "  Yogurt Replay  ",
+            "canonicalUnit": "g",
+            "calories": 60,
+            "protein": 4.0,
+            "carbs": 8.0,
+            "fat": 0.0,
+            "brand": "  Soprole  ",
+            "portions": [
+                { "id": "Pote", "name": "1 pote", "portionQuantity": 1, "canonicalQuantity": 125 }
+            ],
+            "chileanSeals": ["alto en azúcares"]
+        });
+        let created_food = fixture.success("create_food", food_payload.clone()).await;
+        assert_eq!(created_food["status"], "created");
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.user_id, user_a.id);
+        assert_eq!(event.collection, "mealTemplates");
+        assert_no_invalidation(&mut events);
+
+        // Equivalent replay with normalized variants (-0.0, trimmed name/brand, float vs int).
+        let equivalent_food_payload = json!({
+            "operationId": food_op,
+            "name": "Yogurt Replay",
+            "canonicalUnit": "g",
+            "calories": 60.0,
+            "protein": 4,
+            "carbs": 8,
+            "fat": -0.0,
+            "brand": "Soprole",
+            "portions": [
+                { "id": "Pote", "name": "1 pote", "portionQuantity": 1.0, "canonicalQuantity": 125.0 }
+            ],
+            "chileanSeals": ["alto en azúcares"]
+        });
+        let replayed_food = fixture
+            .success("create_food", equivalent_food_payload)
+            .await;
+        assert_eq!(replayed_food["status"], "alreadyCreated");
+        assert_eq!(replayed_food["food"], created_food["food"]);
+        assert_no_invalidation(&mut events);
+
+        // Changed intent on create_food returns conflict and emits 0 invalidations.
+        let mut changed_food = food_payload.clone();
+        changed_food["calories"] = json!(61.0);
+        let conflict = fixture.call("create_food", changed_food).await;
+        assert_tool_error(&conflict, "conflict");
+        assert_no_invalidation(&mut events);
+
+        // Original payload still replays cleanly after conflict.
+        let replayed_again = fixture.success("create_food", food_payload.clone()).await;
+        assert_eq!(replayed_again["status"], "alreadyCreated");
+        assert_eq!(replayed_again["food"], created_food["food"]);
+        assert_no_invalidation(&mut events);
+
+        // AC-5: Independent tool namespaces — same UUID works for log_food too!
+        let log_payload = json!({
+            "operationId": food_op,
+            "foodId": food_op,
+            "quantity": 1,
+            "portionId": "Pote",
+            "date": "2026-08-10",
+            "time": "09:30"
+        });
+        let created_log = fixture.success("log_food", log_payload.clone()).await;
+        assert_eq!(created_log["status"], "logged");
+        fixture.assert_meal_invalidation(&mut events);
+
+        // Equivalent log_food replay emits 0 invalidations.
+        let mut equivalent_log = log_payload.clone();
+        equivalent_log["quantity"] = json!(1.0);
+        let replayed_log = fixture.success("log_food", equivalent_log).await;
+        assert_eq!(replayed_log["status"], "alreadyLogged");
+        assert_eq!(replayed_log["log"], created_log["log"]);
+        assert_no_invalidation(&mut events);
+
+        // Changed intent on log_food returns conflict and emits 0 invalidations.
+        let mut changed_log = log_payload.clone();
+        changed_log["quantity"] = json!(2.0);
+        let log_conflict = fixture.call("log_food", changed_log).await;
+        assert_tool_error(&log_conflict, "conflict");
+        assert_no_invalidation(&mut events);
+
+        // Half-pair date/time returns invalid_arguments.
+        let half_pair = fixture
+            .call(
+                "log_food",
+                json!({
+                    "operationId": Uuid::new_v4(),
+                    "foodId": food_op,
+                    "quantity": 1,
+                    "date": "2026-08-10"
+                }),
+            )
+            .await;
+        assert_tool_error(&half_pair, "invalid_arguments");
+        assert_no_invalidation(&mut events);
+
+        // AC-4: Edit source food -> create_food replay conflicts, but log_food replay STILL succeeds!
+        sqlx::query(
+            "UPDATE meal_templates SET name = 'Yogurt Edited' WHERE id = $1 AND user_id = $2",
+        )
+        .bind(food_op)
+        .bind(user_a.id)
+        .execute(&fixture.db.sync.pool)
+        .await
+        .unwrap();
+        let food_edited_conflict = fixture.call("create_food", food_payload.clone()).await;
+        assert_tool_error(&food_edited_conflict, "conflict");
+        assert_no_invalidation(&mut events);
+
+        let log_after_source_edit = fixture.success("log_food", log_payload.clone()).await;
+        assert_eq!(log_after_source_edit["status"], "alreadyLogged");
+        assert_eq!(log_after_source_edit["log"]["name"], "Yogurt Replay");
+        assert_no_invalidation(&mut events);
+
+        // AC-4: Hard-delete source food (ON DELETE SET NULL) -> create_food conflicts, log_food replays with foodId: null!
+        sqlx::query("DELETE FROM meal_templates WHERE id = $1 AND user_id = $2")
+            .bind(food_op)
+            .bind(user_a.id)
+            .execute(&fixture.db.sync.pool)
+            .await
+            .unwrap();
+        let food_deleted_conflict = fixture.call("create_food", food_payload).await;
+        assert_tool_error(&food_deleted_conflict, "conflict");
+
+        let log_after_source_delete = fixture.success("log_food", log_payload.clone()).await;
+        assert_eq!(log_after_source_delete["status"], "alreadyLogged");
+        assert_eq!(log_after_source_delete["log"]["foodId"], Value::Null);
+        assert_eq!(log_after_source_delete["log"]["name"], "Yogurt Replay");
+        assert_no_invalidation(&mut events);
+
+        // AC-4: Edit log via update_food_log -> log_food replay conflicts.
+        let updated = fixture
+            .success(
+                "update_food_log",
+                json!({ "logId": food_op, "quantity": 2.0 }),
+            )
+            .await;
+        assert_eq!(updated["status"], "updated");
+        fixture.assert_meal_invalidation(&mut events);
+
+        let log_edited_conflict = fixture.call("log_food", log_payload).await;
+        assert_tool_error(&log_edited_conflict, "conflict");
+        assert_no_invalidation(&mut events);
+
+        // AC-4: Delete log via delete_food_log -> log_food replay conflicts without resurrecting.
+        let food2_op = Uuid::new_v4();
+        let food2 = fixture.success("create_food", create_args(food2_op)).await;
+        assert_eq!(food2["status"], "created");
+        let _ = events.try_recv().unwrap();
+
+        let log2_op = Uuid::new_v4();
+        let log2_payload = json!({
+            "operationId": log2_op,
+            "foodId": food2_op,
+            "quantity": 50.0,
+            "date": "2026-08-10",
+            "time": "13:00"
+        });
+        let created_log2 = fixture.success("log_food", log2_payload.clone()).await;
+        assert_eq!(created_log2["status"], "logged");
+        fixture.assert_meal_invalidation(&mut events);
+
+        let deleted_log2 = fixture
+            .success("delete_food_log", json!({ "logId": log2_op }))
+            .await;
+        assert_eq!(deleted_log2["status"], "deleted");
+        fixture.assert_meal_invalidation(&mut events);
+
+        let log2_deleted_conflict = fixture.call("log_food", log2_payload).await;
+        assert_tool_error(&log2_deleted_conflict, "conflict");
+        assert_no_invalidation(&mut events);
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM meal_logs WHERE id = $1")
+                .bind(log2_op)
+                .fetch_one(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert!(deleted_at.is_some());
+
+        // AC-5: Official row collision, foreign user collision, and legacy log collision return generic conflict with zero leakage.
+        let official_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at) \
+             VALUES ($1, NULL, TRUE, 'Secret Official Item', $2, 1000)",
+        )
+        .bind(official_id)
+        .bind(serde_json::to_value(iron_food_details()).unwrap())
+        .execute(&fixture.db.sync.pool)
+        .await
+        .unwrap();
+        let official_collision = fixture.call("create_food", create_args(official_id)).await;
+        assert_tool_error(&official_collision, "conflict");
+        assert!(
+            !official_collision["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Secret Official Item")
+        );
+
+        let foreign_food_id = Uuid::new_v4();
+        fixture
+            .db
+            .sync
+            .create_mcp_food(
+                user_b.id,
+                foreign_food_id,
+                "Foreign Secret Food",
+                &iron_food_details(),
+            )
+            .await
+            .unwrap();
+        let foreign_food_collision = fixture
+            .call("create_food", create_args(foreign_food_id))
+            .await;
+        assert_tool_error(&foreign_food_collision, "conflict");
+        assert!(
+            !foreign_food_collision["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Foreign Secret Food")
+        );
+
+        let foreign_log_id = Uuid::new_v4();
+        fixture
+            .db
+            .sync
+            .create_mcp_consumption(
+                user_b.id,
+                foreign_log_id,
+                foreign_food_id,
+                100.0,
+                None,
+                &LogFoodTimeIntent::Explicit {
+                    date: "2026-08-10".into(),
+                    time: "15:00".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let foreign_log_collision = fixture
+            .call(
+                "log_food",
+                json!({
+                    "operationId": foreign_log_id,
+                    "foodId": food2_op,
+                    "quantity": 100.0,
+                    "date": "2026-08-10",
+                    "time": "15:00"
+                }),
+            )
+            .await;
+        assert_tool_error(&foreign_log_collision, "conflict");
+        assert!(
+            !foreign_log_collision["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Foreign Secret Food")
+        );
+
+        // Legacy owned meal_logs row (inserted without MCP receipt) -> generic conflict.
+        let legacy_log_id = Uuid::new_v4();
+        let epoch = fixture
+            .db
+            .sync
+            .local_datetime_to_epoch("2026-08-10", "16:00")
+            .await
+            .unwrap();
+        fixture
+            .db
+            .sync
+            .create_consumption(user_a.id, legacy_log_id, food2_op, 80.0, None, epoch)
+            .await
+            .unwrap();
+        let legacy_log_collision = fixture
+            .call(
+                "log_food",
+                json!({
+                    "operationId": legacy_log_id,
+                    "foodId": food2_op,
+                    "quantity": 80.0,
+                    "date": "2026-08-10",
+                    "time": "16:00"
+                }),
+            )
+            .await;
+        assert_tool_error(&legacy_log_collision, "conflict");
+        assert_no_invalidation(&mut events);
+
+        cleanup_identity_test_database(&fixture.db, &schema).await;
     }
 }
 

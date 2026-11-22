@@ -2,8 +2,8 @@
 # Balance database schema snapshot
 
 - PostgreSQL major: 17
-- Migration head: `20261121000000 food search indexes checksum=e5d83aefd10631c74de78e42a507092ee22509b55c985bb0c8d7903f5761d8324ae6b805066f4aa96f37ddcaa8febcde`
-- Schema fingerprint: `sha256:8ca0e651abe14955d56c27578258e40ad441dac010a283969833e57e280e2abe`
+- Migration head: `20261122000000 mcp mutation receipts checksum=396a23d8e368d4980305d9972a66c243d26c9a80db200753b6d5a645d17711012fa0e37c7a5343320ce61d910b60855d`
+- Schema fingerprint: `sha256:b5968f5a6e27fce7ce4acd6c985ed756870c09cdb4fbe00dc5d3dfb631990945`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
@@ -13,6 +13,7 @@ DATABASE_OWNER|migration-role
 SCHEMA|public|owner=pg_database_owner|migration-role-usage=t|migration-role-create=t
 TABLE|food_import_rows
 TABLE|food_import_sessions
+TABLE|mcp_mutation_receipts
 TABLE|meal_logs
 TABLE|meal_templates
 TABLE|oidc_user_identities
@@ -32,6 +33,13 @@ COLUMN|food_import_sessions|7|status|character varying(16)|not-null|identity=non
 COLUMN|food_import_sessions|8|summary|jsonb|nullable|identity=none|default=
 COLUMN|food_import_sessions|9|created_at|timestamp with time zone|not-null|identity=none|default=clock_timestamp()
 COLUMN|food_import_sessions|10|committed_at|timestamp with time zone|nullable|identity=none|default=
+COLUMN|mcp_mutation_receipts|1|user_id|integer|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|2|tool_name|text|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|3|operation_id|uuid|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|4|schema_version|integer|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|5|request_intent|jsonb|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|6|target_state|jsonb|not-null|identity=none|default=
+COLUMN|mcp_mutation_receipts|7|created_at|bigint|not-null|identity=none|default=(floor((EXTRACT(epoch FROM clock_timestamp()) * (1000)::numeric)))::bigint
 COLUMN|meal_logs|1|id|uuid|not-null|identity=none|default=
 COLUMN|meal_logs|2|user_id|integer|not-null|identity=none|default=
 COLUMN|meal_logs|3|template_id|uuid|nullable|identity=none|default=
@@ -79,6 +87,10 @@ CONSTRAINT|food_import_sessions|food_import_sessions_expected_rows_check|c|CHECK
 CONSTRAINT|food_import_sessions|food_import_sessions_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|food_import_sessions|food_import_sessions_status_check|c|CHECK (status::text = ANY (ARRAY['staged'::character varying, 'committed'::character varying, 'cancelled'::character varying]::text[]))
 CONSTRAINT|food_import_sessions|food_import_sessions_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_pkey|p|PRIMARY KEY (user_id, tool_name, operation_id)
+CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_schema_version_check|c|CHECK (schema_version >= 1)
+CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_tool_name_check|c|CHECK (tool_name = ANY (ARRAY['create_food'::text, 'log_food'::text]))
+CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|meal_logs|meal_logs_canonical_quantity_positive|c|CHECK (canonical_quantity > 0::double precision)
 CONSTRAINT|meal_logs|meal_logs_pkey|p|PRIMARY KEY (id)
 CONSTRAINT|meal_logs|meal_logs_template_id_fkey|f|FOREIGN KEY (template_id) REFERENCES meal_templates(id) ON DELETE SET NULL
@@ -99,6 +111,7 @@ CONSTRAINT|weight_logs|weight_logs_weight_grams_check|c|CHECK (weight_grams >= 1
 INDEX|food_import_rows|food_import_rows_pkey|CREATE UNIQUE INDEX food_import_rows_pkey ON public.food_import_rows USING btree (session_id, row_index)
 INDEX|food_import_sessions|food_import_sessions_pkey|CREATE UNIQUE INDEX food_import_sessions_pkey ON public.food_import_sessions USING btree (id)
 INDEX|food_import_sessions|idx_food_import_sessions_owner|CREATE INDEX idx_food_import_sessions_owner ON public.food_import_sessions USING btree (user_id, created_at DESC)
+INDEX|mcp_mutation_receipts|mcp_mutation_receipts_pkey|CREATE UNIQUE INDEX mcp_mutation_receipts_pkey ON public.mcp_mutation_receipts USING btree (user_id, tool_name, operation_id)
 INDEX|meal_logs|idx_meal_logs_daily|CREATE INDEX idx_meal_logs_daily ON public.meal_logs USING btree (user_id, consumed_at) WHERE (deleted_at IS NULL)
 INDEX|meal_logs|idx_meal_logs_import_identity|CREATE UNIQUE INDEX idx_meal_logs_import_identity ON public.meal_logs USING btree (user_id, source_provider, external_id) WHERE ((source_provider IS NOT NULL) AND (external_id IS NOT NULL))
 INDEX|meal_logs|idx_meal_logs_sync|CREATE INDEX idx_meal_logs_sync ON public.meal_logs USING btree (user_id, updated_at, id)
@@ -119,6 +132,7 @@ INDEX|weight_logs|idx_weight_logs_sync|CREATE INDEX idx_weight_logs_sync ON publ
 INDEX|weight_logs|weight_logs_pkey|CREATE UNIQUE INDEX weight_logs_pkey ON public.weight_logs USING btree (user_id, measured_on)
 OWNER|TABLE|food_import_rows|migration-role
 OWNER|TABLE|food_import_sessions|migration-role
+OWNER|TABLE|mcp_mutation_receipts|migration-role
 OWNER|TABLE|meal_logs|migration-role
 OWNER|TABLE|meal_templates|migration-role
 OWNER|TABLE|oidc_user_identities|migration-role

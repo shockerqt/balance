@@ -8,7 +8,180 @@ use uuid::Uuid;
 use crate::shared::error::AppError;
 
 pub const FOOD_SCHEMA_VERSION: i32 = 2;
+pub const MCP_RECEIPT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_BRAND_CHARS: usize = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpToolKind {
+    CreateFood,
+    LogFood,
+}
+
+impl McpToolKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CreateFood => "create_food",
+            Self::LogFood => "log_food",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum LogFoodTimeIntent {
+    Omitted,
+    Explicit { date: String, time: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateFoodIntentV1 {
+    name: String,
+    details: FoodDetails,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateFoodBaselineV1 {
+    name: String,
+    details: FoodDetails,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    external_id: Option<String>,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogFoodIntentV1 {
+    food_id: Uuid,
+    entered_quantity: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    portion_id: Option<String>,
+    time_intent: LogFoodTimeIntent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogFoodBaselineV1 {
+    name_snapshot: String,
+    nutrition_snapshot: NutritionSnapshot,
+    canonical_quantity: f64,
+    entry_snapshot: MealLogEntry,
+    consumed_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    external_id: Option<String>,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct McpMutationReceiptRow {
+    schema_version: i32,
+    request_intent: Value,
+    target_state: Value,
+}
+
+type SantiagoNowResolver = Box<dyn FnOnce() -> Result<(String, String), AppError> + Send>;
+
+fn canonical_f64(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value }
+}
+
+fn canonical_nutrition_values(values: &NutritionValues) -> NutritionValues {
+    NutritionValues {
+        calories: canonical_f64(values.calories),
+        protein: canonical_f64(values.protein),
+        carbs: canonical_f64(values.carbs),
+        fat: canonical_f64(values.fat),
+        fiber: values.fiber.map(canonical_f64),
+        sodium_mg: values.sodium_mg.map(canonical_f64),
+        cholesterol_mg: values.cholesterol_mg.map(canonical_f64),
+        extended_nutrition: values
+            .extended_nutrition
+            .iter()
+            .map(|(key, value)| (key.clone(), canonical_f64(*value)))
+            .collect(),
+    }
+}
+
+fn canonical_food_details(details: &FoodDetails) -> FoodDetails {
+    FoodDetails {
+        schema_version: details.schema_version,
+        canonical_unit: details.canonical_unit,
+        nutrition_per100: canonical_nutrition_values(&details.nutrition_per100),
+        portions: details
+            .portions
+            .iter()
+            .map(|portion| PortionDefinition {
+                id: portion.id.clone(),
+                name: portion.name.clone(),
+                portion_quantity: canonical_f64(portion.portion_quantity),
+                canonical_quantity: canonical_f64(portion.canonical_quantity),
+            })
+            .collect(),
+        chilean_seals: details.chilean_seals.clone(),
+        brand: normalize_optional_brand(details.brand.clone()),
+        category: details.category.clone(),
+        typical_time: details.typical_time.clone(),
+    }
+}
+
+fn canonical_nutrition_snapshot(snapshot: &NutritionSnapshot) -> NutritionSnapshot {
+    NutritionSnapshot {
+        schema_version: snapshot.schema_version,
+        canonical_unit: snapshot.canonical_unit,
+        nutrition_per100: canonical_nutrition_values(&snapshot.nutrition_per100),
+        brand: normalize_optional_brand(snapshot.brand.clone()),
+    }
+}
+
+fn canonical_meal_log_entry(entry: &MealLogEntry) -> MealLogEntry {
+    MealLogEntry {
+        entered_quantity: canonical_f64(entry.entered_quantity),
+        portion_snapshot: entry
+            .portion_snapshot
+            .as_ref()
+            .map(|portion| PortionSnapshot {
+                portion_id: portion.portion_id.clone(),
+                name: portion.name.clone(),
+                portion_quantity: canonical_f64(portion.portion_quantity),
+                canonical_quantity: canonical_f64(portion.canonical_quantity),
+            }),
+    }
+}
+
+impl CreateFoodIntentV1 {
+    fn canonicalize(mut self) -> Self {
+        self.details = canonical_food_details(&self.details);
+        self
+    }
+}
+
+impl CreateFoodBaselineV1 {
+    fn canonicalize(mut self) -> Self {
+        self.details = canonical_food_details(&self.details);
+        self
+    }
+}
+
+impl LogFoodIntentV1 {
+    fn canonicalize(mut self) -> Self {
+        self.entered_quantity = canonical_f64(self.entered_quantity);
+        self
+    }
+}
+
+impl LogFoodBaselineV1 {
+    fn canonicalize(mut self) -> Self {
+        self.nutrition_snapshot = canonical_nutrition_snapshot(&self.nutrition_snapshot);
+        self.canonical_quantity = canonical_f64(self.canonical_quantity);
+        self.entry_snapshot = canonical_meal_log_entry(&self.entry_snapshot);
+        self
+    }
+}
 
 fn normalize_optional_brand(brand: Option<String>) -> Option<String> {
     brand.and_then(|value| {
@@ -1412,6 +1585,7 @@ impl SyncDatasource {
         Ok(FoodSearchResult { foods, has_more })
     }
 
+    #[allow(dead_code)]
     pub async fn create_personal_food(
         &self,
         user_id: i32,
@@ -1477,6 +1651,190 @@ impl SyncDatasource {
         Ok((row, result.rows_affected() == 1))
     }
 
+    pub async fn create_mcp_food(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        name: &str,
+        details: &FoodDetails,
+    ) -> Result<(FoodTemplate, bool), AppError> {
+        self.create_mcp_food_inner(user_id, operation_id, name, details, false)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn create_mcp_food_with_fault(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        name: &str,
+        details: &FoodDetails,
+        fail_before_commit: bool,
+    ) -> Result<(FoodTemplate, bool), AppError> {
+        self.create_mcp_food_inner(user_id, operation_id, name, details, fail_before_commit)
+            .await
+    }
+
+    async fn create_mcp_food_inner(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        name: &str,
+        details: &FoodDetails,
+        fail_before_commit: bool,
+    ) -> Result<(FoodTemplate, bool), AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::BadRequest("name cannot be empty".into()));
+        }
+        let mut details = details.clone();
+        details.normalize();
+        details.validate()?;
+        let details = canonical_food_details(&details);
+        let intent = CreateFoodIntentV1 {
+            name: name.to_owned(),
+            details: details.clone(),
+        };
+
+        let mut tx = self.pool.begin().await?;
+        lock_mcp_receipt_key(&mut tx, user_id, McpToolKind::CreateFood, operation_id).await?;
+
+        if let Some(receipt) =
+            get_mcp_receipt_in_tx(&mut tx, user_id, McpToolKind::CreateFood, operation_id).await?
+        {
+            if receipt.schema_version != MCP_RECEIPT_SCHEMA_VERSION {
+                return Err(AppError::Internal(
+                    "Unsupported MCP receipt schema version".into(),
+                ));
+            }
+            let stored_intent: CreateFoodIntentV1 =
+                serde_json::from_value::<CreateFoodIntentV1>(receipt.request_intent)
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Invalid MCP create_food receipt intent: {error}"
+                        ))
+                    })?
+                    .canonicalize();
+            if stored_intent != intent {
+                return Err(AppError::Conflict(
+                    "This operationId was already used for a different create_food request. Reuse the original arguments to replay that operation, or confirm and generate a new operationId for a different food.".into(),
+                ));
+            }
+            let stored_baseline: CreateFoodBaselineV1 =
+                serde_json::from_value::<CreateFoodBaselineV1>(receipt.target_state)
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Invalid MCP create_food receipt target state: {error}"
+                        ))
+                    })?
+                    .canonicalize();
+            let row = sqlx::query_as::<_, MealTemplateRow>(
+                r#"
+                SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                       updated_at, deleted_at
+                FROM meal_templates
+                WHERE id = $1 AND user_id = $2 AND is_official = FALSE
+                "#,
+            )
+            .bind(operation_id)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(row) = row else {
+                return Err(AppError::Conflict(
+                    "The food created by this operationId was deleted or modified. Inspect the current food catalog before making a new mutation with a new operationId.".into(),
+                ));
+            };
+            if row.deleted_at.is_some() {
+                return Err(AppError::Conflict(
+                    "The food created by this operationId was deleted or modified. Inspect the current food catalog before making a new mutation with a new operationId.".into(),
+                ));
+            }
+            let (food, current_baseline) = food_template_and_baseline_from_row(row)?;
+            if current_baseline != stored_baseline {
+                return Err(AppError::Conflict(
+                    "The food created by this operationId was deleted or modified. Inspect the current food catalog before making a new mutation with a new operationId.".into(),
+                ));
+            }
+            tx.commit().await?;
+            return Ok((food, false));
+        }
+
+        let duplicate = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            SELECT id
+            FROM meal_templates
+            WHERE user_id = $1
+              AND is_official = FALSE
+              AND deleted_at IS NULL
+              AND lower(btrim(name)) = lower($2)
+              AND id <> $3
+            LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(operation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if duplicate.is_some() {
+            return Err(AppError::Conflict(
+                "A personal food with the same name already exists".into(),
+            ));
+        }
+
+        let details_json = serde_json::to_value(&details)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let inserted = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            INSERT INTO meal_templates
+                (id, user_id, is_official, name, details, updated_at, deleted_at)
+            VALUES
+                ($1, $2, FALSE, $3, $4,
+                 floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                 NULL)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, user_id, is_official, name, details, source_provider, external_id,
+                      updated_at, deleted_at
+            "#,
+        )
+        .bind(operation_id)
+        .bind(user_id)
+        .bind(name)
+        .bind(details_json)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = inserted else {
+            return Err(AppError::Conflict(
+                "This operationId is already in use without a matching MCP receipt. Inspect current state and generate a new operationId for a new request.".into(),
+            ));
+        };
+        let (food, baseline) = food_template_and_baseline_from_row(row)?;
+        let request_intent_json =
+            serde_json::to_value(&intent).map_err(|error| AppError::Internal(error.to_string()))?;
+        let target_state_json = serde_json::to_value(&baseline)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        insert_mcp_receipt_in_tx(
+            &mut tx,
+            user_id,
+            McpToolKind::CreateFood,
+            operation_id,
+            &request_intent_json,
+            &target_state_json,
+        )
+        .await?;
+
+        if fail_before_commit {
+            return Err(AppError::Internal(
+                "Injected pre-commit failure for MCP receipt test".into(),
+            ));
+        }
+
+        tx.commit().await?;
+        Ok((food, true))
+    }
+
+    #[allow(dead_code)]
     pub async fn get_food_template(
         &self,
         user_id: i32,
@@ -1499,6 +1857,7 @@ impl SyncDatasource {
         row.map(food_template_from_row).transpose()
     }
 
+    #[allow(dead_code)]
     pub async fn create_consumption(
         &self,
         user_id: i32,
@@ -1545,6 +1904,223 @@ impl SyncDatasource {
             .ok_or_else(|| AppError::Conflict("operationId is already in use".into()))?;
         tx.commit().await?;
         Ok((row, result.rows_affected() == 1))
+    }
+
+    pub async fn create_mcp_consumption(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        template_id: Uuid,
+        quantity: f64,
+        portion_id: Option<&str>,
+        time_intent: &LogFoodTimeIntent,
+    ) -> Result<(Consumption, bool), AppError> {
+        self.create_mcp_consumption_inner(
+            user_id,
+            operation_id,
+            template_id,
+            quantity,
+            portion_id,
+            time_intent,
+            None,
+            false,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn create_mcp_consumption_with_hooks(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        template_id: Uuid,
+        quantity: f64,
+        portion_id: Option<&str>,
+        time_intent: &LogFoodTimeIntent,
+        now_resolver: Option<SantiagoNowResolver>,
+        fail_before_commit: bool,
+    ) -> Result<(Consumption, bool), AppError> {
+        self.create_mcp_consumption_inner(
+            user_id,
+            operation_id,
+            template_id,
+            quantity,
+            portion_id,
+            time_intent,
+            now_resolver,
+            fail_before_commit,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_mcp_consumption_inner(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        template_id: Uuid,
+        quantity: f64,
+        portion_id: Option<&str>,
+        time_intent: &LogFoodTimeIntent,
+        now_resolver: Option<SantiagoNowResolver>,
+        fail_before_commit: bool,
+    ) -> Result<(Consumption, bool), AppError> {
+        validate_positive("quantity", quantity)?;
+        if let Some(portion_id) = portion_id
+            && (portion_id.trim().is_empty() || portion_id.chars().count() > 80)
+        {
+            return Err(AppError::BadRequest(
+                "portionId must contain between 1 and 80 characters and cannot be blank".into(),
+            ));
+        }
+        let explicit_consumed_at = match time_intent {
+            LogFoodTimeIntent::Omitted => None,
+            LogFoodTimeIntent::Explicit { date, time } => {
+                Some(self.local_datetime_to_epoch(date, time).await?)
+            }
+        };
+        let intent = LogFoodIntentV1 {
+            food_id: template_id,
+            entered_quantity: canonical_f64(quantity),
+            portion_id: portion_id.map(str::to_owned),
+            time_intent: time_intent.clone(),
+        };
+
+        let mut tx = self.pool.begin().await?;
+        lock_mcp_receipt_key(&mut tx, user_id, McpToolKind::LogFood, operation_id).await?;
+
+        if let Some(receipt) =
+            get_mcp_receipt_in_tx(&mut tx, user_id, McpToolKind::LogFood, operation_id).await?
+        {
+            if receipt.schema_version != MCP_RECEIPT_SCHEMA_VERSION {
+                return Err(AppError::Internal(
+                    "Unsupported MCP receipt schema version".into(),
+                ));
+            }
+            let stored_intent: LogFoodIntentV1 =
+                serde_json::from_value::<LogFoodIntentV1>(receipt.request_intent)
+                    .map_err(|error| {
+                        AppError::Internal(format!("Invalid MCP log_food receipt intent: {error}"))
+                    })?
+                    .canonicalize();
+            if stored_intent != intent {
+                return Err(AppError::Conflict(
+                    "This operationId was already used for a different log_food request. Reuse the original arguments to replay that operation, or confirm and generate a new operationId for a different log.".into(),
+                ));
+            }
+            let stored_baseline: LogFoodBaselineV1 =
+                serde_json::from_value::<LogFoodBaselineV1>(receipt.target_state)
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Invalid MCP log_food receipt target state: {error}"
+                        ))
+                    })?
+                    .canonicalize();
+            let row = sqlx::query_as::<_, MealLogRow>(
+                r#"
+                SELECT id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                       source_provider, external_id, canonical_quantity, entry_snapshot,
+                       consumed_at, updated_at, deleted_at
+                FROM meal_logs
+                WHERE id = $1 AND user_id = $2
+                "#,
+            )
+            .bind(operation_id)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(row) = row else {
+                return Err(AppError::Conflict(
+                    "The food log created by this operationId was deleted or modified. Inspect the daily log before making a new mutation with a new operationId.".into(),
+                ));
+            };
+            if row.deleted_at.is_some() {
+                return Err(AppError::Conflict(
+                    "The food log created by this operationId was deleted or modified. Inspect the daily log before making a new mutation with a new operationId.".into(),
+                ));
+            }
+            let (consumption, current_baseline) = consumption_and_baseline_from_row(row)?;
+            if current_baseline != stored_baseline {
+                return Err(AppError::Conflict(
+                    "The food log created by this operationId was deleted or modified. Inspect the daily log before making a new mutation with a new operationId.".into(),
+                ));
+            }
+            tx.commit().await?;
+            return Ok((consumption, false));
+        }
+
+        let template = get_food_template_in_tx(&mut tx, user_id, template_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Food not found".into()))?;
+        let (canonical_quantity, entry) = template.details.entry_for(quantity, portion_id)?;
+        let consumed_at = match explicit_consumed_at {
+            Some(consumed_at) => consumed_at,
+            None => {
+                let (date, time) = match now_resolver {
+                    Some(resolver) => resolver()?,
+                    None => current_santiago_datetime_in_tx(&mut tx).await?,
+                };
+                local_datetime_to_epoch_in_tx(&mut tx, &date, &time).await?
+            }
+        };
+        let snapshot = serde_json::to_value(template.details.snapshot())
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let entry_snapshot =
+            serde_json::to_value(&entry).map_err(|error| AppError::Internal(error.to_string()))?;
+        let inserted = sqlx::query_as::<_, MealLogRow>(
+            r#"
+            INSERT INTO meal_logs
+                (id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                 canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at)
+            VALUES
+                ($1, $2, $3, $4, $5, $6, $7, $8,
+                 floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                 NULL)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                      source_provider, external_id, canonical_quantity, entry_snapshot,
+                      consumed_at, updated_at, deleted_at
+            "#,
+        )
+        .bind(operation_id)
+        .bind(user_id)
+        .bind(template_id)
+        .bind(&template.name)
+        .bind(snapshot)
+        .bind(canonical_quantity)
+        .bind(entry_snapshot)
+        .bind(consumed_at)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = inserted else {
+            return Err(AppError::Conflict(
+                "This operationId is already in use without a matching MCP receipt. Inspect current state and generate a new operationId for a new request.".into(),
+            ));
+        };
+        let (consumption, baseline) = consumption_and_baseline_from_row(row)?;
+        let request_intent_json =
+            serde_json::to_value(&intent).map_err(|error| AppError::Internal(error.to_string()))?;
+        let target_state_json = serde_json::to_value(&baseline)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        insert_mcp_receipt_in_tx(
+            &mut tx,
+            user_id,
+            McpToolKind::LogFood,
+            operation_id,
+            &request_intent_json,
+            &target_state_json,
+        )
+        .await?;
+
+        if fail_before_commit {
+            return Err(AppError::Internal(
+                "Injected pre-commit failure for MCP receipt test".into(),
+            ));
+        }
+
+        tx.commit().await?;
+        Ok((consumption, true))
     }
 
     pub async fn get_daily_consumptions(
@@ -1682,6 +2258,7 @@ impl SyncDatasource {
         Ok(date)
     }
 
+    #[allow(dead_code)]
     pub async fn current_santiago_datetime(&self) -> Result<(String, String), AppError> {
         let result = sqlx::query_as::<_, (String, String)>(
             r#"
@@ -1754,6 +2331,22 @@ fn food_template_from_row(row: MealTemplateRow) -> Result<FoodTemplate, AppError
     })
 }
 
+fn food_template_and_baseline_from_row(
+    row: MealTemplateRow,
+) -> Result<(FoodTemplate, CreateFoodBaselineV1), AppError> {
+    let source_provider = row.source_provider.clone();
+    let external_id = row.external_id.clone();
+    let food = food_template_from_row(row)?;
+    let baseline = CreateFoodBaselineV1 {
+        name: food.name.clone(),
+        details: canonical_food_details(&food.details),
+        source_provider,
+        external_id,
+        updated_at: food.updated_at,
+    };
+    Ok((food, baseline))
+}
+
 fn consumption_from_row(row: MealLogRow) -> Result<Consumption, AppError> {
     let snapshot: NutritionSnapshot = serde_json::from_value(row.nutrition_snapshot)
         .map_err(|error| AppError::Internal(format!("Invalid nutrition snapshot: {error}")))?;
@@ -1779,6 +2372,138 @@ fn consumption_from_row(row: MealLogRow) -> Result<Consumption, AppError> {
         consumed_at: row.consumed_at,
         updated_at: row.updated_at,
     })
+}
+
+fn consumption_and_baseline_from_row(
+    row: MealLogRow,
+) -> Result<(Consumption, LogFoodBaselineV1), AppError> {
+    let source_provider = row.source_provider.clone();
+    let external_id = row.external_id.clone();
+    let consumption = consumption_from_row(row)?;
+    // Deliberately exclude template_id so a live, otherwise unchanged log
+    // survives source template hard deletion (ON DELETE SET NULL) and replays
+    // with foodId: null.
+    let baseline = LogFoodBaselineV1 {
+        name_snapshot: consumption.name.clone(),
+        nutrition_snapshot: canonical_nutrition_snapshot(&consumption.snapshot),
+        canonical_quantity: canonical_f64(consumption.canonical_quantity),
+        entry_snapshot: canonical_meal_log_entry(&consumption.entry),
+        consumed_at: consumption.consumed_at,
+        source_provider,
+        external_id,
+        updated_at: consumption.updated_at,
+    };
+    Ok((consumption, baseline))
+}
+
+async fn lock_mcp_receipt_key(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    tool: McpToolKind,
+    operation_id: Uuid,
+) -> Result<(), AppError> {
+    // 64-bit hash via hashtextextended; rare collisions between unrelated keys
+    // only serialize those two transactions without affecting correctness.
+    let key = format!("mcp_receipt:{user_id}:{}:{operation_id}", tool.as_str());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn get_mcp_receipt_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    tool: McpToolKind,
+    operation_id: Uuid,
+) -> Result<Option<McpMutationReceiptRow>, AppError> {
+    Ok(sqlx::query_as::<_, McpMutationReceiptRow>(
+        r#"
+        SELECT schema_version, request_intent, target_state
+        FROM mcp_mutation_receipts
+        WHERE user_id = $1 AND tool_name = $2 AND operation_id = $3
+        "#,
+    )
+    .bind(user_id)
+    .bind(tool.as_str())
+    .bind(operation_id)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+async fn insert_mcp_receipt_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    tool: McpToolKind,
+    operation_id: Uuid,
+    request_intent: &Value,
+    target_state: &Value,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO mcp_mutation_receipts
+            (user_id, tool_name, operation_id, schema_version, request_intent, target_state)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(user_id)
+    .bind(tool.as_str())
+    .bind(operation_id)
+    .bind(MCP_RECEIPT_SCHEMA_VERSION)
+    .bind(request_intent)
+    .bind(target_state)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn current_santiago_datetime_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<(String, String), AppError> {
+    let result = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT
+            to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD'),
+            to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'HH24:MI')
+        "#,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(result)
+}
+
+async fn local_datetime_to_epoch_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    date: &str,
+    time: &str,
+) -> Result<i64, AppError> {
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| AppError::BadRequest("date must use YYYY-MM-DD".into()))?;
+    chrono::NaiveTime::parse_from_str(time, "%H:%M")
+        .map_err(|_| AppError::BadRequest("time must use HH:MM".into()))?;
+    let (epoch, round_trip) = sqlx::query_as::<_, (i64, String)>(
+        r#"
+        SELECT
+            floor(extract(epoch from (($1::date + $2::time)
+                AT TIME ZONE 'America/Santiago')) * 1000)::bigint,
+            to_char(
+                ((($1::date + $2::time) AT TIME ZONE 'America/Santiago')
+                    AT TIME ZONE 'America/Santiago'),
+                'YYYY-MM-DD HH24:MI'
+            )
+        "#,
+    )
+    .bind(date)
+    .bind(time)
+    .fetch_one(&mut **tx)
+    .await?;
+    if round_trip != format!("{date} {time}") {
+        return Err(AppError::BadRequest(
+            "The local date/time does not exist in America/Santiago".into(),
+        ));
+    }
+    Ok(epoch)
 }
 
 async fn lock_owned_meal_log(
@@ -2957,5 +3682,334 @@ mod copy_tests {
             too_long_snapshot.validate(),
             Err(AppError::BadRequest(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn mcp_receipt_clock_isolation_and_explicit_vs_omitted_postgres() {
+        use crate::connectors::user::NewUser;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let user = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "mcp-receipt-clock-user",
+                &NewUser {
+                    email: "mcp-receipt-clock@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let food_id = Uuid::new_v4();
+        let details = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
+                calories: 250.0,
+                protein: 10.0,
+                carbs: 30.0,
+                fat: 8.0,
+                fiber: Some(4.0),
+                sodium_mg: Some(120.0),
+                cholesterol_mg: None,
+                extended_nutrition: BTreeMap::new(),
+            },
+            portions: vec![],
+            chilean_seals: vec![],
+            brand: None,
+            category: None,
+            typical_time: None,
+        };
+        let (_, created) = db
+            .sync
+            .create_mcp_food(user.id, food_id, "Clock Test Food", &details)
+            .await
+            .unwrap();
+        assert!(created);
+
+        // Initial omitted-time log at 2026-08-10 23:59 Santiago.
+        let op_omitted = Uuid::new_v4();
+        let initial_calls = Arc::new(AtomicUsize::new(0));
+        let initial_calls_clone = Arc::clone(&initial_calls);
+        let (first, created) = db
+            .sync
+            .create_mcp_consumption_with_hooks(
+                user.id,
+                op_omitted,
+                food_id,
+                100.0,
+                None,
+                &LogFoodTimeIntent::Omitted,
+                Some(Box::new(move || {
+                    initial_calls_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok(("2026-08-10".to_owned(), "23:59".to_owned()))
+                })),
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(initial_calls.load(Ordering::SeqCst), 1);
+
+        // Replay across a Santiago minute and day boundary: now resolver MUST NOT be called.
+        let replay_calls = Arc::new(AtomicUsize::new(0));
+        let replay_calls_clone = Arc::clone(&replay_calls);
+        let (replay, created) = db
+            .sync
+            .create_mcp_consumption_with_hooks(
+                user.id,
+                op_omitted,
+                food_id,
+                100.0,
+                None,
+                &LogFoodTimeIntent::Omitted,
+                Some(Box::new(move || {
+                    replay_calls_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok(("2026-08-11".to_owned(), "00:01".to_owned()))
+                })),
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(!created);
+        assert_eq!(replay_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(replay.consumed_at, first.consumed_at);
+        assert_eq!(replay.updated_at, first.updated_at);
+
+        // Explicit mode matching the exact resolved instant is still a distinct intent -> Conflict.
+        let conflict = db
+            .sync
+            .create_mcp_consumption(
+                user.id,
+                op_omitted,
+                food_id,
+                100.0,
+                None,
+                &LogFoodTimeIntent::Explicit {
+                    date: "2026-08-10".into(),
+                    time: "23:59".into(),
+                },
+            )
+            .await;
+        assert!(matches!(conflict, Err(AppError::Conflict(_))));
+
+        // Reverse direction: Explicit committed first, Omitted replay -> Conflict.
+        let op_explicit = Uuid::new_v4();
+        let (_, created) = db
+            .sync
+            .create_mcp_consumption(
+                user.id,
+                op_explicit,
+                food_id,
+                50.0,
+                None,
+                &LogFoodTimeIntent::Explicit {
+                    date: "2026-08-10".into(),
+                    time: "12:00".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(created);
+
+        let omitted_conflict = db
+            .sync
+            .create_mcp_consumption(
+                user.id,
+                op_explicit,
+                food_id,
+                50.0,
+                None,
+                &LogFoodTimeIntent::Omitted,
+            )
+            .await;
+        assert!(matches!(omitted_conflict, Err(AppError::Conflict(_))));
+
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn mcp_receipt_concurrency_and_rollback_postgres() {
+        use crate::connectors::user::NewUser;
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let user = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "mcp-receipt-concurrency-user",
+                &NewUser {
+                    email: "mcp-receipt-concurrency@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let details = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
+                calories: 180.0,
+                protein: 12.0,
+                carbs: 20.0,
+                fat: 5.0,
+                fiber: None,
+                sodium_mg: None,
+                cholesterol_mg: None,
+                extended_nutrition: BTreeMap::new(),
+            },
+            portions: vec![],
+            chilean_seals: vec![],
+            brand: None,
+            category: None,
+            typical_time: None,
+        };
+
+        // 1. Pre-commit rollback leaves zero orphaned food or receipt, and retry succeeds.
+        let rollback_food_id = Uuid::new_v4();
+        let err = db
+            .sync
+            .create_mcp_food_with_fault(user.id, rollback_food_id, "Rollback Food", &details, true)
+            .await;
+        assert!(matches!(err, Err(AppError::Internal(_))));
+        let (food_count, receipt_count): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM meal_templates WHERE id = $1), \
+                    (SELECT count(*) FROM mcp_mutation_receipts WHERE operation_id = $1)",
+        )
+        .bind(rollback_food_id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert_eq!((food_count, receipt_count), (0, 0));
+
+        let (food, created) = db
+            .sync
+            .create_mcp_food(user.id, rollback_food_id, "Rollback Food", &details)
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(food.id, rollback_food_id);
+
+        // 2. Pre-commit rollback on log_food leaves zero orphaned log or receipt, and retry succeeds.
+        let rollback_log_id = Uuid::new_v4();
+        let explicit = LogFoodTimeIntent::Explicit {
+            date: "2026-08-10".into(),
+            time: "14:30".into(),
+        };
+        let err = db
+            .sync
+            .create_mcp_consumption_with_hooks(
+                user.id,
+                rollback_log_id,
+                rollback_food_id,
+                75.0,
+                None,
+                &explicit,
+                None,
+                true,
+            )
+            .await;
+        assert!(matches!(err, Err(AppError::Internal(_))));
+        let (log_count, receipt_count): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM meal_logs WHERE id = $1), \
+                    (SELECT count(*) FROM mcp_mutation_receipts WHERE operation_id = $1)",
+        )
+        .bind(rollback_log_id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert_eq!((log_count, receipt_count), (0, 0));
+
+        let (log, created) = db
+            .sync
+            .create_mcp_consumption(
+                user.id,
+                rollback_log_id,
+                rollback_food_id,
+                75.0,
+                None,
+                &explicit,
+            )
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(log.id, rollback_log_id);
+
+        // 3. Concurrent identical create_mcp_food calls over independent connections converge.
+        let concurrent_food_id = Uuid::new_v4();
+        let (res_a, res_b) = tokio::join!(
+            db.sync
+                .create_mcp_food(user.id, concurrent_food_id, "Concurrent Food", &details),
+            db.sync
+                .create_mcp_food(user.id, concurrent_food_id, "Concurrent Food", &details),
+        );
+        let (food_a, created_a) = res_a.unwrap();
+        let (food_b, created_b) = res_b.unwrap();
+        assert_ne!(created_a, created_b);
+        assert_eq!(food_a.id, food_b.id);
+        assert_eq!(food_a.updated_at, food_b.updated_at);
+
+        // 4. Concurrent competing-intent create_mcp_consumption calls: one commits, one conflicts.
+        let competing_log_id = Uuid::new_v4();
+        let (log_a, log_b) = tokio::join!(
+            db.sync.create_mcp_consumption(
+                user.id,
+                competing_log_id,
+                concurrent_food_id,
+                100.0,
+                None,
+                &explicit,
+            ),
+            db.sync.create_mcp_consumption(
+                user.id,
+                competing_log_id,
+                concurrent_food_id,
+                200.0,
+                None,
+                &explicit,
+            ),
+        );
+        match (log_a, log_b) {
+            (Ok((winner, true)), Err(AppError::Conflict(_))) => {
+                assert_eq!(winner.canonical_quantity, 100.0);
+            }
+            (Err(AppError::Conflict(_)), Ok((winner, true))) => {
+                assert_eq!(winner.canonical_quantity, 200.0);
+            }
+            other => panic!("expected one winner and one conflict, got {other:?}"),
+        }
+
+        // 5. Account deletion cascades to mcp_mutation_receipts.
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user.id)
+            .execute(&db.sync.pool)
+            .await
+            .unwrap();
+        let remaining_receipts: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM mcp_mutation_receipts WHERE user_id = $1")
+                .bind(user.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining_receipts, 0);
+
+        cleanup_identity_test_database(&db, &schema).await;
     }
 }
