@@ -27,9 +27,11 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            CanonicalUnit, Consumption, EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails,
-            LogFoodTimeIntent, MAX_BRAND_CHARS, NutritionValues, PortionDefinition, WeightLogRow,
-            WeightUpsertStatus, deserialize_optional_brand, validate_optional_brand,
+            CanonicalUnit, Consumption, CreatePersonalFoodOutcome, DuplicatePersonalFood,
+            EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails, LogFoodTimeIntent,
+            MAX_BRAND_CHARS, MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES, NutritionValues,
+            PortionDefinition, WeightLogRow, WeightUpsertStatus, deserialize_optional_brand,
+            validate_optional_brand,
         },
     },
     modules::{
@@ -627,7 +629,15 @@ async fn mcp_post_handler(
                 sync_hub.notify(user.id, collection);
             }
             match result {
-                Ok((summary, structured)) => tool_success(id, &summary, structured, observation),
+                Ok(ToolCallOutcome::Success {
+                    summary,
+                    structured,
+                }) => tool_success(id, &summary, structured, observation),
+                Ok(ToolCallOutcome::StructuredError {
+                    code,
+                    summary,
+                    structured,
+                }) => tool_structured_error(id, code, &summary, structured, observation),
                 Err(error) => tool_failure(id, error, observation),
             }
         }
@@ -650,13 +660,38 @@ fn known_tool(tool: &str) -> Option<&'static str> {
     }
 }
 
+enum ToolCallOutcome {
+    Success {
+        summary: String,
+        structured: Value,
+    },
+    StructuredError {
+        code: &'static str,
+        summary: String,
+        structured: Value,
+    },
+}
+
+fn duplicate_personal_food_message(duplicate: &DuplicatePersonalFood) -> String {
+    if duplicate.candidates.len() == 1 && !duplicate.has_more_candidates {
+        format!(
+            "Ya existe un alimento personal equivalente (foodId: {}). Confirma con el usuario y reutiliza ese foodId en log_food, o aclara si difieren las porciones.",
+            duplicate.candidates[0].food_id
+        )
+    } else if duplicate.has_more_candidates {
+        "Ya existen varios alimentos personales equivalentes. Pide al usuario elegir qué foodId reutilizar en log_food o aclara la diferencia. Hay más candidatos; usa search_foods con source \"personal\" para inspeccionar más opciones.".into()
+    } else {
+        "Ya existen varios alimentos personales equivalentes. Pide al usuario elegir qué foodId reutilizar en log_food o aclara la diferencia.".into()
+    }
+}
+
 async fn call_tool(
     db: &Database,
     user_id: i32,
     name: &str,
     args: Value,
     mutated_collection: &mut Option<&'static str>,
-) -> Result<(String, Value), AppError> {
+) -> Result<ToolCallOutcome, AppError> {
     match name {
         "search_foods" => {
             let args: SearchFoodsArgs = parse_args(args)?;
@@ -705,10 +740,10 @@ async fn call_tool(
             } else {
                 format!("Se encontraron {count} alimentos.")
             };
-            Ok((
+            Ok(ToolCallOutcome::Success {
                 summary,
-                json!({ "foods": foods, "hasMore": result.has_more }),
-            ))
+                structured: json!({ "foods": foods, "hasMore": result.has_more }),
+            })
         }
         "get_daily_log" => {
             let args: GetDailyLogArgs = parse_args(args)?;
@@ -723,15 +758,15 @@ async fn call_tool(
             let (items, totals) =
                 daily_nutrition_output(&consumptions, args.include_extended_nutrition)?;
             let summary = daily_log_summary(&date, &totals);
-            Ok((
+            Ok(ToolCallOutcome::Success {
                 summary,
-                json!({
+                structured: json!({
                     "date": date,
                     "timezone": TIMEZONE,
                     "items": items,
                     "totals": totals
                 }),
-            ))
+            })
         }
         "create_food" => {
             let args: CreateFoodArgs = parse_args(args)?;
@@ -791,24 +826,46 @@ async fn call_tool(
                 category: args.category,
                 typical_time: args.typical_time,
             };
-            let (food, created) = db
+            match db
                 .sync
                 .create_mcp_food(user_id, args.operation_id, &args.name, &details)
-                .await?;
-            if created {
-                *mutated_collection = Some("mealTemplates");
-            }
-            Ok((
-                if created {
-                    format!("Se creó el alimento {}.", food.name)
-                } else {
-                    format!("El alimento {} ya había sido creado.", food.name)
-                },
-                json!({
-                    "status": if created { "created" } else { "alreadyCreated" },
-                    "food": food
+                .await?
+            {
+                CreatePersonalFoodOutcome::Created(food) => {
+                    *mutated_collection = Some("mealTemplates");
+                    Ok(ToolCallOutcome::Success {
+                        summary: format!("Se creó el alimento {}.", food.name),
+                        structured: json!({
+                            "status": "created",
+                            "food": food
+                        }),
+                    })
+                }
+                CreatePersonalFoodOutcome::AlreadyCreated(food) => Ok(ToolCallOutcome::Success {
+                    summary: format!("El alimento {} ya había sido creado.", food.name),
+                    structured: json!({
+                        "status": "alreadyCreated",
+                        "food": food
+                    }),
                 }),
-            ))
+                CreatePersonalFoodOutcome::Duplicate(duplicate) => {
+                    let message = duplicate_personal_food_message(&duplicate);
+                    let structured = json!({
+                        "error": {
+                            "code": "conflict",
+                            "reason": "duplicatePersonalFood",
+                            "message": message,
+                            "candidates": duplicate.candidates,
+                            "hasMoreCandidates": duplicate.has_more_candidates
+                        }
+                    });
+                    Ok(ToolCallOutcome::StructuredError {
+                        code: "conflict",
+                        summary: message,
+                        structured,
+                    })
+                }
+            }
         }
         "log_food" => {
             let args: LogFoodArgs = parse_args(args)?;
@@ -837,17 +894,17 @@ async fn call_tool(
             if created {
                 *mutated_collection = Some("mealLogs");
             }
-            Ok((
-                if created {
+            Ok(ToolCallOutcome::Success {
+                summary: if created {
                     format!("Se registró {}.", consumption.name)
                 } else {
                     format!("El consumo de {} ya estaba registrado.", consumption.name)
                 },
-                json!({
+                structured: json!({
                     "status": if created { "logged" } else { "alreadyLogged" },
                     "log": consumption_output(&consumption)?
                 }),
-            ))
+            })
         }
         "update_food_log" => {
             let args: UpdateFoodLogArgs = parse_args(args)?;
@@ -860,10 +917,10 @@ async fn call_tool(
                 .update_consumption(user_id, args.log_id, args.quantity, consumed_at)
                 .await?;
             *mutated_collection = Some("mealLogs");
-            Ok((
-                format!("Se actualizó el consumo de {}.", consumption.name),
-                json!({ "status": "updated", "log": consumption_output(&consumption)? }),
-            ))
+            Ok(ToolCallOutcome::Success {
+                summary: format!("Se actualizó el consumo de {}.", consumption.name),
+                structured: json!({ "status": "updated", "log": consumption_output(&consumption)? }),
+            })
         }
         "delete_food_log" => {
             let args: DeleteFoodLogArgs = parse_args(args)?;
@@ -872,14 +929,14 @@ async fn call_tool(
                 .soft_delete_consumption(user_id, args.log_id)
                 .await?;
             *mutated_collection = Some("mealLogs");
-            Ok((
-                format!("Se eliminó el consumo de {}.", consumption.name),
-                json!({
+            Ok(ToolCallOutcome::Success {
+                summary: format!("Se eliminó el consumo de {}.", consumption.name),
+                structured: json!({
                     "status": "deleted",
                     "logId": consumption.id,
                     "updatedAt": consumption.updated_at
                 }),
-            ))
+            })
         }
         "get_weight_history" => {
             require_weight_tracking(db, user_id).await?;
@@ -926,15 +983,15 @@ async fn call_tool(
             } else {
                 None
             };
-            Ok((
-                format!("Hay {} registros de peso.", entries.len()),
-                json!({
+            Ok(ToolCallOutcome::Success {
+                summary: format!("Hay {} registros de peso.", entries.len()),
+                structured: json!({
                     "timezone": TIMEZONE,
                     "entries": entries,
                     "latest": latest,
                     "changeKg": change_kg
                 }),
-            ))
+            })
         }
         "set_weight" => {
             require_weight_tracking(db, user_id).await?;
@@ -948,14 +1005,14 @@ async fn call_tool(
                 WeightUpsertStatus::Updated => "updated",
                 WeightUpsertStatus::Unchanged => "unchanged",
             };
-            Ok((
-                match status {
+            Ok(ToolCallOutcome::Success {
+                summary: match status {
                     "created" => format!("Se registró el peso para {date}."),
                     "updated" => format!("Se actualizó el peso para {date}."),
                     _ => format!("El peso de {date} ya tenía ese valor."),
                 },
-                json!({ "status": status, "measurement": weight_output(&row) }),
-            ))
+                structured: json!({ "status": status, "measurement": weight_output(&row) }),
+            })
         }
         "delete_weight_log" => {
             require_weight_tracking(db, user_id).await?;
@@ -963,18 +1020,18 @@ async fn call_tool(
             let date = resolve_weight_date(db, args.date).await?;
             let (row, already_deleted) = db.sync.soft_delete_weight(user_id, date).await?;
             *mutated_collection = Some("weightLogs");
-            Ok((
-                if already_deleted {
+            Ok(ToolCallOutcome::Success {
+                summary: if already_deleted {
                     format!("El peso de {date} ya estaba eliminado.")
                 } else {
                     format!("Se eliminó el peso de {date}.")
                 },
-                json!({
+                structured: json!({
                     "status": if already_deleted { "alreadyDeleted" } else { "deleted" },
                     "date": date.to_string(),
                     "updatedAt": row.updated_at
                 }),
-            ))
+            })
         }
         _ => Err(AppError::BadRequest("Unknown tool".into())),
     }
@@ -1589,6 +1646,25 @@ fn tool_error(
     response
 }
 
+fn tool_structured_error(
+    id: impl Serialize,
+    code: &'static str,
+    summary: &str,
+    structured: Value,
+    observation: Option<&observation::Observation>,
+) -> Response {
+    let result = json!({
+        "content": [{ "type": "text", "text": readable_tool_text(summary, &structured) }],
+        "structuredContent": structured,
+        "isError": true
+    });
+    let response = json_rpc_result(id, &result);
+    if let Some(observation) = observation {
+        observation.result(&response, &result, code);
+    }
+    response
+}
+
 fn json_rpc_result(id: impl Serialize, result: &Value) -> Response {
     #[derive(Serialize)]
     struct Reply<'a, I> {
@@ -1677,17 +1753,9 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "create_food",
             "title": "Crear alimento personal",
-            "description": "Crea un alimento personal con nutrición por 100 g o 100 ml según canonicalUnit. Las porciones nombradas son conversiones opcionales con IDs opacos y únicos dentro del alimento. Genera un operationId UUID nuevo en tiempo de ejecución para cada creación nueva y conserva exactamente el mismo operationId y los mismos argumentos al reintentar tras una respuesta perdida. Si reutilizas un operationId con otros argumentos o tras editar o eliminar el alimento, devolverá conflict: inspecciona el catálogo actual y genera un nuevo operationId solo tras confirmar una nueva creación. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
+            "description": "Crea un alimento personal con nutrición por 100 g o 100 ml según canonicalUnit. Las porciones nombradas son conversiones opcionales con IDs opacos y únicos dentro del alimento. Genera un operationId UUID nuevo en tiempo de ejecución para cada creación nueva y conserva exactamente el mismo operationId y los mismos argumentos al reintentar tras una respuesta perdida. Si reutilizas un operationId con otros argumentos o tras editar o eliminar el alimento, devolverá conflict: inspecciona el catálogo actual y genera un nuevo operationId solo tras confirmar una nueva creación. Si ya existe un alimento personal equivalente, devolverá conflict con reason \"duplicatePersonalFood\" y candidates: confirma con el usuario y reutiliza el foodId elegido en log_food, pídele elegir cuando haya varios candidatos y usa search_foods con source \"personal\" si hasMoreCandidates es true. Úsala solo después de confirmar con el usuario cualquier dato ambiguo.",
             "inputSchema": create_food_input_schema(),
-            "outputSchema": {
-                "type": "object",
-                "properties": {
-                    "status": { "type": "string", "enum": ["created", "alreadyCreated"] },
-                    "food": food_schema()
-                },
-                "required": ["status", "food"],
-                "additionalProperties": false
-            },
+            "outputSchema": create_food_output_schema(),
             "securitySchemes": auth,
             "_meta": { "securitySchemes": auth },
             "annotations": write_annotations
@@ -1995,6 +2063,63 @@ fn create_food_input_schema() -> Value {
         },
         "required": ["operationId", "name", "canonicalUnit", "calories", "protein", "carbs", "fat"],
         "additionalProperties": false
+    })
+}
+
+fn duplicate_food_candidate_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "foodId": uuid_schema(),
+            "name": { "type": "string" },
+            "brand": { "type": "string", "maxLength": MAX_BRAND_CHARS },
+            "canonicalUnit": canonical_unit_schema(),
+            "nutritionPer100": nutrition_schema(),
+            "portions": { "type": "array", "items": portion_schema() }
+        },
+        "required": ["foodId", "name", "canonicalUnit", "nutritionPer100", "portions"],
+        "additionalProperties": false
+    })
+}
+
+fn create_food_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "enum": ["created", "alreadyCreated"] },
+                    "food": food_schema()
+                },
+                "required": ["status", "food"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "code": { "type": "string", "const": "conflict" },
+                            "reason": { "type": "string", "const": "duplicatePersonalFood" },
+                            "message": { "type": "string", "minLength": 1 },
+                            "candidates": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES,
+                                "items": duplicate_food_candidate_schema()
+                            },
+                            "hasMoreCandidates": { "type": "boolean" }
+                        },
+                        "required": ["code", "reason", "message", "candidates", "hasMoreCandidates"],
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["error"],
+                "additionalProperties": false
+            }
+        ]
     })
 }
 
@@ -4541,13 +4666,15 @@ mod tests {
         }
 
         async fn seed_food(&self, id: Uuid, name: &str, details: &FoodDetails) {
-            let (food, created) = self
+            let CreatePersonalFoodOutcome::Created(food) = self
                 .db
                 .sync
                 .create_personal_food(self.user_id, id, name, details)
                 .await
-                .unwrap();
-            assert!(created);
+                .unwrap()
+            else {
+                panic!("expected created seeded food");
+            };
             assert_eq!(food.id, id);
         }
 
@@ -5699,10 +5826,28 @@ mod tests {
                 tool.pointer("/inputSchema/additionalProperties"),
                 Some(&Value::Bool(false))
             );
-            assert_eq!(
-                tool.pointer("/outputSchema/additionalProperties"),
-                Some(&Value::Bool(false))
-            );
+            if let Some(branches) = tool
+                .pointer("/outputSchema/oneOf")
+                .and_then(Value::as_array)
+            {
+                assert!(!branches.is_empty());
+                assert_eq!(
+                    tool.pointer("/outputSchema/type").and_then(Value::as_str),
+                    Some("object")
+                );
+                for branch in branches {
+                    assert_eq!(branch.get("type").and_then(Value::as_str), Some("object"));
+                    assert_eq!(
+                        branch.get("additionalProperties"),
+                        Some(&Value::Bool(false))
+                    );
+                }
+            } else {
+                assert_eq!(
+                    tool.pointer("/outputSchema/additionalProperties"),
+                    Some(&Value::Bool(false))
+                );
+            }
             assert_eq!(
                 tool.pointer("/securitySchemes/0/type")
                     .and_then(Value::as_str),
@@ -6590,112 +6735,131 @@ mod tests {
             .await
             .unwrap(),
         );
+        let unwrap_success = |outcome: ToolCallOutcome| match outcome {
+            ToolCallOutcome::Success {
+                summary,
+                structured,
+            } => (summary, structured),
+            ToolCallOutcome::StructuredError { .. } => panic!("expected ToolCallOutcome::Success"),
+        };
         let op_branded = Uuid::new_v4();
         let unique_brand = format!("MarcaMcp{}", &op_branded.simple().to_string()[..8]);
-        let (_, created_json) = call_tool(
-            &db,
-            1,
-            "create_food",
-            json!({
-                "operationId": op_branded,
-                "name": format!("Yogurt {}", unique_brand),
-                "canonicalUnit": "g",
-                "calories": 90.0,
-                "protein": 8.0,
-                "carbs": 5.0,
-                "fat": 4.0,
-                "brand": format!("  {unique_brand}  ")
-            }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, created_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "create_food",
+                json!({
+                    "operationId": op_branded,
+                    "name": format!("Yogurt {}", unique_brand),
+                    "canonicalUnit": "g",
+                    "calories": 90.0,
+                    "protein": 8.0,
+                    "carbs": 5.0,
+                    "fat": 4.0,
+                    "brand": format!("  {unique_brand}  ")
+                }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(created_json["status"], "created");
         assert_eq!(created_json["food"]["details"]["brand"], unique_brand);
 
-        let (_, search_json) = call_tool(
-            &db,
-            1,
-            "search_foods",
-            json!({
-                "query": unique_brand.to_lowercase(),
-                "source": "personal",
-                "limit": 10
-            }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, search_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "search_foods",
+                json!({
+                    "query": unique_brand.to_lowercase(),
+                    "source": "personal",
+                    "limit": 10
+                }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         let foods = search_json["foods"].as_array().unwrap();
         assert!(foods.iter().any(|f| {
             f["id"] == created_json["food"]["id"] && f["details"]["brand"] == unique_brand
         }));
 
         let op_plain = Uuid::new_v4();
-        let (_, plain_json) = call_tool(
-            &db,
-            1,
-            "create_food",
-            json!({
-                "operationId": op_plain,
-                "name": format!("Avena {}", op_plain.simple()),
-                "canonicalUnit": "g",
-                "calories": 370.0,
-                "protein": 13.0,
-                "carbs": 60.0,
-                "fat": 7.0
-            }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, plain_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "create_food",
+                json!({
+                    "operationId": op_plain,
+                    "name": format!("Avena {}", op_plain.simple()),
+                    "canonicalUnit": "g",
+                    "calories": 370.0,
+                    "protein": 13.0,
+                    "carbs": 60.0,
+                    "fat": 7.0
+                }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         assert!(plain_json["food"]["details"].get("brand").is_none());
 
         let log_branded = Uuid::new_v4();
-        let (_, logged_json) = call_tool(
-            &db,
-            1,
-            "log_food",
-            json!({
-                "operationId": log_branded,
-                "foodId": op_branded,
-                "quantity": 100.0,
-                "date": "2026-08-10",
-                "time": "09:00"
-            }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, logged_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "log_food",
+                json!({
+                    "operationId": log_branded,
+                    "foodId": op_branded,
+                    "quantity": 100.0,
+                    "date": "2026-08-10",
+                    "time": "09:00"
+                }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         assert_eq!(logged_json["log"]["brand"], unique_brand);
 
         let log_plain = Uuid::new_v4();
-        let (_, logged_plain_json) = call_tool(
-            &db,
-            1,
-            "log_food",
-            json!({
-                "operationId": log_plain,
-                "foodId": op_plain,
-                "quantity": 50.0,
-                "date": "2026-08-10",
-                "time": "09:05"
-            }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, logged_plain_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "log_food",
+                json!({
+                    "operationId": log_plain,
+                    "foodId": op_plain,
+                    "quantity": 50.0,
+                    "date": "2026-08-10",
+                    "time": "09:05"
+                }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         assert!(logged_plain_json["log"].get("brand").is_none());
 
-        let (_, daily_json) = call_tool(
-            &db,
-            1,
-            "get_daily_log",
-            json!({ "date": "2026-08-10" }),
-            &mut None,
-        )
-        .await
-        .unwrap();
+        let (_, daily_json) = unwrap_success(
+            call_tool(
+                &db,
+                1,
+                "get_daily_log",
+                json!({ "date": "2026-08-10" }),
+                &mut None,
+            )
+            .await
+            .unwrap(),
+        );
         let items = daily_json["items"].as_array().unwrap();
         let branded_item = items
             .iter()
@@ -7057,6 +7221,425 @@ mod tests {
             .await;
         assert_tool_error(&legacy_log_collision, "conflict");
         assert_no_invalidation(&mut events);
+
+        cleanup_identity_test_database(&fixture.db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn bal081_create_food_mcp_contract() {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let oidc = OidcConfig::test_cached_subject_config().mcp_config();
+        let user_a = db
+            .user
+            .provision_identity(
+                oidc.issuer(),
+                "bal081-mcp-user-a",
+                &NewUser {
+                    email: "bal081-mcp-a@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+        let user_b = db
+            .user
+            .provision_identity(
+                oidc.issuer(),
+                "bal081-mcp-user-b",
+                &NewUser {
+                    email: "bal081-mcp-b@example.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let fixture = ContractFixture::new(db, user_a.id);
+        let mut events = fixture.hub.subscribe();
+
+        // AC-1 & AC-2: Inspect tools/list schema & description for create_food.
+        let tools = tool_definitions();
+        let create_def = tool_definition(&tools, "create_food");
+        assert!(
+            create_def
+                .pointer("/inputSchema/properties/forceCreate")
+                .is_none(),
+            "forceCreate must remain absent from create_food inputSchema"
+        );
+        let desc = create_def["description"].as_str().unwrap();
+        for token in [
+            "duplicatePersonalFood",
+            "candidates",
+            "hasMoreCandidates",
+            "search_foods",
+            "log_food",
+            "operationId",
+            "conflict",
+            "opaco",
+            "solo después de confirmar",
+        ] {
+            assert!(
+                desc.contains(token),
+                "create_food description missing expected guidance '{token}': {desc}"
+            );
+        }
+
+        // Reject forceCreate at both schema and dispatch layers.
+        let force_op = Uuid::new_v4();
+        let mut with_force = create_args(force_op);
+        with_force["forceCreate"] = json!(true);
+        assert!(!fixture.input["create_food"].is_valid(&with_force));
+        let force_res = fixture.call("create_food", with_force).await;
+        assert_tool_error(&force_res, "invalid_arguments");
+
+        // AC-2: Created -> 1 mealTemplates invalidation, valid against outputSchema.
+        let first_op = Uuid::new_v4();
+        let base_payload = json!({
+            "operationId": first_op,
+            "name": "  Avena Proteica  ",
+            "canonicalUnit": "g",
+            "calories": 380,
+            "protein": 22.0,
+            "carbs": 52.0,
+            "fat": 8.0,
+            "sodiumMg": 120.0,
+            "brand": "  Quaker Chile  ",
+            "portions": [
+                { "id": "taza", "name": "1 taza", "portionQuantity": 1, "canonicalQuantity": 45 }
+            ],
+            "chileanSeals": ["alto en calorías"],
+            "category": "desayuno",
+            "typicalTime": "08:00"
+        });
+        let created = fixture.success("create_food", base_payload.clone()).await;
+        assert_eq!(created["status"], "created");
+        assert_eq!(created["food"]["id"], first_op.to_string());
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.user_id, user_a.id);
+        assert_eq!(event.collection, "mealTemplates");
+        assert_no_invalidation(&mut events);
+
+        // BAL-078 replay -> alreadyCreated, 0 invalidations.
+        let replayed = fixture.success("create_food", base_payload.clone()).await;
+        assert_eq!(replayed["status"], "alreadyCreated");
+        assert_eq!(replayed["food"]["id"], first_op.to_string());
+        assert_no_invalidation(&mut events);
+
+        // AC-2: Exact duplicate with new operationId (normalized name/brand + metadata-only diffs)
+        // returns recoverable duplicatePersonalFood structured error with Spanish summary,
+        // embedded_json == structuredContent, 0 invalidations, and losing operationId absent.
+        let dup_op = Uuid::new_v4();
+        let dup_payload = json!({
+            "operationId": dup_op,
+            "name": "avena proteica",
+            "canonicalUnit": "g",
+            "calories": 380.0,
+            "protein": 22,
+            "carbs": 52,
+            "fat": 8,
+            "sodiumMg": 120,
+            "brand": "quaker chile",
+            "portions": [
+                { "id": "cucharada", "name": "1 cucharada", "portionQuantity": 1, "canonicalQuantity": 15 }
+            ],
+            "category": "colacion"
+        });
+        assert_valid(&fixture.input["create_food"], &dup_payload);
+        let dup_result = fixture.call("create_food", dup_payload).await;
+        assert_eq!(dup_result["isError"], true);
+        let dup_structured = &dup_result["structuredContent"];
+        assert_valid(&fixture.output["create_food"], dup_structured);
+        assert_eq!(dup_structured["error"]["code"], "conflict");
+        assert_eq!(dup_structured["error"]["reason"], "duplicatePersonalFood");
+        assert_eq!(dup_structured["error"]["hasMoreCandidates"], false);
+        let candidates = dup_structured["error"]["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0]["foodId"], first_op.to_string());
+        assert_eq!(candidates[0]["name"], "Avena Proteica");
+        assert_eq!(candidates[0]["brand"], "Quaker Chile");
+        assert_eq!(candidates[0]["canonicalUnit"], "g");
+        assert_eq!(candidates[0]["portions"].as_array().unwrap().len(), 1);
+
+        let content = dup_result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+        let text = content[0]["text"].as_str().unwrap();
+        let embedded = embedded_json(text);
+        let summary = text
+            .strip_suffix(embedded)
+            .unwrap()
+            .strip_suffix("\n\n")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(embedded).unwrap(),
+            *dup_structured
+        );
+        assert!(summary.contains(&first_op.to_string()));
+        assert!(summary.contains("log_food"));
+        assert_no_invalidation(&mut events);
+
+        let loser_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE id = $1")
+                .bind(dup_op)
+                .fetch_one(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(loser_count, 0);
+
+        // AC-2: Reuse returned candidate foodId directly in log_food.
+        let log_op = Uuid::new_v4();
+        let logged = fixture
+            .success(
+                "log_food",
+                json!({
+                    "operationId": log_op,
+                    "foodId": candidates[0]["foodId"],
+                    "quantity": 1,
+                    "portionId": "taza",
+                    "date": "2026-08-10",
+                    "time": "08:15"
+                }),
+            )
+            .await;
+        assert_eq!(logged["status"], "logged");
+        assert_eq!(logged["log"]["foodId"], first_op.to_string());
+        let _ = events.try_recv().unwrap();
+        assert_no_invalidation(&mut events);
+
+        // AC-2: Observation privacy — duplicate structured error logs only metadata (error_code="conflict"),
+        // never food payload strings.
+        {
+            use std::io::Write;
+            use tracing::instrument::WithSubscriber;
+            use tracing_subscriber::fmt::MakeWriter;
+
+            #[derive(Clone, Default)]
+            struct Bal081LogCapture(Arc<Mutex<Vec<u8>>>);
+            struct Bal081LogWriter(Arc<Mutex<Vec<u8>>>);
+            impl Write for Bal081LogWriter {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    self.0.lock().unwrap().extend_from_slice(buf);
+                    Ok(buf.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            impl<'a> MakeWriter<'a> for Bal081LogCapture {
+                type Writer = Bal081LogWriter;
+                fn make_writer(&'a self) -> Self::Writer {
+                    Bal081LogWriter(self.0.clone())
+                }
+            }
+
+            let obs_summary = summary.to_owned();
+            let obs_structured = dup_structured.clone();
+            let capture = Bal081LogCapture::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_env_filter(observation::logging_filter(None))
+                .with_ansi(false)
+                .with_writer(capture.clone())
+                .finish();
+
+            async {
+                let router = observation::observe_routes(Router::new().route(
+                    "/mcp",
+                    post(
+                        move |observation: Option<Extension<observation::Observation>>| {
+                            let obs_summary = obs_summary.clone();
+                            let obs_structured = obs_structured.clone();
+                            async move {
+                                let observation =
+                                    observation.as_ref().map(|Extension(value)| value);
+                                if let Some(observation) = observation {
+                                    observation.request("tools/call", Some("create_food"));
+                                }
+                                tool_structured_error(
+                                    json!(1),
+                                    "conflict",
+                                    &obs_summary,
+                                    obs_structured,
+                                    observation,
+                                )
+                            }
+                        },
+                    ),
+                ));
+                let response = router
+                    .oneshot(rpc_request(json!({"method": "tools/call"}).to_string()))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let _ = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+                assert!(
+                    logs.lines().any(|line| {
+                        line.contains("event=\"tool_result_prepared\"")
+                            && line.contains("tool=\"create_food\"")
+                            && line.contains("outcome=\"tool_error\"")
+                            && line.contains("error_class=\"conflict\"")
+                            && line.contains("first_text_json=\"matches\"")
+                    }),
+                    "expected conflict observation metadata in:\n{logs}"
+                );
+                assert!(!logs.contains("Avena Proteica"));
+                assert!(!logs.contains("Quaker Chile"));
+                assert!(!logs.contains(&first_op.to_string()));
+            }
+            .with_subscriber(subscriber)
+            .await;
+        }
+
+        // AC-1: Distinct variant (fiber: 0.0 vs absent) succeeds cleanly.
+        let fiber_variant_op = Uuid::new_v4();
+        let mut fiber_variant = base_payload.clone();
+        fiber_variant["operationId"] = json!(fiber_variant_op);
+        fiber_variant["fiber"] = json!(0.0);
+        let variant_created = fixture.success("create_food", fiber_variant).await;
+        assert_eq!(variant_created["status"], "created");
+        let _ = events.try_recv().unwrap();
+        assert_no_invalidation(&mut events);
+
+        // AC-4: Foreign user operationId collision returns generic conflict (no reason/candidates),
+        // even though user_a has an active same-name duplicate row.
+        let foreign_op = Uuid::new_v4();
+        fixture
+            .db
+            .sync
+            .create_mcp_food(
+                user_b.id,
+                foreign_op,
+                "Foreign Private Food",
+                &iron_food_details(),
+            )
+            .await
+            .unwrap();
+        let mut foreign_collision_args = base_payload.clone();
+        foreign_collision_args["operationId"] = json!(foreign_op);
+        let foreign_collision = fixture.call("create_food", foreign_collision_args).await;
+        assert_tool_error(&foreign_collision, "conflict");
+        assert!(
+            foreign_collision["structuredContent"]["error"]
+                .get("reason")
+                .is_none()
+        );
+        assert!(
+            foreign_collision["structuredContent"]["error"]
+                .get("candidates")
+                .is_none()
+        );
+        assert_no_invalidation(&mut events);
+
+        // AC-5: Legacy multi-match ambiguity (4 identical rows -> 3 UUID-ascending candidates,
+        // hasMoreCandidates=true, choice + search_foods prompt, 0 invalidations).
+        let multi_details = iron_food_details();
+        let multi_json = serde_json::to_value(&multi_details).unwrap();
+        let mut multi_ids = [
+            Uuid::parse_str("00000000-0000-4000-8000-000000000014").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000012").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000011").unwrap(),
+            Uuid::parse_str("00000000-0000-4000-8000-000000000013").unwrap(),
+        ];
+        for id in multi_ids {
+            sqlx::query(
+                "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+                 VALUES ($1, $2, FALSE, 'Multi Legacy MCP', $3, 1000, NULL)",
+            )
+            .bind(id)
+            .bind(user_a.id)
+            .bind(&multi_json)
+            .execute(&fixture.db.sync.pool)
+            .await
+            .unwrap();
+        }
+        multi_ids.sort();
+        let multi_req = json!({
+            "operationId": Uuid::new_v4(),
+            "name": "multi legacy mcp",
+            "canonicalUnit": "g",
+            "calories": multi_details.nutrition_per100.calories,
+            "protein": multi_details.nutrition_per100.protein,
+            "carbs": multi_details.nutrition_per100.carbs,
+            "fat": multi_details.nutrition_per100.fat,
+            "fiber": multi_details.nutrition_per100.fiber,
+            "sodiumMg": multi_details.nutrition_per100.sodium_mg,
+            "cholesterolMg": multi_details.nutrition_per100.cholesterol_mg,
+            "brand": multi_details.brand
+        });
+        // Note: iron_food_details has extendedNutrition (ironMg), while create_food input has empty extendedNutrition,
+        // so seed 4 rows with empty extendedNutrition to match create_food input.
+        let mut plain_multi_details = multi_details.clone();
+        plain_multi_details
+            .nutrition_per100
+            .extended_nutrition
+            .clear();
+        let plain_multi_json = serde_json::to_value(&plain_multi_details).unwrap();
+        sqlx::query(
+            "UPDATE meal_templates SET details = $1 WHERE user_id = $2 AND name = 'Multi Legacy MCP'",
+        )
+        .bind(&plain_multi_json)
+        .bind(user_a.id)
+        .execute(&fixture.db.sync.pool)
+        .await
+        .unwrap();
+
+        let multi_res = fixture.call("create_food", multi_req).await;
+        assert_eq!(multi_res["isError"], true);
+        let multi_structured = &multi_res["structuredContent"];
+        assert_valid(&fixture.output["create_food"], multi_structured);
+        assert_eq!(multi_structured["error"]["reason"], "duplicatePersonalFood");
+        assert_eq!(multi_structured["error"]["hasMoreCandidates"], true);
+        let multi_candidates = multi_structured["error"]["candidates"].as_array().unwrap();
+        assert_eq!(multi_candidates.len(), 3);
+        let got_ids: Vec<String> = multi_candidates
+            .iter()
+            .map(|c| c["foodId"].as_str().unwrap().to_owned())
+            .collect();
+        let expected_ids: Vec<String> = multi_ids[..3].iter().map(Uuid::to_string).collect();
+        assert_eq!(got_ids, expected_ids);
+        let multi_text = multi_res["content"][0]["text"].as_str().unwrap();
+        assert!(multi_text.contains("search_foods"));
+        assert!(multi_text.contains("personal"));
+        assert_no_invalidation(&mut events);
+
+        // AC-5: Malformed in-scope same-name row returns sanitized internal_error with no insert.
+        let bad_row_id = Uuid::new_v4();
+        let bad_op = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+             VALUES ($1, $2, FALSE, 'Malformed MCP Food', $3, 1000, NULL)",
+        )
+        .bind(bad_row_id)
+        .bind(user_a.id)
+        .bind(json!({ "broken": true }))
+        .execute(&fixture.db.sync.pool)
+        .await
+        .unwrap();
+        let mut bad_args = create_args(bad_op);
+        bad_args["name"] = json!("malformed mcp food");
+        let bad_res = fixture.call("create_food", bad_args).await;
+        let bad_msg = assert_tool_error(&bad_res, "internal_error");
+        assert_eq!(bad_msg, "Internal operation failed");
+        assert_no_invalidation(&mut events);
+        let bad_inserted: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE id = $1")
+                .bind(bad_op)
+                .fetch_one(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(bad_inserted, 0);
 
         cleanup_identity_test_database(&fixture.db, &schema).await;
     }
