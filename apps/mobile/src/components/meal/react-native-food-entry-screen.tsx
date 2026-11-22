@@ -9,7 +9,7 @@ import { useMealStore } from '@/hooks/use-meal-store';
 import { useMealReceipt } from '@/hooks/use-meal-receipt';
 import { logsDateStore } from '@/hooks/use-logs-date';
 import { currentTimeString, displayDateFor, todayId } from '@/lib/dates';
-import { frequentTemplates, personalTemplates, recentTemplates, searchTemplates } from '@/lib/food-recents';
+import { frequentTemplates, lastLoggedPortions, personalTemplates, recentTemplates, searchTemplates, suggestedTemplatesForTime, type LastPortion } from '@/lib/food-recents';
 import { formatCalories, formatMacroGrams } from '@/lib/nutrition';
 import { isDateId, type MealTemplateDoc } from '@/services/sync/types';
 import { font, makeStyles, useTheme } from '@/theme';
@@ -22,13 +22,15 @@ export default function ReactNativeFoodEntryScreen() {
   return <FoodEntrySession key={user?.id ?? (isGuest ? 'guest' : 'anonymous')} />;
 }
 
-type Source = 'recent' | 'frequent' | 'mine';
+type Source = 'suggested' | 'recent' | 'frequent' | 'mine';
 /** One selected food. The id is fixed when it is selected, so a retried save writes the same documents. */
 type Draft = { id: string; template: MealTemplateDoc; portionId: string; quantity: string };
-const SOURCES: [Source, string][] = [['recent', 'Recientes'], ['frequent', 'Frecuentes'], ['mine', 'Mis alimentos']];
+const SOURCES: [Source, string][] = [['suggested', 'Sugeridos'], ['recent', 'Recientes'], ['frequent', 'Frecuentes'], ['mine', 'Mis alimentos']];
 const unitName = (unit: string) => unit === 'ml' ? 'mililitros' : 'gramos';
 
-function draftFor(template: MealTemplateDoc): Draft {
+/** Starts from the last logged portion and quantity; without one, 1 first portion or 100 g/ml. */
+function draftFor(template: MealTemplateDoc, last?: LastPortion): Draft {
+  if (last) return { id: randomUUID(), template, portionId: last.portionId, quantity: last.quantity };
   const portion = template.details.portions[0];
   return { id: randomUUID(), template, portionId: portion?.id ?? '', quantity: portion ? '1' : '100' };
 }
@@ -44,7 +46,12 @@ function formatRowNutrition(basis: string, n: MealTemplateDoc['details']['nutrit
   const factor = canonicalAmount / 100;
   return `${basis} · ${formatCalories(n.calories * factor)} kcal · ${formatMacroGrams(n.protein * factor)} P · ${formatMacroGrams(n.carbs * factor)} C · ${formatMacroGrams(n.fat * factor)} G`;
 }
-function describe(template: MealTemplateDoc) {
+function describe(template: MealTemplateDoc, last?: LastPortion) {
+  const quantity = last ? decimal(last.quantity, true) : null;
+  if (last && quantity !== null) {
+    const used = template.details.portions.find(p => p.id === last.portionId);
+    return formatRowNutrition(`${formatMacroGrams(quantity)} ${used?.name ?? template.details.canonicalUnit}`, template.details.nutritionPer100, canonical(template, last.portionId, quantity));
+  }
   const portion = template.details.portions[0];
   const amount = portion ? portion.canonicalQuantity : 100;
   const basis = portion ? `${formatMacroGrams(portion.portionQuantity)} ${portion.name}` : `100 ${template.details.canonicalUnit}`;
@@ -66,7 +73,7 @@ function FoodEntrySession() {
   const [when, setWhen] = useState(false);
   const [calendar, setCalendar] = useState(false);
   const [query, setQuery] = useState('');
-  const [source, setSource] = useState<Source>('recent');
+  const [source, setSource] = useState<Source>('suggested');
   const [drafts, setDrafts] = useState<Draft[]>([]);
   // Custom food form
   const [quantity, setQuantity] = useState('100');
@@ -81,18 +88,21 @@ function FoodEntrySession() {
 
   const now = useMemo(() => Date.now(), []);
   const recents = useMemo(() => recentTemplates(meals.mealDocuments, library.templateDocuments, now), [meals.mealDocuments, library.templateDocuments, now]);
+  const suggested = useMemo(() => suggestedTemplatesForTime(meals.mealDocuments, library.templateDocuments, time, now), [meals.mealDocuments, library.templateDocuments, time, now]);
+  const lastUsed = useMemo(() => lastLoggedPortions(meals.mealDocuments, library.templateDocuments), [meals.mealDocuments, library.templateDocuments]);
   const list = useMemo(() => {
     if (query.trim()) return searchTemplates(library.templateDocuments, query);
     if (source === 'frequent') return frequentTemplates(meals.mealDocuments, library.templateDocuments, now);
     if (source === 'mine') return personalTemplates(library.templateDocuments);
-    return recents.length ? recents : searchTemplates(library.templateDocuments, '');
-  }, [query, source, recents, library.templateDocuments, meals.mealDocuments, now]);
+    const preferred = source === 'suggested' ? suggested : recents;
+    return preferred.length ? preferred : searchTemplates(library.templateDocuments, '');
+  }, [query, source, suggested, recents, library.templateDocuments, meals.mealDocuments, now]);
   const rows = list;
   const total = drafts.reduce((sum, d) => sum + caloriesOf(d), 0);
 
   const toggle = (template: MealTemplateDoc) => {
     if (disabled) return;
-    setDrafts(current => current.some(d => d.template.id === template.id) ? current.filter(d => d.template.id !== template.id) : [...current, draftFor(template)]);
+    setDrafts(current => current.some(d => d.template.id === template.id) ? current.filter(d => d.template.id !== template.id) : [...current, draftFor(template, lastUsed.get(template.id))]);
   };
   const update = (templateId: string, patch: Partial<Draft>) => setDrafts(current => current.map(d => d.template.id === templateId ? { ...d, ...patch } : d));
 
@@ -160,11 +170,12 @@ function FoodEntrySession() {
             {!library.isLibraryReady ? <Text tone="secondary">Cargando biblioteca…</Text> : rows.length ? <View style={styles.list}>
               {rows.map((template, index) => {
                 const draft = drafts.find(d => d.template.id === template.id);
-                return <FoodRow key={template.id} template={template} draft={draft} first={index === 0} disabled={disabled}
+                return <FoodRow key={template.id} template={template} draft={draft} last={lastUsed.get(template.id)} first={index === 0} disabled={disabled}
                   onToggle={() => toggle(template)} onChange={patch => update(template.id, patch)} />;
               })}
             </View> : <Text tone="secondary">{query.trim() ? `Sin resultados para «${query.trim()}».` : source === 'mine' ? 'Aún no tienes alimentos propios.' : 'Aún no hay registros de la biblioteca en este período.'}</Text>}
             {source === 'recent' && !query.trim() && !recents.length && rows.length ? <Text variant="caption" tone="secondary">Sin recientes todavía: se muestra la biblioteca.</Text> : null}
+            {source === 'suggested' && !query.trim() && !suggested.length && rows.length ? <Text variant="caption" tone="secondary">Sin sugerencias todavía: se muestra la biblioteca.</Text> : null}
             <Button title="Crear alimento nuevo" variant="ghost" size="md" disabled={disabled} onPress={() => setMode('custom')} />
           </ScrollView>
         </> : <ScrollView keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ padding: 20, paddingTop: 4, gap: 18 }}>
@@ -196,8 +207,8 @@ function SearchInput({ value, onChange, editable }: { value: string; onChange: (
     selectionColor={theme.colors.focus} value={value} onChangeText={onChange} editable={editable} autoCorrect={false} style={styles.searchInput} />;
 }
 
-function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
-  template: MealTemplateDoc; draft?: Draft; first: boolean; disabled: boolean; onToggle: () => void; onChange: (patch: Partial<Draft>) => void;
+function FoodRow({ template, draft, last, first, disabled, onToggle, onChange }: {
+  template: MealTemplateDoc; draft?: Draft; last?: LastPortion; first: boolean; disabled: boolean; onToggle: () => void; onChange: (patch: Partial<Draft>) => void;
 }) {
   const styles = useStyles();
   const theme = useTheme();
@@ -205,7 +216,10 @@ function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
   const brand = typeof template.details.brand === 'string' ? template.details.brand.trim() : '';
   const step = portion ? 1 : 10;
   const amount = draft ? decimal(draft.quantity, true) ?? 0 : 0;
-  const units: [string, string][] = [...template.details.portions.slice(0, 1).map(p => [p.id, p.name] as [string, string]), ['', unitName(template.details.canonicalUnit)]];
+  // First portion, the last logged portion when it is another one, then the canonical unit.
+  const lastPortion = last?.portionId ? template.details.portions.find(p => p.id === last.portionId) : undefined;
+  const shown = [template.details.portions[0], lastPortion].filter((p, i, all): p is NonNullable<typeof p> => !!p && all.findIndex(q => q?.id === p.id) === i);
+  const units: [string, string][] = [...shown.map(p => [p.id, p.name] as [string, string]), ['', unitName(template.details.canonicalUnit)]];
   const toggleButton = <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${draft ? 'Quitar' : 'Agregar'} ${template.name}${brand ? `, ${brand}` : ''}`} disabled={disabled}
     style={[styles.toggle, draft ? styles.toggleOn : null]} onPress={onToggle}>
     <Icon name={draft ? 'check' : 'plus'} size={18} tone={draft ? 'onPrimary' : 'primary'} />
@@ -219,7 +233,7 @@ function FoodRow({ template, draft, first, disabled, onToggle, onChange }: {
         <Text variant="caption" tone="secondary" numberOfLines={2} style={styles.macros}>
           {draft
             ? formatRowNutrition(`${formatMacroGrams(amount)} ${portion?.name ?? template.details.canonicalUnit}`, template.details.nutritionPer100, canonical(template, draft.portionId, amount))
-            : describe(template)}
+            : describe(template, last)}
         </Text>
       </View>
       {toggleButton}
@@ -258,7 +272,7 @@ const useStyles = makeStyles((t) => ({
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 50, paddingHorizontal: 14, backgroundColor: t.colors.surface,
     borderWidth: t.border.hairline, borderColor: t.colors.text, borderRadius: t.radius.lg, overflow: 'hidden' },
   searchInput: { flex: 1, minWidth: 0, height: 44, padding: 0, color: t.colors.text, fontFamily: font.regular, fontSize: 15 },
-  chips: { flexDirection: 'row', gap: t.space.sm },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
   chip: { minHeight: 44, paddingHorizontal: 13, justifyContent: 'center', borderRadius: t.radius.pill, borderWidth: t.border.hairline, borderColor: t.colors.lineStrong, overflow: 'hidden' },
   chipOn: { backgroundColor: t.colors.primary, borderColor: t.colors.primary },
   chipText: { fontSize: 14 },

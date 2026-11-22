@@ -292,6 +292,44 @@ test('RN selection expands in matching order and hidden drafts retain quantity, 
   } finally { await h.close(); }
 });
 
+test('RN Sugeridos ranks by the target hour and prefills the last logged portion and quantity', async () => {
+  // The screen ranks against the real clock, so history is relative to today's Chilean date.
+  const pan={...template,id:uuid(3),name:'Pan',details:{...template.details,portions:[]}};
+  const yogur={...template,id:uuid(4),name:'Yogur',isOfficial:true};
+  const day=offset=>dates.shiftDateId(dates.todayId(),-offset);
+  const logged=(food,offset,time,quantity,portionId,n)=>createFoodEntry({date:day(offset),time,quantity,templateId:food.id,templateRevision:food.updatedAt,portionId},[template,pan],uuid(n),1000);
+  const documents=[logged(template,1,'08:00','2','cup',11),logged(pan,2,'09:00','250','',12),logged(pan,3,'22:00','200','',13)];
+  const h=await harness('react-native-food-entry-screen',{documents});
+  try {
+    await h.changeTemplates([yogur,pan,template]);
+    const tabs=h.sheet().findAllByType('Touch').filter(n=>n.props.accessibilityRole==='tab');
+    assert.deepEqual(tabs.map(n=>n.props.accessibilityLabel),['Sugeridos','Recientes','Frecuentes','Mis alimentos']);
+    assert.equal(tabs[0].props.accessibilityState.selected,true);
+    assert.deepEqual(h.rowActions(),['Agregar Avena','Agregar Pan']);
+    assert.ok(h.text().includes('2 taza · 608 kcal · 20,8 P · 102,4 C · 11,2 G'));
+    assert.ok(h.text().includes('250 g · 950 kcal · 32,5 P · 160 C · 17,5 G'));
+    // The Sheet stub does not render its action, so open the date/time panel through that prop.
+    assert.equal(h.sheet().props.action.props.accessibilityLabel,'Cambiar fecha y hora, ahora 08:15');
+    await renderer.act(async()=>{ h.sheet().props.action.props.onPress(); });
+    await h.fill('Hora del alimento','22:30');
+    assert.deepEqual(h.rowActions(),['Agregar Pan','Agregar Avena']);
+    await h.press('Agregar Avena');
+    assert.equal(h.labelled('Cantidad de Avena','onChangeText').props.value,'2');
+    assert.equal(h.labelled('taza','onPress').props.accessibilityState.selected,true);
+    await h.press('Agregar Pan');
+    assert.equal(h.labelled('Cantidad de Pan','onChangeText').props.value,'250');
+    await h.type('Buscar alimento','Yogur'); await h.press('Agregar Yogur');
+    assert.equal(h.labelled('Cantidad de Yogur','onChangeText').props.value,'1');
+    await h.click('Guardar');
+    assert.equal(h.writes.length,1);
+    const saved=new Map(h.writes[0].map(doc=>[doc.templateId,doc]));
+    assert.equal(saved.get(template.id).canonicalQuantity,160); assert.equal(saved.get(template.id).entry.portionSnapshot.portionId,'cup');
+    assert.equal(saved.get(pan.id).canonicalQuantity,250); assert.equal(saved.get(pan.id).entry.portionSnapshot,undefined);
+    assert.equal(saved.get(yogur.id).canonicalQuantity,80);
+    assert.equal(h.backs.length,1);
+  } finally { await h.close(); }
+});
+
 // Instrument only the test-loaded module to reach its real private renderer.
 // No helper is exported by production code and no geometry is duplicated here.
 async function weightLineHarness(points) {
