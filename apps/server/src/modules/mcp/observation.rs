@@ -1851,6 +1851,101 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn update_food_and_delete_food_are_classified_and_redacted() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        let secret_food_id = "11111111-2222-4333-8444-555555555555";
+        let secret_name = "SECRET_PERSONAL_FOOD_NAME";
+        let secret_brand = "SECRET_PERSONAL_BRAND";
+
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+
+            let update_obs = Observation::new(observer.clone(), &Method::POST);
+            update_obs.request("tools/call", Some("update_food"));
+            let update_resp = super::super::tool_success(
+                Value::Null,
+                &format!("Se actualizó el alimento {secret_name}."),
+                json!({
+                    "status": "updated",
+                    "food": {
+                        "id": secret_food_id,
+                        "name": secret_name,
+                        "details": { "brand": secret_brand }
+                    }
+                }),
+                Some(&update_obs),
+            );
+            update_obs.response_prepared(&update_resp);
+
+            let delete_obs = Observation::new(observer.clone(), &Method::POST);
+            delete_obs.request("tools/call", Some("delete_food"));
+            let delete_resp = super::super::tool_success(
+                Value::Null,
+                "Se eliminó el alimento personal.",
+                json!({
+                    "status": "deleted",
+                    "foodId": secret_food_id,
+                    "updatedAt": 1_700_000_000_001_i64
+                }),
+                Some(&delete_obs),
+            );
+            delete_obs.response_prepared(&delete_resp);
+
+            let err_obs = Observation::new(observer.clone(), &Method::POST);
+            err_obs.request("tools/call", Some("update_food"));
+            let err_resp = super::super::tool_failure(
+                Value::Null,
+                crate::shared::error::AppError::NotFound(format!(
+                    "Food {secret_food_id} not found"
+                )),
+                Some(&err_obs),
+            );
+            err_obs.response_prepared(&err_resp);
+
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!(budget.admitted[EventClass::KnownToolSuccess as usize], 2);
+            assert_eq!(budget.admitted[EventClass::ToolError as usize], 1);
+        });
+
+        let output = capture.text();
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"update_food\"",
+                "outcome=\"tool_success\"",
+                "first_text_json=\"matches\"",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"delete_food\"",
+                "outcome=\"tool_success\"",
+                "first_text_json=\"matches\"",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"update_food\"",
+                "outcome=\"tool_error\"",
+                "error_class=\"not_found\"",
+            ],
+        );
+        assert!(!output.contains(secret_food_id));
+        assert!(!output.contains(secret_name));
+        assert!(!output.contains(secret_brand));
+    }
 }
 
 async fn observe_request(
