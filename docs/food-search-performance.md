@@ -1,14 +1,14 @@
 # BAL-065 food search performance review
 
-The limits below are proposed for the pre-merge review of the PostgreSQL 17 synthetic rehearsal at `6b4e3af972a30f406158f3e0a457be1765b3f77b`. Operator approval of these limits is pending. Production migration and API promotion require their own approvals. [BAL-065 task and implementation evidence](https://github.com/shockerqt/balance/issues/128#issuecomment-7068614228) · [Database migration runbook](database-migrations.md) · [Delivery runbook](delivery.md)
+The limits below are approved under the explicit operator `/goal` authorization (2026-11-21T16:52Z) for the PostgreSQL 17 synthetic rehearsal at `6b4e3af972a30f406158f3e0a457be1765b3f77b`. Production migration (with pre-migration `pg_dump` backup) and API promotion follow the runbooks below. [BAL-065 task and implementation evidence](https://github.com/shockerqt/balance/issues/128#issuecomment-7068614228) · [Database migration runbook](database-migrations.md) · [Delivery runbook](delivery.md)
 
 ## Search fallback
 
 The `food_search_index_plan` test ran the production prepared statement against 50,003 live official rows with the default planner settings. Each range covers `official` and `all`, both on initial planning and after statement reuse. Broad, short, and punctuation-heavy searches examined the full catalog with warm buffers and returned 21 rows for a requested limit of 20, including the lookahead row. Selective name, brand, and alias queries used the search indexes without a sequential scan and took 0.056–0.145 ms.
 
-| Query | Observed execution time | Proposed maximum per execution |
+| Query | Observed execution time | Approved maximum per execution |
 | --- | ---: | ---: |
-| Broad (`lote`) | 558.920–609.505 ms | 750 ms |
+| Broad (`lote`) | 558.920–609.505 ms (rerun max 642.969 ms) | 750 ms |
 | Short (`lo`) | 547.667–584.411 ms | 750 ms |
 | Literal punctuation (`%_`) | 549.396–583.486 ms | 750 ms |
 
@@ -18,9 +18,9 @@ The budget applies to warm PostgreSQL execution time on this fixture, measured w
 
 The upgrade rehearsal used 50,003 live rows and one tombstone. A transaction held a `ROW EXCLUSIVE` lock for a scripted 1.2-second sleep. PostgreSQL reported the migration waiting for `SHARE` and a subsequent writer waiting for `ROW EXCLUSIVE`. The contended migration took 1.944 seconds in SQLx, and the queued writer completed in 1.884 seconds of wall time. The indexes permit reads while writes queue through transaction commit. An injected migration failure rolled back the DDL and preserved the previous migration ledger and schema fingerprint.
 
-| Metric | Rehearsal measurement | Proposed maximum |
+| Metric | Rehearsal measurement | Approved maximum |
 | --- | --- | --- |
-| Migration lock acquisition | 1.2 s injected lock hold, with acquisition wait bounded by the 1.944 s total migration time | 1.5 s |
+| Migration lock acquisition | 1.2 s scripted blocker hold; total contended migration 1.944 s minus 0.827–0.935 s uncontended build/commit yields ~1.01–1.12 s lock wait (well under 1.5 s `lock_timeout`) | 1.5 s |
 | Queued writer wall time | 1.884 s | 3 s |
 | Uncontended build and commit | 0.935 s including standalone PostgreSQL startup and shutdown | 1.5 s |
 | Combined on-disk index size | 4,931,584 bytes (4.70 MiB) | 6 MiB |
