@@ -2041,6 +2041,127 @@ mod tests {
         assert!(!output.contains(secret_user_marker));
         assert!(!output.contains("1700000000001"));
     }
+
+    #[test]
+    fn log_meal_is_classified_with_collection_count_and_redacted() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        let secret_op_id = "11111111-2222-4333-8444-555555555555";
+        let secret_food_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let secret_log_id = "99999999-8888-4777-8666-555555555555";
+        let secret_candidate_id = "cccccccc-dddd-4eee-8fff-111111111111";
+        let secret_food_name = "SECRET_MEAL_FOOD_BAL082";
+        let secret_brand = "SECRET_MEAL_BRAND_BAL082";
+        let secret_rpc_id = "SECRET_RPC_ID_BAL082";
+
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+
+            let ok_obs = Observation::new(observer.clone(), &Method::POST);
+            ok_obs.request("tools/call", Some("log_meal"));
+            let ok_resp = super::super::tool_success(
+                json!(secret_rpc_id),
+                "Se registró la comida con 2 elementos.",
+                json!({
+                    "status": "committed",
+                    "operationId": secret_op_id,
+                    "consumedAt": 1_760_000_000_000_i64,
+                    "items": [
+                        {
+                            "itemIndex": 0,
+                            "foodId": secret_food_id,
+                            "logId": secret_log_id,
+                            "createdFood": true
+                        },
+                        {
+                            "itemIndex": 1,
+                            "foodId": secret_candidate_id,
+                            "logId": secret_op_id,
+                            "createdFood": false
+                        }
+                    ]
+                }),
+                Some(&ok_obs),
+            );
+            ok_obs.response_prepared(&ok_resp);
+
+            let dup_obs = Observation::new(observer.clone(), &Method::POST);
+            dup_obs.request("tools/call", Some("log_meal"));
+            let dup_resp = super::super::tool_structured_error(
+                json!(secret_rpc_id),
+                "conflict",
+                &format!("Ya existe {secret_food_name} ({secret_candidate_id})"),
+                json!({
+                    "error": {
+                        "code": "conflict",
+                        "reason": "duplicatePersonalFood",
+                        "message": format!("Duplicate {secret_food_name} {secret_brand}"),
+                        "itemIndex": 0,
+                        "candidates": [{
+                            "foodId": secret_candidate_id,
+                            "name": secret_food_name,
+                            "brand": secret_brand,
+                            "canonicalUnit": "g",
+                            "nutritionPer100": {
+                                "calories": 100.0,
+                                "protein": 10.0,
+                                "carbs": 10.0,
+                                "fat": 2.0
+                            },
+                            "portions": []
+                        }],
+                        "hasMoreCandidates": false
+                    }
+                }),
+                Some(&dup_obs),
+            );
+            dup_obs.response_prepared(&dup_resp);
+
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!(budget.admitted[EventClass::KnownToolSuccess as usize], 1);
+            assert_eq!(budget.admitted[EventClass::ToolError as usize], 1);
+        });
+
+        let output = capture.text();
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"log_meal\"",
+                "outcome=\"tool_success\"",
+                "collection_count=2",
+                "first_text_json=\"matches\"",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"log_meal\"",
+                "outcome=\"tool_error\"",
+                "error_class=\"conflict\"",
+            ],
+        );
+        for secret in [
+            secret_op_id,
+            secret_food_id,
+            secret_log_id,
+            secret_candidate_id,
+            secret_food_name,
+            secret_brand,
+            secret_rpc_id,
+            "1760000000000",
+        ] {
+            assert!(
+                !output.contains(secret),
+                "observation output leaked synthetic value {secret}: {output}"
+            );
+        }
+    }
 }
 
 async fn observe_request(
@@ -2115,7 +2236,7 @@ impl Shape {
         let structured = result.get("structuredContent");
         let key = match tool {
             "search_foods" => Some("foods"),
-            "get_daily_log" => Some("items"),
+            "get_daily_log" | "log_meal" => Some("items"),
             "get_weight_history" => Some("entries"),
             _ => None,
         };
