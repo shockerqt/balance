@@ -12,6 +12,106 @@ pub const MCP_RECEIPT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_BRAND_CHARS: usize = 120;
 pub const MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES: usize = 3;
 pub const MAX_BATCH_DELETE_FOOD_LOG_IDS: usize = 30;
+pub const MAX_LOG_MEAL_ITEMS: usize = 30;
+
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum LogMealItemInput {
+    Existing {
+        food_id: Uuid,
+        quantity: f64,
+        portion_id: Option<String>,
+    },
+    New {
+        name: String,
+        details: FoodDetails,
+        quantity: f64,
+        portion_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LogMealCommittedItem {
+    pub item_index: usize,
+    pub food_id: Uuid,
+    pub log_id: Uuid,
+    pub created_food: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogMealResult {
+    pub operation_id: Uuid,
+    pub consumed_at: i64,
+    pub items: Vec<LogMealCommittedItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogMealOutcome {
+    pub result: LogMealResult,
+    pub committed_fresh: bool,
+    pub created_any_food: bool,
+}
+
+#[derive(Debug)]
+pub enum LogMealError {
+    BadRequest {
+        item_index: Option<usize>,
+        message: String,
+    },
+    NotFound {
+        item_index: usize,
+        message: String,
+    },
+    Conflict {
+        item_index: Option<usize>,
+        message: String,
+    },
+    DuplicatePersonalFood {
+        item_index: usize,
+        duplicate: DuplicatePersonalFood,
+    },
+    IntraBatchDuplicatePersonalFood {
+        item_index: usize,
+        earlier_item_index: usize,
+    },
+    Internal(String),
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for LogMealError {
+    fn from(value: sqlx::Error) -> Self {
+        Self::Db(value)
+    }
+}
+
+impl LogMealError {
+    fn from_app_error(error: AppError, item_index: Option<usize>) -> Self {
+        match error {
+            AppError::BadRequest(message) => Self::BadRequest {
+                item_index,
+                message,
+            },
+            AppError::NotFound(message) => match item_index {
+                Some(idx) => Self::NotFound {
+                    item_index: idx,
+                    message,
+                },
+                None => Self::BadRequest {
+                    item_index: None,
+                    message,
+                },
+            },
+            AppError::Conflict(message) => Self::Conflict {
+                item_index,
+                message,
+            },
+            AppError::Internal(message) => Self::Internal(message),
+            AppError::Db(err) => Self::Db(err),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +203,7 @@ pub(crate) type AsyncTestHook = std::pin::Pin<Box<dyn std::future::Future<Output
 pub enum McpToolKind {
     CreateFood,
     LogFood,
+    LogMeal,
 }
 
 impl McpToolKind {
@@ -110,6 +211,7 @@ impl McpToolKind {
         match self {
             Self::CreateFood => "create_food",
             Self::LogFood => "log_food",
+            Self::LogMeal => "log_meal",
         }
     }
 }
@@ -163,6 +265,40 @@ struct LogFoodBaselineV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     external_id: Option<String>,
     updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
+enum LogMealIntentItemV1 {
+    Existing {
+        food_id: Uuid,
+        quantity: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        portion_id: Option<String>,
+    },
+    New {
+        name: String,
+        details: FoodDetails,
+        quantity: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        portion_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogMealIntentV1 {
+    date: String,
+    time: String,
+    items: Vec<LogMealIntentItemV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogMealReceiptResultV1 {
+    consumed_at: i64,
+    items: Vec<LogMealCommittedItem>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -267,6 +403,38 @@ impl LogFoodBaselineV1 {
         self.nutrition_snapshot = canonical_nutrition_snapshot(&self.nutrition_snapshot);
         self.canonical_quantity = canonical_f64(self.canonical_quantity);
         self.entry_snapshot = canonical_meal_log_entry(&self.entry_snapshot);
+        self
+    }
+}
+
+impl LogMealIntentV1 {
+    fn canonicalize(mut self) -> Self {
+        self.items = self
+            .items
+            .into_iter()
+            .map(|item| match item {
+                LogMealIntentItemV1::Existing {
+                    food_id,
+                    quantity,
+                    portion_id,
+                } => LogMealIntentItemV1::Existing {
+                    food_id,
+                    quantity: canonical_f64(quantity),
+                    portion_id,
+                },
+                LogMealIntentItemV1::New {
+                    name,
+                    details,
+                    quantity,
+                    portion_id,
+                } => LogMealIntentItemV1::New {
+                    name,
+                    details: canonical_food_details(&details),
+                    quantity: canonical_f64(quantity),
+                    portion_id,
+                },
+            })
+            .collect();
         self
     }
 }
@@ -2511,6 +2679,438 @@ impl SyncDatasource {
         Ok((consumption, true))
     }
 
+    pub async fn log_mcp_meal(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        date: &str,
+        time: &str,
+        items: &[LogMealItemInput],
+    ) -> Result<LogMealOutcome, LogMealError> {
+        self.log_mcp_meal_inner(
+            user_id,
+            operation_id,
+            date,
+            time,
+            items,
+            #[cfg(test)]
+            None,
+            #[cfg(test)]
+            None,
+            #[cfg(test)]
+            None,
+            false,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn log_mcp_meal_with_hooks(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        date: &str,
+        time: &str,
+        items: &[LogMealItemInput],
+        before_name_locks: Option<AsyncTestHook>,
+        after_name_locks: Option<AsyncTestHook>,
+        after_existing_lock: Option<AsyncTestHook>,
+        fail_before_commit: bool,
+    ) -> Result<LogMealOutcome, LogMealError> {
+        self.log_mcp_meal_inner(
+            user_id,
+            operation_id,
+            date,
+            time,
+            items,
+            before_name_locks,
+            after_name_locks,
+            after_existing_lock,
+            fail_before_commit,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn log_mcp_meal_inner(
+        &self,
+        user_id: i32,
+        operation_id: Uuid,
+        date: &str,
+        time: &str,
+        items: &[LogMealItemInput],
+        #[cfg(test)] before_name_locks: Option<AsyncTestHook>,
+        #[cfg(test)] after_name_locks: Option<AsyncTestHook>,
+        #[cfg(test)] mut after_existing_lock: Option<AsyncTestHook>,
+        fail_before_commit: bool,
+    ) -> Result<LogMealOutcome, LogMealError> {
+        if !(1..=MAX_LOG_MEAL_ITEMS).contains(&items.len()) {
+            return Err(LogMealError::BadRequest {
+                item_index: None,
+                message: format!("items must contain between 1 and {MAX_LOG_MEAL_ITEMS} items"),
+            });
+        }
+        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").map_err(|_| {
+            LogMealError::BadRequest {
+                item_index: None,
+                message: "date must use YYYY-MM-DD".into(),
+            }
+        })?;
+        chrono::NaiveTime::parse_from_str(time, "%H:%M").map_err(|_| LogMealError::BadRequest {
+            item_index: None,
+            message: "time must use HH:MM".into(),
+        })?;
+
+        let mut intent_items = Vec::with_capacity(items.len());
+        for (item_index, item) in items.iter().enumerate() {
+            match item {
+                LogMealItemInput::Existing {
+                    food_id,
+                    quantity,
+                    portion_id,
+                } => {
+                    validate_positive("quantity", *quantity)
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?;
+                    if let Some(portion_id) = portion_id.as_deref()
+                        && (portion_id.trim().is_empty() || portion_id.chars().count() > 80)
+                    {
+                        return Err(LogMealError::BadRequest {
+                            item_index: Some(item_index),
+                            message: "portionId must contain between 1 and 80 characters and cannot be blank".into(),
+                        });
+                    }
+                    intent_items.push(LogMealIntentItemV1::Existing {
+                        food_id: *food_id,
+                        quantity: canonical_f64(*quantity),
+                        portion_id: portion_id.clone(),
+                    });
+                }
+                LogMealItemInput::New {
+                    name,
+                    details,
+                    quantity,
+                    portion_id,
+                } => {
+                    validate_positive("quantity", *quantity)
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?;
+                    if let Some(portion_id) = portion_id.as_deref()
+                        && (portion_id.trim().is_empty() || portion_id.chars().count() > 80)
+                    {
+                        return Err(LogMealError::BadRequest {
+                            item_index: Some(item_index),
+                            message: "portionId must contain between 1 and 80 characters and cannot be blank".into(),
+                        });
+                    }
+                    let trimmed_name = name.trim();
+                    if trimmed_name.is_empty() {
+                        return Err(LogMealError::BadRequest {
+                            item_index: Some(item_index),
+                            message: "name cannot be empty".into(),
+                        });
+                    }
+                    let mut normalized_details = details.clone();
+                    normalized_details.normalize();
+                    normalized_details
+                        .validate()
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?;
+                    let canonical_details = canonical_food_details(&normalized_details);
+                    intent_items.push(LogMealIntentItemV1::New {
+                        name: trimmed_name.to_owned(),
+                        details: canonical_details,
+                        quantity: canonical_f64(*quantity),
+                        portion_id: portion_id.clone(),
+                    });
+                }
+            }
+        }
+
+        let intent = LogMealIntentV1 {
+            date: date.to_owned(),
+            time: time.to_owned(),
+            items: intent_items,
+        };
+
+        let mut tx = self.pool.begin().await?;
+        // Acyclic lock ordering:
+        // 1. mcp_receipt advisory lock
+        // 2. sorted distinct personal_food_create advisory locks for all New items
+        // 3. FOR SHARE row locks on Existing meal_templates
+        lock_mcp_receipt_key(&mut tx, user_id, McpToolKind::LogMeal, operation_id)
+            .await
+            .map_err(|err| LogMealError::from_app_error(err, None))?;
+
+        if let Some(receipt) =
+            get_mcp_receipt_in_tx(&mut tx, user_id, McpToolKind::LogMeal, operation_id)
+                .await
+                .map_err(|err| LogMealError::from_app_error(err, None))?
+        {
+            if receipt.schema_version != MCP_RECEIPT_SCHEMA_VERSION {
+                return Err(LogMealError::Internal(
+                    "Unsupported MCP receipt schema version".into(),
+                ));
+            }
+            let stored_intent: LogMealIntentV1 =
+                serde_json::from_value::<LogMealIntentV1>(receipt.request_intent)
+                    .map_err(|error| {
+                        LogMealError::Internal(format!(
+                            "Invalid MCP log_meal receipt intent: {error}"
+                        ))
+                    })?
+                    .canonicalize();
+            if stored_intent != intent {
+                return Err(LogMealError::Conflict {
+                    item_index: None,
+                    message: "This operationId was already used for a different log_meal request. Reuse the original arguments to replay that operation, or confirm and generate a new operationId for a different meal.".into(),
+                });
+            }
+            let stored_result: LogMealReceiptResultV1 = serde_json::from_value::<
+                LogMealReceiptResultV1,
+            >(receipt.target_state)
+            .map_err(|error| {
+                LogMealError::Internal(format!(
+                    "Invalid MCP log_meal receipt target state: {error}"
+                ))
+            })?;
+            tx.commit().await?;
+            return Ok(LogMealOutcome {
+                result: LogMealResult {
+                    operation_id,
+                    consumed_at: stored_result.consumed_at,
+                    items: stored_result.items,
+                },
+                committed_fresh: false,
+                created_any_food: false,
+            });
+        }
+
+        let name_lock_keys: std::collections::BTreeSet<String> = intent
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LogMealIntentItemV1::New { name, .. } => Some(name.to_lowercase()),
+                LogMealIntentItemV1::Existing { .. } => None,
+            })
+            .collect();
+
+        #[cfg(test)]
+        if let Some(hook) = before_name_locks {
+            hook.await;
+        }
+        for key in &name_lock_keys {
+            lock_personal_food_create_key(&mut tx, user_id, key)
+                .await
+                .map_err(|err| LogMealError::from_app_error(err, None))?;
+        }
+        #[cfg(test)]
+        if let Some(hook) = after_name_locks {
+            hook.await;
+        }
+
+        let consumed_at = local_datetime_to_epoch_in_tx(&mut tx, date, time)
+            .await
+            .map_err(|err| LogMealError::from_app_error(err, None))?;
+
+        let mut created_new_foods: Vec<(usize, Uuid, String, FoodDetails)> = Vec::new();
+        let mut committed_items = Vec::with_capacity(intent.items.len());
+
+        for (item_index, item) in intent.items.iter().enumerate() {
+            match item {
+                LogMealIntentItemV1::New {
+                    name,
+                    details,
+                    quantity,
+                    portion_id,
+                } => {
+                    let lower_name = name.to_lowercase();
+                    if let Some((earlier_item_index, _, _, _)) =
+                        created_new_foods
+                            .iter()
+                            .find(|(_, _, prev_lower, prev_details)| {
+                                *prev_lower == lower_name
+                                    && personal_food_matches_identity(prev_details, details)
+                            })
+                    {
+                        return Err(LogMealError::IntraBatchDuplicatePersonalFood {
+                            item_index,
+                            earlier_item_index: *earlier_item_index,
+                        });
+                    }
+
+                    let exclude_ids: Vec<Uuid> =
+                        created_new_foods.iter().map(|(_, id, _, _)| *id).collect();
+                    if let Some(duplicate) = find_duplicate_personal_foods_excluding_in_tx(
+                        &mut tx,
+                        user_id,
+                        name,
+                        &exclude_ids,
+                        details,
+                    )
+                    .await
+                    .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?
+                    {
+                        return Err(LogMealError::DuplicatePersonalFood {
+                            item_index,
+                            duplicate,
+                        });
+                    }
+
+                    let (canonical_quantity, entry) = details
+                        .entry_for(*quantity, portion_id.as_deref())
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?;
+
+                    let food_id = Uuid::new_v4();
+                    let details_json = serde_json::to_value(details)
+                        .map_err(|error| LogMealError::Internal(error.to_string()))?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO meal_templates
+                            (id, user_id, is_official, name, details, updated_at, deleted_at)
+                        VALUES
+                            ($1, $2, FALSE, $3, $4,
+                             floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                             NULL)
+                        "#,
+                    )
+                    .bind(food_id)
+                    .bind(user_id)
+                    .bind(name)
+                    .bind(details_json)
+                    .execute(&mut *tx)
+                    .await?;
+
+                    let log_id = Uuid::new_v4();
+                    let snapshot = serde_json::to_value(details.snapshot())
+                        .map_err(|error| LogMealError::Internal(error.to_string()))?;
+                    let entry_snapshot = serde_json::to_value(&entry)
+                        .map_err(|error| LogMealError::Internal(error.to_string()))?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO meal_logs
+                            (id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                             canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at)
+                        VALUES
+                            ($1, $2, $3, $4, $5, $6, $7, $8,
+                             floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                             NULL)
+                        "#,
+                    )
+                    .bind(log_id)
+                    .bind(user_id)
+                    .bind(food_id)
+                    .bind(name)
+                    .bind(snapshot)
+                    .bind(canonical_quantity)
+                    .bind(entry_snapshot)
+                    .bind(consumed_at)
+                    .execute(&mut *tx)
+                    .await?;
+
+                    created_new_foods.push((item_index, food_id, lower_name, details.clone()));
+                    committed_items.push(LogMealCommittedItem {
+                        item_index,
+                        food_id,
+                        log_id,
+                        created_food: true,
+                    });
+                }
+                LogMealIntentItemV1::Existing {
+                    food_id,
+                    quantity,
+                    portion_id,
+                } => {
+                    let template = get_food_template_in_tx(&mut tx, user_id, *food_id)
+                        .await
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?
+                        .ok_or_else(|| LogMealError::NotFound {
+                            item_index,
+                            message: "Food not found".into(),
+                        })?;
+
+                    #[cfg(test)]
+                    if let Some(hook) = after_existing_lock.take() {
+                        hook.await;
+                    }
+
+                    let (canonical_quantity, entry) = template
+                        .details
+                        .entry_for(*quantity, portion_id.as_deref())
+                        .map_err(|err| LogMealError::from_app_error(err, Some(item_index)))?;
+
+                    let log_id = Uuid::new_v4();
+                    let snapshot = serde_json::to_value(template.details.snapshot())
+                        .map_err(|error| LogMealError::Internal(error.to_string()))?;
+                    let entry_snapshot = serde_json::to_value(&entry)
+                        .map_err(|error| LogMealError::Internal(error.to_string()))?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO meal_logs
+                            (id, user_id, template_id, name_snapshot, nutrition_snapshot,
+                             canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at)
+                        VALUES
+                            ($1, $2, $3, $4, $5, $6, $7, $8,
+                             floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                             NULL)
+                        "#,
+                    )
+                    .bind(log_id)
+                    .bind(user_id)
+                    .bind(*food_id)
+                    .bind(&template.name)
+                    .bind(snapshot)
+                    .bind(canonical_quantity)
+                    .bind(entry_snapshot)
+                    .bind(consumed_at)
+                    .execute(&mut *tx)
+                    .await?;
+
+                    committed_items.push(LogMealCommittedItem {
+                        item_index,
+                        food_id: *food_id,
+                        log_id,
+                        created_food: false,
+                    });
+                }
+            }
+        }
+
+        let receipt_result = LogMealReceiptResultV1 {
+            consumed_at,
+            items: committed_items.clone(),
+        };
+        let request_intent_json = serde_json::to_value(&intent)
+            .map_err(|error| LogMealError::Internal(error.to_string()))?;
+        let target_state_json = serde_json::to_value(&receipt_result)
+            .map_err(|error| LogMealError::Internal(error.to_string()))?;
+        insert_mcp_receipt_in_tx(
+            &mut tx,
+            user_id,
+            McpToolKind::LogMeal,
+            operation_id,
+            &request_intent_json,
+            &target_state_json,
+        )
+        .await
+        .map_err(|err| LogMealError::from_app_error(err, None))?;
+
+        if fail_before_commit {
+            return Err(LogMealError::Internal(
+                "Injected pre-commit failure for log_meal test".into(),
+            ));
+        }
+
+        tx.commit().await?;
+        Ok(LogMealOutcome {
+            result: LogMealResult {
+                operation_id,
+                consumed_at,
+                items: committed_items,
+            },
+            committed_fresh: true,
+            created_any_food: !created_new_foods.is_empty(),
+        })
+    }
+
     pub async fn get_daily_consumptions(
         &self,
         user_id: i32,
@@ -2926,6 +3526,16 @@ async fn find_duplicate_personal_foods_in_tx(
     exclude_id: Uuid,
     details: &FoodDetails,
 ) -> Result<Option<DuplicatePersonalFood>, AppError> {
+    find_duplicate_personal_foods_excluding_in_tx(tx, user_id, name, &[exclude_id], details).await
+}
+
+async fn find_duplicate_personal_foods_excluding_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i32,
+    name: &str,
+    exclude_ids: &[Uuid],
+    details: &FoodDetails,
+) -> Result<Option<DuplicatePersonalFood>, AppError> {
     let rows = sqlx::query_as::<_, MealTemplateRow>(
         r#"
         SELECT id, user_id, is_official, name, details, source_provider, external_id,
@@ -2935,13 +3545,13 @@ async fn find_duplicate_personal_foods_in_tx(
           AND is_official = FALSE
           AND deleted_at IS NULL
           AND lower(btrim(name)) = lower(btrim($2))
-          AND id <> $3
+          AND NOT (id = ANY($3))
         ORDER BY id ASC
         "#,
     )
     .bind(user_id)
     .bind(name)
-    .bind(exclude_id)
+    .bind(exclude_ids)
     .fetch_all(&mut **tx)
     .await?;
 
@@ -5633,6 +6243,760 @@ mod copy_tests {
             res_2.results[2].status,
             BatchDeleteFoodLogStatus::AlreadyDeleted
         );
+
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn log_mcp_meal_datasource_postgres() {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+        use tokio::sync::oneshot;
+        use tokio::time::Duration;
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+
+        let user_a = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal082-sync-user-a",
+                &NewUser {
+                    email: "bal082-sync-a@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+        let user_b = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal082-sync-user-b",
+                &NewUser {
+                    email: "bal082-sync-b@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let make_details =
+            |calories: f64, brand: Option<&str>, portions: Vec<PortionDefinition>| FoodDetails {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100: NutritionValues {
+                    calories,
+                    protein: 10.0,
+                    carbs: 20.0,
+                    fat: 5.0,
+                    fiber: Some(2.0),
+                    sodium_mg: Some(120.0),
+                    cholesterol_mg: None,
+                    extended_nutrition: Default::default(),
+                },
+                portions,
+                chilean_seals: vec![],
+                brand: brand.map(str::to_owned),
+                category: Some("Desayuno".into()),
+                typical_time: None,
+            };
+
+        // Seed existing personal food for user A, foreign private food for user B, and soft-deleted food for user A.
+        let existing_id = Uuid::new_v4();
+        let existing_details = make_details(
+            150.0,
+            Some("Marca Base"),
+            vec![PortionDefinition {
+                id: "taza".into(),
+                name: "Taza".into(),
+                portion_quantity: 1.0,
+                canonical_quantity: 80.0,
+            }],
+        );
+        db.sync
+            .create_mcp_food(user_a.id, existing_id, "Avena Base", &existing_details)
+            .await
+            .unwrap();
+
+        let foreign_food_id = Uuid::new_v4();
+        db.sync
+            .create_mcp_food(
+                user_b.id,
+                foreign_food_id,
+                "Privado B",
+                &make_details(100.0, None, vec![]),
+            )
+            .await
+            .unwrap();
+
+        let deleted_food_id = Uuid::new_v4();
+        db.sync
+            .create_mcp_food(
+                user_a.id,
+                deleted_food_id,
+                "Eliminado A",
+                &make_details(90.0, None, vec![]),
+            )
+            .await
+            .unwrap();
+        db.sync
+            .soft_delete_personal_food(user_a.id, deleted_food_id)
+            .await
+            .unwrap();
+
+        // AC-2: Mixed meal (2 new personal foods + 1 existing food + repeated existing foodId) commits atomically.
+        let op_mixed = Uuid::new_v4();
+        let new_food_1 = make_details(
+            240.0,
+            Some("  Marca Pan  "),
+            vec![PortionDefinition {
+                id: "rebanada".into(),
+                name: "Rebanada".into(),
+                portion_quantity: 1.0,
+                canonical_quantity: 35.0,
+            }],
+        );
+        let new_food_2 = make_details(160.0, Some("Marca Queso"), vec![]);
+        let mixed_items = vec![
+            LogMealItemInput::New {
+                name: "  Pan Integral Casero ".into(),
+                details: new_food_1.clone(),
+                quantity: 2.0,
+                portion_id: Some("rebanada".into()),
+            },
+            LogMealItemInput::Existing {
+                food_id: existing_id,
+                quantity: 1.5,
+                portion_id: Some("taza".into()),
+            },
+            LogMealItemInput::New {
+                name: "Queso Fresco".into(),
+                details: new_food_2.clone(),
+                quantity: 50.0,
+                portion_id: None,
+            },
+            LogMealItemInput::Existing {
+                food_id: existing_id,
+                quantity: 40.0,
+                portion_id: None,
+            },
+        ];
+
+        let outcome = db
+            .sync
+            .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:30", &mixed_items)
+            .await
+            .unwrap();
+        assert!(outcome.committed_fresh);
+        assert!(outcome.created_any_food);
+        assert_eq!(outcome.result.operation_id, op_mixed);
+        assert_eq!(outcome.result.items.len(), 4);
+        assert_eq!(outcome.result.items[0].item_index, 0);
+        assert!(outcome.result.items[0].created_food);
+        assert_eq!(outcome.result.items[1].item_index, 1);
+        assert_eq!(outcome.result.items[1].food_id, existing_id);
+        assert!(!outcome.result.items[1].created_food);
+        assert_eq!(outcome.result.items[2].item_index, 2);
+        assert!(outcome.result.items[2].created_food);
+        assert_eq!(outcome.result.items[3].item_index, 3);
+        assert_eq!(outcome.result.items[3].food_id, existing_id);
+        assert!(!outcome.result.items[3].created_food);
+        assert_ne!(
+            outcome.result.items[1].log_id,
+            outcome.result.items[3].log_id
+        );
+
+        // Verify diary & sync visibility, shared timestamp, brand preservation, and canonical portions.
+        let daily = db
+            .sync
+            .get_daily_consumptions(user_a.id, "2026-04-16")
+            .await
+            .unwrap();
+        assert_eq!(daily.len(), 4);
+        for row in &daily {
+            assert_eq!(row.consumed_at, outcome.result.consumed_at);
+        }
+        let pan_log = daily
+            .iter()
+            .find(|c| c.id == outcome.result.items[0].log_id)
+            .unwrap();
+        assert_eq!(pan_log.name, "Pan Integral Casero");
+        assert_eq!(pan_log.snapshot.brand.as_deref(), Some("Marca Pan"));
+        assert!((pan_log.canonical_quantity - 70.0).abs() < 1e-9);
+        assert_eq!(
+            pan_log
+                .entry
+                .portion_snapshot
+                .as_ref()
+                .unwrap()
+                .portion_id
+                .as_deref(),
+            Some("rebanada")
+        );
+        let synced_templates = db
+            .sync
+            .pull_meal_templates(user_a.id, 0, None, 100)
+            .await
+            .unwrap();
+        assert!(
+            synced_templates
+                .iter()
+                .any(|t| t.id == outcome.result.items[0].food_id)
+        );
+        assert!(
+            synced_templates
+                .iter()
+                .any(|t| t.id == outcome.result.items[2].food_id)
+        );
+
+        // AC-4: Replay after lost response returns identical result without duplicating rows.
+        let replay = db
+            .sync
+            .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:30", &mixed_items)
+            .await
+            .unwrap();
+        assert!(!replay.committed_fresh);
+        assert!(!replay.created_any_food);
+        assert_eq!(replay.result, outcome.result);
+        assert_eq!(
+            db.sync
+                .get_daily_consumptions(user_a.id, "2026-04-16")
+                .await
+                .unwrap()
+                .len(),
+            4
+        );
+
+        // AC-4: Conflict on changed quantity, changed item order, or changed time.
+        let mut changed_qty = mixed_items.clone();
+        if let LogMealItemInput::Existing { quantity, .. } = &mut changed_qty[1] {
+            *quantity = 2.0;
+        }
+        assert!(matches!(
+            db.sync
+                .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:30", &changed_qty)
+                .await,
+            Err(LogMealError::Conflict {
+                item_index: None,
+                ..
+            })
+        ));
+        let mut swapped_order = mixed_items.clone();
+        swapped_order.swap(0, 1);
+        assert!(matches!(
+            db.sync
+                .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:30", &swapped_order)
+                .await,
+            Err(LogMealError::Conflict {
+                item_index: None,
+                ..
+            })
+        ));
+        assert!(matches!(
+            db.sync
+                .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:31", &mixed_items)
+                .await,
+            Err(LogMealError::Conflict {
+                item_index: None,
+                ..
+            })
+        ));
+
+        // AC-4: Replay still returns historical committed result even after later edits and tombstones.
+        db.sync
+            .soft_delete_consumption(user_a.id, outcome.result.items[0].log_id)
+            .await
+            .unwrap();
+        db.sync
+            .soft_delete_personal_food(user_a.id, outcome.result.items[0].food_id)
+            .await
+            .unwrap();
+        let replay_after_tombstone = db
+            .sync
+            .log_mcp_meal(user_a.id, op_mixed, "2026-04-16", "08:30", &mixed_items)
+            .await
+            .unwrap();
+        assert!(!replay_after_tombstone.committed_fresh);
+        assert_eq!(replay_after_tombstone.result, outcome.result);
+
+        // AC-4: User scoping — user B can reuse the exact same operationId independently.
+        let user_b_outcome = db
+            .sync
+            .log_mcp_meal(
+                user_b.id,
+                op_mixed,
+                "2026-04-16",
+                "08:30",
+                &[LogMealItemInput::Existing {
+                    food_id: foreign_food_id,
+                    quantity: 50.0,
+                    portion_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        assert!(user_b_outcome.committed_fresh);
+        assert_eq!(user_b_outcome.result.items[0].food_id, foreign_food_id);
+
+        // AC-4: Distinct operationIds can log the same existing-food meal independently.
+        let existing_only = vec![LogMealItemInput::Existing {
+            food_id: existing_id,
+            quantity: 100.0,
+            portion_id: None,
+        }];
+        let first_existing = db
+            .sync
+            .log_mcp_meal(
+                user_a.id,
+                Uuid::new_v4(),
+                "2026-04-17",
+                "09:00",
+                &existing_only,
+            )
+            .await
+            .unwrap();
+        let second_existing = db
+            .sync
+            .log_mcp_meal(
+                user_a.id,
+                Uuid::new_v4(),
+                "2026-04-17",
+                "09:00",
+                &existing_only,
+            )
+            .await
+            .unwrap();
+        assert!(first_existing.committed_fresh && !first_existing.created_any_food);
+        assert!(second_existing.committed_fresh && !second_existing.created_any_food);
+        assert_ne!(
+            first_existing.result.items[0].log_id,
+            second_existing.result.items[0].log_id
+        );
+
+        // AC-4: Concurrent identical operationId converges to 1 fresh commit + 1 replay.
+        let concurrent_op = Uuid::new_v4();
+        let (c1, c2) = tokio::join!(
+            db.sync.log_mcp_meal(
+                user_a.id,
+                concurrent_op,
+                "2026-04-17",
+                "10:00",
+                &existing_only,
+            ),
+            db.sync.log_mcp_meal(
+                user_a.id,
+                concurrent_op,
+                "2026-04-17",
+                "10:00",
+                &existing_only,
+            )
+        );
+        let c1 = c1.unwrap();
+        let c2 = c2.unwrap();
+        assert_eq!(c1.result, c2.result);
+        assert_ne!(c1.committed_fresh, c2.committed_fresh);
+
+        // AC-3: Late failure rolls back earlier inserts (0 templates, 0 logs, 0 receipts).
+        let templates_before: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE user_id = $1")
+                .bind(user_a.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        let logs_before: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_logs WHERE user_id = $1")
+                .bind(user_a.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        let receipts_before: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM mcp_mutation_receipts WHERE user_id = $1 AND tool_name = 'log_meal'",
+        )
+        .bind(user_a.id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+
+        let rollback_op = Uuid::new_v4();
+        let late_fail_items = vec![
+            LogMealItemInput::New {
+                name: "Rollback Temp Food".into(),
+                details: make_details(111.0, None, vec![]),
+                quantity: 100.0,
+                portion_id: None,
+            },
+            LogMealItemInput::Existing {
+                food_id: existing_id,
+                quantity: 1.0,
+                portion_id: Some("nonexistent-portion".into()),
+            },
+        ];
+        assert!(matches!(
+            db.sync
+                .log_mcp_meal(
+                    user_a.id,
+                    rollback_op,
+                    "2026-04-18",
+                    "12:00",
+                    &late_fail_items
+                )
+                .await,
+            Err(LogMealError::BadRequest {
+                item_index: Some(1),
+                ..
+            })
+        ));
+
+        // Also test fail_before_commit hook after all inserts + receipt insert.
+        let fault_op = Uuid::new_v4();
+        assert!(matches!(
+            db.sync
+                .log_mcp_meal_with_hooks(
+                    user_a.id,
+                    fault_op,
+                    "2026-04-18",
+                    "12:00",
+                    &[LogMealItemInput::New {
+                        name: "Fault Hook Food".into(),
+                        details: make_details(123.0, None, vec![]),
+                        quantity: 100.0,
+                        portion_id: None,
+                    }],
+                    None,
+                    None,
+                    None,
+                    true,
+                )
+                .await,
+            Err(LogMealError::Internal(_))
+        ));
+
+        // AC-3: Missing, foreign private, and soft-deleted food IDs return identical NotFound with zero writes.
+        for bad_food_id in [Uuid::new_v4(), foreign_food_id, deleted_food_id] {
+            let err = db
+                .sync
+                .log_mcp_meal(
+                    user_a.id,
+                    Uuid::new_v4(),
+                    "2026-04-18",
+                    "12:00",
+                    &[
+                        LogMealItemInput::New {
+                            name: "Never Persisted".into(),
+                            details: make_details(99.0, None, vec![]),
+                            quantity: 50.0,
+                            portion_id: None,
+                        },
+                        LogMealItemInput::Existing {
+                            food_id: bad_food_id,
+                            quantity: 50.0,
+                            portion_id: None,
+                        },
+                    ],
+                )
+                .await
+                .unwrap_err();
+            match err {
+                LogMealError::NotFound {
+                    item_index,
+                    message,
+                } => {
+                    assert_eq!(item_index, 1);
+                    assert_eq!(message, "Food not found");
+                }
+                other => panic!("expected NotFound at item 1, got {other:?}"),
+            }
+        }
+
+        let templates_after: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE user_id = $1")
+                .bind(user_a.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        let logs_after: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_logs WHERE user_id = $1")
+                .bind(user_a.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        let receipts_after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM mcp_mutation_receipts WHERE user_id = $1 AND tool_name = 'log_meal'",
+        )
+        .bind(user_a.id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert_eq!(templates_after, templates_before);
+        assert_eq!(logs_after, logs_before);
+        assert_eq!(receipts_after, receipts_before);
+
+        // AC-5: Intra-batch duplicate personal food rolls back completely without exposing any rolled-back ID.
+        let intra_details = make_details(210.0, Some("Marca Intra"), vec![]);
+        let intra_err = db
+            .sync
+            .log_mcp_meal(
+                user_a.id,
+                Uuid::new_v4(),
+                "2026-04-18",
+                "13:00",
+                &[
+                    LogMealItemInput::New {
+                        name: "Yogurt Intra".into(),
+                        details: intra_details.clone(),
+                        quantity: 100.0,
+                        portion_id: None,
+                    },
+                    LogMealItemInput::New {
+                        name: "  yogurt intra  ".into(),
+                        details: intra_details,
+                        quantity: 50.0,
+                        portion_id: None,
+                    },
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            intra_err,
+            LogMealError::IntraBatchDuplicatePersonalFood {
+                item_index: 1,
+                earlier_item_index: 0,
+            }
+        ));
+        let templates_after_intra: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM meal_templates WHERE user_id = $1")
+                .bind(user_a.id)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(templates_after_intra, templates_before);
+
+        // AC-5: Two-session concurrent exact duplicate create via advisory lock: 1 winner, loser rolls back with candidate.
+        let race_details = make_details(180.0, Some("Marca Race"), vec![]);
+        let (locked_tx, locked_rx) = oneshot::channel::<()>();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let sync_1 = db.sync.clone();
+        let race_details_1 = race_details.clone();
+        let winner_task = tokio::spawn(async move {
+            sync_1
+                .log_mcp_meal_with_hooks(
+                    user_a.id,
+                    Uuid::new_v4(),
+                    "2026-04-18",
+                    "14:00",
+                    &[LogMealItemInput::New {
+                        name: "Granola Race".into(),
+                        details: race_details_1,
+                        quantity: 45.0,
+                        portion_id: None,
+                    }],
+                    None,
+                    Some(Box::pin(async move {
+                        let _ = locked_tx.send(());
+                        let _ = tokio::time::timeout(Duration::from_secs(5), release_rx).await;
+                    })),
+                    None,
+                    false,
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), locked_rx)
+            .await
+            .expect("winner should acquire name lock")
+            .unwrap();
+
+        let sync_2 = db.sync.clone();
+        let race_details_2 = race_details.clone();
+        let loser_task = tokio::spawn(async move {
+            sync_2
+                .log_mcp_meal(
+                    user_a.id,
+                    Uuid::new_v4(),
+                    "2026-04-18",
+                    "14:05",
+                    &[
+                        LogMealItemInput::New {
+                            name: "Acompañamiento Perdido".into(),
+                            details: make_details(50.0, None, vec![]),
+                            quantity: 20.0,
+                            portion_id: None,
+                        },
+                        LogMealItemInput::New {
+                            name: "  granola race ".into(),
+                            details: race_details_2,
+                            quantity: 60.0,
+                            portion_id: None,
+                        },
+                    ],
+                )
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let _ = release_tx.send(());
+
+        let winner_outcome = tokio::time::timeout(Duration::from_secs(5), winner_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let winner_food_id = winner_outcome.result.items[0].food_id;
+
+        let loser_err = tokio::time::timeout(Duration::from_secs(5), loser_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        match loser_err {
+            LogMealError::DuplicatePersonalFood {
+                item_index,
+                duplicate,
+            } => {
+                assert_eq!(item_index, 1);
+                assert_eq!(duplicate.candidates.len(), 1);
+                assert_eq!(duplicate.candidates[0].food_id, winner_food_id);
+                assert!(!duplicate.has_more_candidates);
+            }
+            other => panic!("expected DuplicatePersonalFood for loser, got {other:?}"),
+        }
+        // Verify loser's item 0 was completely rolled back.
+        let loser_item0_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM meal_templates WHERE user_id = $1 AND name = 'Acompañamiento Perdido')",
+        )
+        .bind(user_a.id)
+        .fetch_one(&db.sync.pool)
+        .await
+        .unwrap();
+        assert!(!loser_item0_exists);
+
+        // AC-5: Cross-user non-conflict + similar name without silent substitution + explicit candidate reuse via Existing.
+        let user_b_same_name = db
+            .sync
+            .log_mcp_meal(
+                user_b.id,
+                Uuid::new_v4(),
+                "2026-04-18",
+                "14:10",
+                &[LogMealItemInput::New {
+                    name: "Granola Race".into(),
+                    details: race_details.clone(),
+                    quantity: 45.0,
+                    portion_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        assert!(user_b_same_name.committed_fresh);
+
+        let similar_diff_brand = db
+            .sync
+            .log_mcp_meal(
+                user_a.id,
+                Uuid::new_v4(),
+                "2026-04-18",
+                "14:15",
+                &[LogMealItemInput::New {
+                    name: "Granola Race".into(),
+                    details: make_details(180.0, Some("Otra Marca"), vec![]),
+                    quantity: 45.0,
+                    portion_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        assert!(similar_diff_brand.committed_fresh);
+        assert_ne!(similar_diff_brand.result.items[0].food_id, winner_food_id);
+
+        let explicit_reuse = db
+            .sync
+            .log_mcp_meal(
+                user_a.id,
+                Uuid::new_v4(),
+                "2026-04-18",
+                "14:20",
+                &[LogMealItemInput::Existing {
+                    food_id: winner_food_id,
+                    quantity: 60.0,
+                    portion_id: None,
+                }],
+            )
+            .await
+            .unwrap();
+        assert!(explicit_reuse.committed_fresh);
+        assert!(!explicit_reuse.created_any_food);
+        assert_eq!(explicit_reuse.result.items[0].food_id, winner_food_id);
+
+        // AC-5: Existing-food delete racing FOR SHARE blocks until log_meal commits with consistent pre-delete template.
+        let (share_locked_tx, share_locked_rx) = oneshot::channel::<()>();
+        let (share_release_tx, share_release_rx) = oneshot::channel::<()>();
+        let sync_log = db.sync.clone();
+        let log_task = tokio::spawn(async move {
+            sync_log
+                .log_mcp_meal_with_hooks(
+                    user_a.id,
+                    Uuid::new_v4(),
+                    "2026-04-18",
+                    "15:00",
+                    &[LogMealItemInput::Existing {
+                        food_id: winner_food_id,
+                        quantity: 30.0,
+                        portion_id: None,
+                    }],
+                    None,
+                    None,
+                    Some(Box::pin(async move {
+                        let _ = share_locked_tx.send(());
+                        let _ =
+                            tokio::time::timeout(Duration::from_secs(5), share_release_rx).await;
+                    })),
+                    false,
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), share_locked_rx)
+            .await
+            .expect("log_meal should hold FOR SHARE lock")
+            .unwrap();
+
+        let sync_del = db.sync.clone();
+        let del_task = tokio::spawn(async move {
+            sync_del
+                .soft_delete_personal_food(user_a.id, winner_food_id)
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !del_task.is_finished(),
+            "soft_delete_personal_food must wait on FOR SHARE lock held by log_meal"
+        );
+        let _ = share_release_tx.send(());
+
+        let log_res = tokio::time::timeout(Duration::from_secs(5), log_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(log_res.committed_fresh);
+        let (_, already_deleted) = tokio::time::timeout(Duration::from_secs(5), del_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(!already_deleted);
 
         cleanup_identity_test_database(&db, &schema).await;
     }

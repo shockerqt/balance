@@ -29,10 +29,10 @@ use crate::{
         sync::{
             BatchDeleteFoodLogStatus, CanonicalUnit, Consumption, CreatePersonalFoodOutcome,
             DuplicatePersonalFood, EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails,
-            LogFoodTimeIntent, MAX_BATCH_DELETE_FOOD_LOG_IDS, MAX_BRAND_CHARS,
-            MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES, NutritionValues, PersonalFoodPatch,
-            PortionDefinition, WeightLogRow, WeightUpsertStatus, deserialize_optional_brand,
-            validate_optional_brand,
+            LogFoodTimeIntent, LogMealError, LogMealItemInput, MAX_BATCH_DELETE_FOOD_LOG_IDS,
+            MAX_BRAND_CHARS, MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES, MAX_LOG_MEAL_ITEMS,
+            NutritionValues, PersonalFoodPatch, PortionDefinition, WeightLogRow,
+            WeightUpsertStatus, deserialize_optional_brand, validate_optional_brand,
         },
     },
     modules::{
@@ -340,7 +340,9 @@ struct PortionInput {
 const MAX_PORTION_ID_CHARS: usize = 80;
 const MAX_CREATE_PORTIONS: usize = 50;
 const MAX_CREATE_SEALS: usize = 4;
+const MAX_CREATE_SEAL_CHARS: usize = 32;
 const MAX_CREATE_CATEGORY_CHARS: usize = 80;
+const MAX_LOG_MEAL_ARGUMENTS_BYTES: usize = 32_768;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -429,6 +431,56 @@ struct LogFoodArgs {
     portion_id: Option<String>,
     date: Option<String>,
     time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogMealNewFoodArgs {
+    name: String,
+    canonical_unit: CanonicalUnit,
+    calories: f64,
+    protein: f64,
+    carbs: f64,
+    fat: f64,
+    #[serde(default)]
+    fiber: Option<f64>,
+    sodium_mg: Option<f64>,
+    cholesterol_mg: Option<f64>,
+    #[serde(default)]
+    portions: Vec<PortionInput>,
+    #[serde(default)]
+    chilean_seals: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_brand")]
+    brand: Option<String>,
+    category: Option<String>,
+    typical_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
+enum LogMealItemArgs {
+    #[serde(rename_all = "camelCase")]
+    Existing {
+        food_id: Uuid,
+        quantity: f64,
+        portion_id: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    New {
+        food: LogMealNewFoodArgs,
+        quantity: f64,
+        portion_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LogMealArgs {
+    operation_id: Uuid,
+    date: String,
+    time: String,
+    items: Vec<LogMealItemArgs>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -684,9 +736,9 @@ async fn mcp_post_handler(
                     .0
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
-            let mut mutated_collection: Option<&'static str> = None;
-            let result = call_tool(&db, user.id, name, args, &mut mutated_collection).await;
-            if let Some(collection) = mutated_collection {
+            let mut mutated_collections: Vec<&'static str> = Vec::new();
+            let result = call_tool(&db, user.id, name, args, &mut mutated_collections).await;
+            for collection in mutated_collections {
                 sync_hub.notify(user.id, collection);
             }
             match result {
@@ -714,6 +766,7 @@ fn known_tool(tool: &str) -> Option<&'static str> {
         "update_food" => Some("update_food"),
         "delete_food" => Some("delete_food"),
         "log_food" => Some("log_food"),
+        "log_meal" => Some("log_meal"),
         "update_food_log" => Some("update_food_log"),
         "delete_food_log" => Some("delete_food_log"),
         "batch_delete_food_log" => Some("batch_delete_food_log"),
@@ -749,12 +802,47 @@ fn duplicate_personal_food_message(duplicate: &DuplicatePersonalFood) -> String 
     }
 }
 
+fn duplicate_personal_food_message_for_log_meal(
+    item_index: usize,
+    duplicate: &DuplicatePersonalFood,
+) -> String {
+    if duplicate.candidates.len() == 1 && !duplicate.has_more_candidates {
+        format!(
+            "El elemento {item_index} coincide con un alimento personal equivalente ya existente (foodId: {}). Confirma con el usuario y reutiliza ese foodId con kind \"existing\" en log_meal, o aclara si difieren las porciones.",
+            duplicate.candidates[0].food_id
+        )
+    } else if duplicate.has_more_candidates {
+        format!(
+            "El elemento {item_index} coincide con varios alimentos personales equivalentes ya existentes. Pide al usuario elegir qué foodId reutilizar con kind \"existing\" en log_meal o aclara la diferencia. Hay más candidatos; usa search_foods con source \"personal\" para inspeccionar más opciones."
+        )
+    } else {
+        format!(
+            "El elemento {item_index} coincide con varios alimentos personales equivalentes ya existentes. Pide al usuario elegir qué foodId reutilizar con kind \"existing\" en log_meal o aclara la diferencia."
+        )
+    }
+}
+
+fn log_meal_item_error(code: &'static str, item_index: usize, message: String) -> ToolCallOutcome {
+    let structured = json!({
+        "error": {
+            "code": code,
+            "message": message,
+            "itemIndex": item_index
+        }
+    });
+    ToolCallOutcome::StructuredError {
+        code,
+        summary: message,
+        structured,
+    }
+}
+
 async fn call_tool(
     db: &Database,
     user_id: i32,
     name: &str,
     args: Value,
-    mutated_collection: &mut Option<&'static str>,
+    mutated_collections: &mut Vec<&'static str>,
 ) -> Result<ToolCallOutcome, AppError> {
     match name {
         "search_foods" => {
@@ -896,7 +984,7 @@ async fn call_tool(
                 .await?
             {
                 CreatePersonalFoodOutcome::Created(food) => {
-                    *mutated_collection = Some("mealTemplates");
+                    mutated_collections.push("mealTemplates");
                     Ok(ToolCallOutcome::Success {
                         summary: format!("Se creó el alimento {}.", food.name),
                         structured: json!({
@@ -1027,7 +1115,7 @@ async fn call_tool(
                 .sync
                 .update_personal_food(user_id, args.food_id, &patch)
                 .await?;
-            *mutated_collection = Some("mealTemplates");
+            mutated_collections.push("mealTemplates");
             Ok(ToolCallOutcome::Success {
                 summary: format!("Se actualizó el alimento {}.", food.name),
                 structured: json!({
@@ -1043,7 +1131,7 @@ async fn call_tool(
                 .soft_delete_personal_food(user_id, args.food_id)
                 .await?;
             if !already_deleted {
-                *mutated_collection = Some("mealTemplates");
+                mutated_collections.push("mealTemplates");
             }
             Ok(ToolCallOutcome::Success {
                 summary: if already_deleted {
@@ -1083,7 +1171,7 @@ async fn call_tool(
                 )
                 .await?;
             if created {
-                *mutated_collection = Some("mealLogs");
+                mutated_collections.push("mealLogs");
             }
             Ok(ToolCallOutcome::Success {
                 summary: if created {
@@ -1097,6 +1185,293 @@ async fn call_tool(
                 }),
             })
         }
+        "log_meal" => {
+            let args_bytes = serde_json::to_vec(&args)
+                .map_err(|_| AppError::BadRequest("Invalid tool arguments".into()))?
+                .len();
+            if args_bytes > MAX_LOG_MEAL_ARGUMENTS_BYTES {
+                return Err(AppError::BadRequest(format!(
+                    "arguments must not exceed {MAX_LOG_MEAL_ARGUMENTS_BYTES} bytes"
+                )));
+            }
+            let args: LogMealArgs = parse_args(args)?;
+            validate_food_date(&args.date)?;
+            validate_time("time", &args.time)?;
+            if !(1..=MAX_LOG_MEAL_ITEMS).contains(&args.items.len()) {
+                return Err(AppError::BadRequest(format!(
+                    "items must contain between 1 and {MAX_LOG_MEAL_ITEMS} items"
+                )));
+            }
+
+            let mut items = Vec::with_capacity(args.items.len());
+            for (item_index, item) in args.items.into_iter().enumerate() {
+                match item {
+                    LogMealItemArgs::Existing {
+                        food_id,
+                        quantity,
+                        portion_id,
+                    } => {
+                        if let Err(AppError::BadRequest(message)) = validate_quantity(quantity) {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                message,
+                            ));
+                        }
+                        if portion_id.as_ref().is_some_and(|id| {
+                            id.trim().is_empty() || id.chars().count() > MAX_PORTION_ID_CHARS
+                        }) {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "portionId must contain between 1 and {MAX_PORTION_ID_CHARS} characters and cannot be blank"
+                                ),
+                            ));
+                        }
+                        items.push(LogMealItemInput::Existing {
+                            food_id,
+                            quantity,
+                            portion_id,
+                        });
+                    }
+                    LogMealItemArgs::New {
+                        food,
+                        quantity,
+                        portion_id,
+                    } => {
+                        if let Err(AppError::BadRequest(message)) = validate_quantity(quantity) {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                message,
+                            ));
+                        }
+                        if portion_id.as_ref().is_some_and(|id| {
+                            id.trim().is_empty() || id.chars().count() > MAX_PORTION_ID_CHARS
+                        }) {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "portionId must contain between 1 and {MAX_PORTION_ID_CHARS} characters and cannot be blank"
+                                ),
+                            ));
+                        }
+                        let trimmed_name = food.name.trim();
+                        if trimmed_name.is_empty() || trimmed_name.chars().count() > 160 {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                "name must contain between 1 and 160 characters".into(),
+                            ));
+                        }
+                        if let Err(AppError::BadRequest(message)) =
+                            validate_optional_brand(food.brand.as_deref())
+                        {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                message,
+                            ));
+                        }
+                        if food.category.as_ref().is_some_and(|category| {
+                            category.chars().count() > MAX_CREATE_CATEGORY_CHARS
+                        }) {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "category must not exceed {MAX_CREATE_CATEGORY_CHARS} characters"
+                                ),
+                            ));
+                        }
+                        if food.portions.len() > MAX_CREATE_PORTIONS {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "portions must contain at most {MAX_CREATE_PORTIONS} items"
+                                ),
+                            ));
+                        }
+                        if food.chilean_seals.len() > MAX_CREATE_SEALS {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "chileanSeals must contain at most {MAX_CREATE_SEALS} items"
+                                ),
+                            ));
+                        }
+                        if food
+                            .chilean_seals
+                            .iter()
+                            .any(|seal| seal.chars().count() > MAX_CREATE_SEAL_CHARS)
+                        {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                format!(
+                                    "each chileanSeals entry must not exceed {MAX_CREATE_SEAL_CHARS} characters"
+                                ),
+                            ));
+                        }
+                        if let Some(time) = &food.typical_time
+                            && let Err(AppError::BadRequest(message)) =
+                                validate_time("typicalTime", time)
+                        {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                message,
+                            ));
+                        }
+                        let mut details = FoodDetails {
+                            schema_version: FOOD_SCHEMA_VERSION,
+                            canonical_unit: food.canonical_unit,
+                            nutrition_per100: NutritionValues {
+                                calories: food.calories,
+                                protein: food.protein,
+                                carbs: food.carbs,
+                                fat: food.fat,
+                                fiber: food.fiber,
+                                sodium_mg: food.sodium_mg,
+                                cholesterol_mg: food.cholesterol_mg,
+                                extended_nutrition: Default::default(),
+                            },
+                            portions: food
+                                .portions
+                                .into_iter()
+                                .map(|portion| PortionDefinition {
+                                    id: portion.id,
+                                    name: portion.name,
+                                    portion_quantity: portion.portion_quantity,
+                                    canonical_quantity: portion.canonical_quantity,
+                                })
+                                .collect(),
+                            chilean_seals: food.chilean_seals,
+                            brand: food.brand,
+                            category: food.category,
+                            typical_time: food.typical_time,
+                        };
+                        details.normalize();
+                        if let Err(AppError::BadRequest(message)) = details.validate() {
+                            return Ok(log_meal_item_error(
+                                "invalid_arguments",
+                                item_index,
+                                message,
+                            ));
+                        }
+                        items.push(LogMealItemInput::New {
+                            name: trimmed_name.to_owned(),
+                            details,
+                            quantity,
+                            portion_id,
+                        });
+                    }
+                }
+            }
+
+            match db
+                .sync
+                .log_mcp_meal(user_id, args.operation_id, &args.date, &args.time, &items)
+                .await
+            {
+                Ok(outcome) => {
+                    if outcome.committed_fresh {
+                        mutated_collections.push("mealLogs");
+                        if outcome.created_any_food {
+                            mutated_collections.push("mealTemplates");
+                        }
+                    }
+                    let count = outcome.result.items.len();
+                    let summary = if count == 1 {
+                        "Se registró la comida con 1 elemento.".to_string()
+                    } else {
+                        format!("Se registró la comida con {count} elementos.")
+                    };
+                    Ok(ToolCallOutcome::Success {
+                        summary,
+                        structured: json!({
+                            "status": "committed",
+                            "operationId": outcome.result.operation_id,
+                            "consumedAt": outcome.result.consumed_at,
+                            "items": outcome.result.items,
+                        }),
+                    })
+                }
+                Err(LogMealError::BadRequest {
+                    item_index: Some(item_index),
+                    message,
+                }) => Ok(log_meal_item_error(
+                    "invalid_arguments",
+                    item_index,
+                    message,
+                )),
+                Err(LogMealError::BadRequest {
+                    item_index: None,
+                    message,
+                }) => Err(AppError::BadRequest(message)),
+                Err(LogMealError::NotFound {
+                    item_index,
+                    message,
+                }) => Ok(log_meal_item_error("not_found", item_index, message)),
+                Err(LogMealError::Conflict {
+                    item_index: Some(item_index),
+                    message,
+                }) => Ok(log_meal_item_error("conflict", item_index, message)),
+                Err(LogMealError::Conflict {
+                    item_index: None,
+                    message,
+                }) => Err(AppError::Conflict(message)),
+                Err(LogMealError::DuplicatePersonalFood {
+                    item_index,
+                    duplicate,
+                }) => {
+                    let message =
+                        duplicate_personal_food_message_for_log_meal(item_index, &duplicate);
+                    let structured = json!({
+                        "error": {
+                            "code": "conflict",
+                            "reason": "duplicatePersonalFood",
+                            "message": message,
+                            "itemIndex": item_index,
+                            "candidates": duplicate.candidates,
+                            "hasMoreCandidates": duplicate.has_more_candidates
+                        }
+                    });
+                    Ok(ToolCallOutcome::StructuredError {
+                        code: "conflict",
+                        summary: message,
+                        structured,
+                    })
+                }
+                Err(LogMealError::IntraBatchDuplicatePersonalFood {
+                    item_index,
+                    earlier_item_index,
+                }) => {
+                    let message = format!(
+                        "El elemento {item_index} define el mismo alimento personal nuevo que el elemento {earlier_item_index} en esta misma solicitud. Combina o desduplica las definiciones nuevas antes de reintentar."
+                    );
+                    let structured = json!({
+                        "error": {
+                            "code": "conflict",
+                            "reason": "intraBatchDuplicatePersonalFood",
+                            "message": message,
+                            "itemIndex": item_index
+                        }
+                    });
+                    Ok(ToolCallOutcome::StructuredError {
+                        code: "conflict",
+                        summary: message,
+                        structured,
+                    })
+                }
+                Err(LogMealError::Internal(message)) => Err(AppError::Internal(message)),
+                Err(LogMealError::Db(error)) => Err(AppError::Db(error)),
+            }
+        }
         "update_food_log" => {
             let args: UpdateFoodLogArgs = parse_args(args)?;
             if let Some(quantity) = args.quantity {
@@ -1107,7 +1482,7 @@ async fn call_tool(
                 .sync
                 .update_consumption(user_id, args.log_id, args.quantity, consumed_at)
                 .await?;
-            *mutated_collection = Some("mealLogs");
+            mutated_collections.push("mealLogs");
             Ok(ToolCallOutcome::Success {
                 summary: format!("Se actualizó el consumo de {}.", consumption.name),
                 structured: json!({ "status": "updated", "log": consumption_output(&consumption)? }),
@@ -1119,7 +1494,7 @@ async fn call_tool(
                 .sync
                 .soft_delete_consumption(user_id, args.log_id)
                 .await?;
-            *mutated_collection = Some("mealLogs");
+            mutated_collections.push("mealLogs");
             Ok(ToolCallOutcome::Success {
                 summary: format!("Se eliminó el consumo de {}.", consumption.name),
                 structured: json!({
@@ -1149,7 +1524,7 @@ async fn call_tool(
                 .batch_soft_delete_consumptions(user_id, &args.log_ids)
                 .await?;
             if batch.deleted_count > 0 {
-                *mutated_collection = Some("mealLogs");
+                mutated_collections.push("mealLogs");
             }
             let summary = match (batch.deleted_count, batch.already_deleted_count) {
                 (1, 0) => "Se eliminó 1 consumo.".to_string(),
@@ -1245,7 +1620,7 @@ async fn call_tool(
             let date = resolve_weight_date(db, args.date).await?;
             let grams = weight_kg_to_grams(args.weight_kg)?;
             let (row, status) = db.sync.set_weight(user_id, date, grams).await?;
-            *mutated_collection = Some("weightLogs");
+            mutated_collections.push("weightLogs");
             let status = match status {
                 WeightUpsertStatus::Created => "created",
                 WeightUpsertStatus::Updated => "updated",
@@ -1265,7 +1640,7 @@ async fn call_tool(
             let args: DeleteWeightLogArgs = parse_args(args)?;
             let date = resolve_weight_date(db, args.date).await?;
             let (row, already_deleted) = db.sync.soft_delete_weight(user_id, date).await?;
-            *mutated_collection = Some("weightLogs");
+            mutated_collections.push("weightLogs");
             Ok(ToolCallOutcome::Success {
                 summary: if already_deleted {
                     format!("El peso de {date} ya estaba eliminado.")
@@ -2082,6 +2457,16 @@ pub(crate) fn tool_definitions() -> Value {
             "annotations": write_annotations
         },
         {
+            "name": "log_meal",
+            "title": "Registrar comida atómica",
+            "description": "Registra atómicamente una comida completa con entre 1 y 30 elementos en una sola transacción de PostgreSQL (máximo 32.768 bytes UTF-8 compactos en arguments), compartiendo date y time explícitos en America/Santiago (se rechazan horas locales inexistentes por cambio de horario DST). Cada elemento es kind \"existing\" (con un foodId opaco elegido inequívocamente, quantity y portionId opcional) o kind \"new\" (con food explícito confirmado con el usuario, quantity y portionId opcional). Si cualquier elemento falla o duplica un alimento personal existente, toda la transacción se revierte sin escrituras parciales. Ante conflict con reason \"duplicatePersonalFood\" y candidates, confirma con el usuario y reutiliza el foodId elegido con kind \"existing\". Genera un operationId UUID nuevo en tiempo de ejecución para cada comida nueva y conserva exactamente el mismo operationId y los mismos argumentos (incluido el orden de items) al reintentar tras una respuesta perdida; reutilizar el operationId con argumentos distintos devuelve conflict.",
+            "inputSchema": log_meal_input_schema(),
+            "outputSchema": log_meal_output_schema(),
+            "securitySchemes": auth,
+            "_meta": { "securitySchemes": auth },
+            "annotations": write_annotations
+        },
+        {
             "name": "update_food_log",
             "title": "Corregir consumo",
             "description": "Corrige la cantidad o fecha y hora de un consumo identificado por logId. La cantidad usa la unidad de la entrada histórica y su conversión guardada. Envía quantity, el par date y time, o ambos cambios. No cambia su alimento ni su snapshot nutricional.",
@@ -2461,6 +2846,146 @@ fn duplicate_food_candidate_schema() -> Value {
         },
         "required": ["foodId", "name", "canonicalUnit", "nutritionPer100", "portions"],
         "additionalProperties": false
+    })
+}
+
+fn log_meal_new_food_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+            "canonicalUnit": canonical_unit_schema(),
+            "calories": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "protein": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "carbs": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "fat": described_schema(non_negative_number_schema(), PER_100_DESCRIPTION),
+            "fiber": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "sodiumMg": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "cholesterolMg": nullable_schema(described_schema(non_negative_number_schema(), PER_100_DESCRIPTION)),
+            "portions": { "type": "array", "items": portion_schema(), "maxItems": MAX_CREATE_PORTIONS, "description": "Los IDs de las porciones deben ser únicos dentro del alimento." },
+            "chileanSeals": { "type": "array", "items": { "type": "string", "maxLength": MAX_CREATE_SEAL_CHARS }, "maxItems": MAX_CREATE_SEALS },
+            "brand": { "type": ["string", "null"], "maxLength": MAX_BRAND_CHARS },
+            "category": { "type": ["string", "null"], "maxLength": MAX_CREATE_CATEGORY_CHARS },
+            "typicalTime": nullable_schema(time_schema())
+        },
+        "required": ["name", "canonicalUnit", "calories", "protein", "carbs", "fat"],
+        "additionalProperties": false
+    })
+}
+
+fn log_meal_input_schema() -> Value {
+    let portion_id_schema = nullable_schema(json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_PORTION_ID_CHARS,
+        "pattern": PORTION_ID_NONBLANK_PATTERN,
+        "description": "ID opaco y sensible a mayúsculas de details.portions[].id del alimento."
+    }));
+    let existing_item_schema = json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "const": "existing" },
+            "foodId": uuid_schema(),
+            "quantity": described_schema(positive_number_schema(), LOG_QUANTITY_DESCRIPTION),
+            "portionId": portion_id_schema
+        },
+        "required": ["kind", "foodId", "quantity"],
+        "additionalProperties": false
+    });
+    let new_item_schema = json!({
+        "type": "object",
+        "properties": {
+            "kind": { "type": "string", "const": "new" },
+            "food": log_meal_new_food_schema(),
+            "quantity": described_schema(positive_number_schema(), LOG_QUANTITY_DESCRIPTION),
+            "portionId": portion_id_schema
+        },
+        "required": ["kind", "food", "quantity"],
+        "additionalProperties": false
+    });
+    json!({
+        "type": "object",
+        "properties": {
+            "operationId": uuid_schema(),
+            "date": food_date_schema(),
+            "time": time_schema(),
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_LOG_MEAL_ITEMS,
+                "items": {
+                    "oneOf": [existing_item_schema, new_item_schema]
+                }
+            }
+        },
+        "required": ["operationId", "date", "time", "items"],
+        "additionalProperties": false
+    })
+}
+
+fn log_meal_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "const": "committed" },
+                    "operationId": uuid_schema(),
+                    "consumedAt": { "type": "integer" },
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_LOG_MEAL_ITEMS,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "itemIndex": { "type": "integer", "minimum": 0 },
+                                "foodId": uuid_schema(),
+                                "logId": uuid_schema(),
+                                "createdFood": { "type": "boolean" }
+                            },
+                            "required": ["itemIndex", "foodId", "logId", "createdFood"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["status", "operationId", "consumedAt", "items"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "code": { "type": "string", "const": "conflict" },
+                            "reason": { "type": "string", "const": "duplicatePersonalFood" },
+                            "message": { "type": "string", "minLength": 1 },
+                            "itemIndex": { "type": "integer", "minimum": 0 },
+                            "candidates": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES,
+                                "items": duplicate_food_candidate_schema()
+                            },
+                            "hasMoreCandidates": { "type": "boolean" }
+                        },
+                        "required": [
+                            "code",
+                            "reason",
+                            "message",
+                            "itemIndex",
+                            "candidates",
+                            "hasMoreCandidates"
+                        ],
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["error"],
+                "additionalProperties": false
+            }
+        ]
     })
 }
 
@@ -6181,6 +6706,7 @@ mod tests {
                 "update_food",
                 "delete_food",
                 "log_food",
+                "log_meal",
                 "update_food_log",
                 "delete_food_log",
                 "batch_delete_food_log",
@@ -6189,7 +6715,7 @@ mod tests {
                 "delete_weight_log"
             ]
         );
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 13);
     }
 
     #[test]
@@ -6264,6 +6790,7 @@ mod tests {
             "update_food",
             "delete_food",
             "log_food",
+            "log_meal",
             "update_food_log",
             "delete_food_log",
             "batch_delete_food_log",
@@ -6321,6 +6848,9 @@ mod tests {
         assert!(get_desc("create_food").contains("solo después de confirmar"));
         assert!(get_desc("log_food").contains("inequívocamente"));
         assert!(get_desc("log_food").contains("ambos deben enviarse juntos"));
+        assert!(get_desc("log_meal").contains("1 y 30 elementos"));
+        assert!(get_desc("log_meal").contains("32.768 bytes"));
+        assert!(get_desc("log_meal").contains("America/Santiago"));
         assert!(
             get_desc("update_food_log")
                 .contains("No cambia su alimento ni su snapshot nutricional")
@@ -7152,7 +7682,7 @@ mod tests {
                     "fat": 4.0,
                     "brand": format!("  {unique_brand}  ")
                 }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -7170,7 +7700,7 @@ mod tests {
                     "source": "personal",
                     "limit": 10
                 }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -7195,7 +7725,7 @@ mod tests {
                     "carbs": 60.0,
                     "fat": 7.0
                 }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -7215,7 +7745,7 @@ mod tests {
                     "date": "2026-08-10",
                     "time": "09:00"
                 }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -7235,7 +7765,7 @@ mod tests {
                     "date": "2026-08-10",
                     "time": "09:05"
                 }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -7248,7 +7778,7 @@ mod tests {
                 1,
                 "get_daily_log",
                 json!({ "date": "2026-08-10" }),
-                &mut None,
+                &mut Vec::new(),
             )
             .await
             .unwrap(),
@@ -8925,6 +9455,536 @@ mod tests {
                 .expect("row must be pulled");
             assert_eq!(row.deleted_at, Some(row.updated_at));
         }
+
+        cleanup_identity_test_database(&fixture.db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn log_meal_schema_and_pre_db_validation() {
+        use crate::connectors::{
+            imports::ImportDatasource, sync::SyncDatasource, user::UserDatasource,
+        };
+        let tools = tool_definitions();
+        let tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "log_meal")
+            .expect("log_meal tool must be registered");
+
+        assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+        assert_eq!(tool["inputSchema"]["properties"]["items"]["minItems"], 1);
+        assert_eq!(
+            tool["inputSchema"]["properties"]["items"]["maxItems"],
+            MAX_LOG_MEAL_ITEMS
+        );
+        assert_eq!(tool["annotations"]["readOnlyHint"], false);
+        assert_eq!(tool["annotations"]["destructiveHint"], false);
+        assert_eq!(tool["annotations"]["idempotentHint"], true);
+
+        let input_validator = validator(&tool["inputSchema"], true);
+        let output_validator = validator(&tool["outputSchema"], true);
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://synthetic@127.0.0.1:1/unused")
+            .unwrap();
+        let db = Arc::new(Database {
+            user: UserDatasource { pool: pool.clone() },
+            sync: SyncDatasource::new(pool.clone()),
+            imports: ImportDatasource::new(pool),
+        });
+        let hub = SyncHub::default();
+        let op = Uuid::new_v4();
+        let food_id = Uuid::new_v4();
+
+        let valid_new_food = json!({
+            "name": "Pan Test",
+            "canonicalUnit": "g",
+            "calories": 250.0,
+            "protein": 9.0,
+            "carbs": 48.0,
+            "fat": 3.0
+        });
+
+        // Schema validates 1-item and 30-item inputs, and rejects 0 and 31 items.
+        assert_valid(
+            &input_validator,
+            &json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 100.0 }]
+            }),
+        );
+        let thirty_valid: Vec<Value> = (0..MAX_LOG_MEAL_ITEMS)
+            .map(|_| json!({ "kind": "existing", "foodId": food_id, "quantity": 10.0 }))
+            .collect();
+        assert_valid(
+            &input_validator,
+            &json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": thirty_valid
+            }),
+        );
+        assert_valid(
+            &output_validator,
+            &json!({
+                "status": "committed",
+                "operationId": op,
+                "consumedAt": 1_760_000_000_000_i64,
+                "items": [{
+                    "itemIndex": 0,
+                    "foodId": food_id,
+                    "logId": Uuid::new_v4(),
+                    "createdFood": false
+                }]
+            }),
+        );
+        assert_valid(
+            &output_validator,
+            &json!({
+                "error": {
+                    "code": "conflict",
+                    "reason": "duplicatePersonalFood",
+                    "message": "Duplicate food",
+                    "itemIndex": 0,
+                    "candidates": [{
+                        "foodId": food_id,
+                        "name": "Pan Test",
+                        "canonicalUnit": "g",
+                        "nutritionPer100": {
+                            "calories": 250.0,
+                            "protein": 9.0,
+                            "carbs": 48.0,
+                            "fat": 3.0
+                        },
+                        "portions": []
+                    }],
+                    "hasMoreCandidates": false
+                }
+            }),
+        );
+
+        // 0 items
+        let err_empty = dispatch(
+            &db,
+            &hub,
+            1,
+            "log_meal",
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": []
+            }),
+        )
+        .await;
+        assert_tool_error(&err_empty, "invalid_arguments");
+
+        // 31 items
+        let thirty_one: Vec<Value> = (0..=MAX_LOG_MEAL_ITEMS)
+            .map(|_| json!({ "kind": "existing", "foodId": food_id, "quantity": 10.0 }))
+            .collect();
+        let err_31 = dispatch(
+            &db,
+            &hub,
+            1,
+            "log_meal",
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": thirty_one
+            }),
+        )
+        .await;
+        assert_tool_error(&err_31, "invalid_arguments");
+
+        // Over 32,768 compact UTF-8 bytes without echoing argument values
+        let secret_marker = "SECRET_OVERSIZE_PAYLOAD_MARKER_BAL082";
+        let huge_name = format!("{secret_marker}{}", "a".repeat(33_000));
+        let err_oversize = dispatch(
+            &db,
+            &hub,
+            1,
+            "log_meal",
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": [{
+                    "kind": "new",
+                    "food": {
+                        "name": huge_name,
+                        "canonicalUnit": "g",
+                        "calories": 100.0,
+                        "protein": 5.0,
+                        "carbs": 10.0,
+                        "fat": 2.0
+                    },
+                    "quantity": 100.0
+                }]
+            }),
+        )
+        .await;
+        assert_tool_error(&err_oversize, "invalid_arguments");
+        assert!(
+            !err_oversize["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(secret_marker)
+        );
+
+        // Unknown / mixed-variant / malformed UUID / invalid date / invalid time / client snapshots
+        let invalid_cases = vec![
+            // Unknown top-level field
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "extra": 1,
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 10.0 }]
+            }),
+            // Client-supplied snapshot
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "nutritionSnapshot": {},
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 10.0 }]
+            }),
+            // Mixed variant: existing with food
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": [{ "kind": "existing", "foodId": food_id, "food": valid_new_food, "quantity": 10.0 }]
+            }),
+            // Mixed variant: new with foodId
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": [{ "kind": "new", "foodId": food_id, "food": valid_new_food, "quantity": 10.0 }]
+            }),
+            // Malformed UUID
+            json!({
+                "operationId": "not-a-uuid",
+                "date": "2026-04-16",
+                "time": "08:00",
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 10.0 }]
+            }),
+            // Invalid date
+            json!({
+                "operationId": op,
+                "date": "2026-02-30",
+                "time": "08:00",
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 10.0 }]
+            }),
+            // Invalid time
+            json!({
+                "operationId": op,
+                "date": "2026-04-16",
+                "time": "25:00",
+                "items": [{ "kind": "existing", "foodId": food_id, "quantity": 10.0 }]
+            }),
+        ];
+        for case in invalid_cases {
+            let res = dispatch(&db, &hub, 1, "log_meal", case).await;
+            assert_tool_error(&res, "invalid_arguments");
+        }
+
+        // Item-indexed validation failures: seal > 32 chars, > 4 seals, negative calories, blank portionId
+        let item_indexed_cases = vec![
+            (
+                0,
+                json!({
+                    "operationId": op,
+                    "date": "2026-04-16",
+                    "time": "08:00",
+                    "items": [{
+                        "kind": "new",
+                        "food": {
+                            "name": "Galleta",
+                            "canonicalUnit": "g",
+                            "calories": 400.0,
+                            "protein": 5.0,
+                            "carbs": 60.0,
+                            "fat": 15.0,
+                            "chileanSeals": ["x".repeat(MAX_CREATE_SEAL_CHARS + 1)]
+                        },
+                        "quantity": 30.0
+                    }]
+                }),
+            ),
+            (
+                1,
+                json!({
+                    "operationId": op,
+                    "date": "2026-04-16",
+                    "time": "08:00",
+                    "items": [
+                        { "kind": "existing", "foodId": food_id, "quantity": 50.0 },
+                        {
+                            "kind": "new",
+                            "food": {
+                                "name": "Negativo",
+                                "canonicalUnit": "g",
+                                "calories": -1.0,
+                                "protein": 5.0,
+                                "carbs": 10.0,
+                                "fat": 2.0
+                            },
+                            "quantity": 30.0
+                        }
+                    ]
+                }),
+            ),
+            (
+                1,
+                json!({
+                    "operationId": op,
+                    "date": "2026-04-16",
+                    "time": "08:00",
+                    "items": [
+                        { "kind": "existing", "foodId": food_id, "quantity": 50.0 },
+                        { "kind": "existing", "foodId": food_id, "quantity": 50.0, "portionId": "   " }
+                    ]
+                }),
+            ),
+        ];
+        for (expected_idx, case) in item_indexed_cases {
+            let res = dispatch(&db, &hub, 1, "log_meal", case).await;
+            assert_eq!(res["isError"], true);
+            assert_eq!(
+                res["structuredContent"]["error"]["code"],
+                "invalid_arguments"
+            );
+            assert_eq!(res["structuredContent"]["error"]["itemIndex"], expected_idx);
+            let text_block = res["content"][0]["text"].as_str().unwrap();
+            let embedded: Value = serde_json::from_str(embedded_json(text_block)).unwrap();
+            assert_eq!(embedded, res["structuredContent"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn log_meal_contract_and_notifications_postgres() {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let user_a = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal082-mcp-user-a",
+                &NewUser {
+                    email: "bal082-mcp-a@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let fixture = ContractFixture::new(db, user_a.id);
+        let mut events = fixture.hub.subscribe();
+
+        let existing_food_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                existing_food_id,
+                "Huevo Cocido",
+                &FoodDetails {
+                    schema_version: FOOD_SCHEMA_VERSION,
+                    canonical_unit: CanonicalUnit::G,
+                    nutrition_per100: NutritionValues {
+                        calories: 155.0,
+                        protein: 13.0,
+                        carbs: 1.1,
+                        fat: 11.0,
+                        fiber: None,
+                        sodium_mg: Some(124.0),
+                        cholesterol_mg: Some(373.0),
+                        extended_nutrition: Default::default(),
+                    },
+                    portions: vec![PortionDefinition {
+                        id: "unidad".into(),
+                        name: "Unidad".into(),
+                        portion_quantity: 1.0,
+                        canonical_quantity: 50.0,
+                    }],
+                    chilean_seals: vec![],
+                    brand: None,
+                    category: None,
+                    typical_time: None,
+                },
+            )
+            .await;
+        while events.try_recv().is_ok() {}
+
+        // Nonexistent local DST time in America/Santiago (2025-09-07 00:30 spring-forward gap) is rejected with 0 notifications.
+        let dst_err = fixture
+            .call(
+                "log_meal",
+                json!({
+                    "operationId": Uuid::new_v4(),
+                    "date": "2025-09-07",
+                    "time": "00:30",
+                    "items": [{ "kind": "existing", "foodId": existing_food_id, "quantity": 1.0, "portionId": "unidad" }]
+                }),
+            )
+            .await;
+        assert_tool_error(&dst_err, "invalid_arguments");
+        assert!(events.try_recv().is_err());
+
+        // Mixed fresh commit emits 1 mealLogs + 1 mealTemplates notification strictly after commit visibility.
+        let op_mixed = Uuid::new_v4();
+        let mixed_args = json!({
+            "operationId": op_mixed,
+            "date": "2026-04-16",
+            "time": "08:15",
+            "items": [
+                {
+                    "kind": "new",
+                    "food": {
+                        "name": "Tostada Integral",
+                        "canonicalUnit": "g",
+                        "calories": 250.0,
+                        "protein": 9.0,
+                        "carbs": 47.0,
+                        "fat": 3.0,
+                        "brand": "Panadería Local",
+                        "chileanSeals": ["alto en sodio"]
+                    },
+                    "quantity": 60.0
+                },
+                {
+                    "kind": "existing",
+                    "foodId": existing_food_id,
+                    "quantity": 2.0,
+                    "portionId": "unidad"
+                }
+            ]
+        });
+        let mixed_raw = fixture.call("log_meal", mixed_args.clone()).await;
+        assert_eq!(mixed_raw["isError"], false);
+        let text_block = mixed_raw["content"][0]["text"].as_str().unwrap();
+        let embedded: Value = serde_json::from_str(embedded_json(text_block)).unwrap();
+        assert_eq!(
+            embedded, mixed_raw["structuredContent"],
+            "BAL-049 text/structuredContent parity must hold"
+        );
+        let mixed = &mixed_raw["structuredContent"];
+        assert_eq!(mixed["status"], "committed");
+        assert_eq!(mixed["operationId"], op_mixed.to_string());
+        assert_eq!(mixed["items"].as_array().unwrap().len(), 2);
+        assert_eq!(mixed["items"][0]["createdFood"], true);
+        assert_eq!(mixed["items"][1]["createdFood"], false);
+
+        // Verify both collections were notified exactly once.
+        let ev1 = events.try_recv().expect("expected first SyncHub event");
+        let ev2 = events.try_recv().expect("expected second SyncHub event");
+        assert!(events.try_recv().is_err(), "expected exactly 2 events");
+        let mut collections = vec![ev1.collection, ev2.collection];
+        collections.sort_unstable();
+        assert_eq!(collections, vec!["mealLogs", "mealTemplates"]);
+
+        // Replay emits 0 notifications and returns identical structuredContent.
+        let replay_raw = fixture.call("log_meal", mixed_args).await;
+        assert_eq!(replay_raw["isError"], false);
+        assert_eq!(replay_raw["structuredContent"], *mixed);
+        assert!(
+            events.try_recv().is_err(),
+            "replay must emit zero SyncHub notifications"
+        );
+
+        // Duplicate personal food returns structured error with itemIndex and candidates, and 0 notifications.
+        let dup_raw = fixture
+            .call(
+                "log_meal",
+                json!({
+                    "operationId": Uuid::new_v4(),
+                    "date": "2026-04-16",
+                    "time": "12:00",
+                    "items": [
+                        { "kind": "existing", "foodId": existing_food_id, "quantity": 1.0, "portionId": "unidad" },
+                        {
+                            "kind": "new",
+                            "food": {
+                                "name": "tostada integral",
+                                "canonicalUnit": "g",
+                                "calories": 250.0,
+                                "protein": 9.0,
+                                "carbs": 47.0,
+                                "fat": 3.0,
+                                "brand": "Panadería Local"
+                            },
+                            "quantity": 30.0
+                        }
+                    ]
+                }),
+            )
+            .await;
+        assert_eq!(dup_raw["isError"], true);
+        assert_eq!(dup_raw["structuredContent"]["error"]["code"], "conflict");
+        assert_eq!(
+            dup_raw["structuredContent"]["error"]["reason"],
+            "duplicatePersonalFood"
+        );
+        let dup_text = dup_raw["content"][0]["text"].as_str().unwrap();
+        let dup_embedded: Value = serde_json::from_str(embedded_json(dup_text)).unwrap();
+        assert_eq!(dup_embedded, dup_raw["structuredContent"]);
+        assert_eq!(dup_raw["structuredContent"]["error"]["itemIndex"], 1);
+        assert_eq!(
+            dup_raw["structuredContent"]["error"]["candidates"][0]["foodId"],
+            mixed["items"][0]["foodId"]
+        );
+        assert_eq!(
+            dup_raw["structuredContent"]["error"]["hasMoreCandidates"],
+            false
+        );
+        assert!(events.try_recv().is_err());
+
+        // Existing-only 30-item batch succeeds, emits only 1 mealLogs notification (no mealTemplates).
+        let thirty_items: Vec<Value> = (0..MAX_LOG_MEAL_ITEMS)
+            .map(|_| {
+                json!({
+                    "kind": "existing",
+                    "foodId": existing_food_id,
+                    "quantity": 10.0
+                })
+            })
+            .collect();
+        let batch_30 = fixture
+            .success(
+                "log_meal",
+                json!({
+                    "operationId": Uuid::new_v4(),
+                    "date": "2026-04-17",
+                    "time": "13:00",
+                    "items": thirty_items
+                }),
+            )
+            .await;
+        assert_eq!(batch_30["status"], "committed");
+        assert_eq!(
+            batch_30["items"].as_array().unwrap().len(),
+            MAX_LOG_MEAL_ITEMS
+        );
+        let ev = events.try_recv().expect("expected mealLogs event");
+        assert_eq!(ev.collection, "mealLogs");
+        assert!(
+            events.try_recv().is_err(),
+            "existing-only batch must not emit mealTemplates"
+        );
 
         cleanup_identity_test_database(&fixture.db, &schema).await;
     }

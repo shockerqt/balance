@@ -2,8 +2,8 @@
 # Balance database schema snapshot
 
 - PostgreSQL major: 17
-- Migration head: `20261122000000 mcp mutation receipts checksum=396a23d8e368d4980305d9972a66c243d26c9a80db200753b6d5a645d17711012fa0e37c7a5343320ce61d910b60855d`
-- Schema fingerprint: `sha256:b5968f5a6e27fce7ce4acd6c985ed756870c09cdb4fbe00dc5d3dfb631990945`
+- Migration head: `20261122010000 mcp mutation receipts log meal checksum=1e1e04d23bf0321b1f3eb227dc1b4b7a23631f3aa85c5f9f9266e032e555e1fc930a6c3727861cb3701c8175ca3befb8`
+- Schema fingerprint: `sha256:68aa26651598ba748a23518476a344b0b4ea43ad6554c566bf84c3755a7b3e34`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
@@ -89,7 +89,7 @@ CONSTRAINT|food_import_sessions|food_import_sessions_status_check|c|CHECK (statu
 CONSTRAINT|food_import_sessions|food_import_sessions_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_pkey|p|PRIMARY KEY (user_id, tool_name, operation_id)
 CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_schema_version_check|c|CHECK (schema_version >= 1)
-CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_tool_name_check|c|CHECK (tool_name = ANY (ARRAY['create_food'::text, 'log_food'::text]))
+CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_tool_name_check|c|CHECK (tool_name = ANY (ARRAY['create_food'::text, 'log_food'::text, 'log_meal'::text]))
 CONSTRAINT|mcp_mutation_receipts|mcp_mutation_receipts_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 CONSTRAINT|meal_logs|meal_logs_canonical_quantity_positive|c|CHECK (canonical_quantity > 0::double precision)
 CONSTRAINT|meal_logs|meal_logs_pkey|p|PRIMARY KEY (id)
