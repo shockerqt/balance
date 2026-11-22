@@ -20,7 +20,7 @@ The upgrade rehearsal used 50,003 live rows and one tombstone. A transaction hel
 
 | Metric | Rehearsal measurement | Approved maximum |
 | --- | --- | --- |
-| Migration lock acquisition | 1.2 s scripted blocker hold; total contended migration 1.944 s minus 0.827–0.935 s uncontended build/commit yields ~1.01–1.12 s lock wait (well under 1.5 s `lock_timeout`) | 1.5 s |
+| Migration lock acquisition | Contended `pg_virtualenv -v 17` rehearsal (50,003 rows, 1.2 s concurrent `ROW EXCLUSIVE` hold) succeeded with `PGOPTIONS="-c lock_timeout=1500ms"` enforced (`sqlx migrate run` applied `20261121000000` in 1.556 s, wall 1.584 s), proving `SHARE` lock acquisition completed under the 1.5 s `lock_timeout` | 1.5 s |
 | Queued writer wall time | 1.884 s | 3 s |
 | Uncontended build and commit | 0.935 s including standalone PostgreSQL startup and shutdown | 1.5 s |
 | Combined on-disk index size | 4,931,584 bytes (4.70 MiB) | 6 MiB |
