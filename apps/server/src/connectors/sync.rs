@@ -37,6 +37,41 @@ pub enum CreatePersonalFoodOutcome {
     Duplicate(DuplicatePersonalFood),
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PersonalFoodPatch {
+    pub name: Option<String>,
+    pub calories: Option<f64>,
+    pub protein: Option<f64>,
+    pub carbs: Option<f64>,
+    pub fat: Option<f64>,
+    pub fiber: Option<Option<f64>>,
+    pub sodium_mg: Option<Option<f64>>,
+    pub cholesterol_mg: Option<Option<f64>>,
+    pub portions: Option<Vec<PortionDefinition>>,
+    pub chilean_seals: Option<Vec<String>>,
+    pub brand: Option<Option<String>>,
+    pub category: Option<Option<String>>,
+    pub typical_time: Option<Option<String>>,
+}
+
+impl PersonalFoodPatch {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.calories.is_none()
+            && self.protein.is_none()
+            && self.carbs.is_none()
+            && self.fat.is_none()
+            && self.fiber.is_none()
+            && self.sodium_mg.is_none()
+            && self.cholesterol_mg.is_none()
+            && self.portions.is_none()
+            && self.chilean_seals.is_none()
+            && self.brand.is_none()
+            && self.category.is_none()
+            && self.typical_time.is_none()
+    }
+}
+
 #[cfg(test)]
 pub(crate) type AsyncTestHook = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
@@ -1918,6 +1953,249 @@ impl SyncDatasource {
 
         tx.commit().await?;
         Ok(CreatePersonalFoodOutcome::Created(food))
+    }
+
+    pub async fn update_personal_food(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        patch: &PersonalFoodPatch,
+    ) -> Result<FoodTemplate, AppError> {
+        self.update_personal_food_inner(
+            user_id,
+            id,
+            patch,
+            #[cfg(test)]
+            None,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn update_personal_food_with_hooks(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        patch: &PersonalFoodPatch,
+        after_name_lock: Option<AsyncTestHook>,
+    ) -> Result<FoodTemplate, AppError> {
+        self.update_personal_food_inner(user_id, id, patch, after_name_lock)
+            .await
+    }
+
+    async fn update_personal_food_inner(
+        &self,
+        user_id: i32,
+        id: Uuid,
+        patch: &PersonalFoodPatch,
+        #[cfg(test)] after_name_lock: Option<AsyncTestHook>,
+    ) -> Result<FoodTemplate, AppError> {
+        if patch.is_empty() {
+            return Err(AppError::BadRequest(
+                "At least one field must be provided".into(),
+            ));
+        }
+        let trimmed_name = match &patch.name {
+            Some(name) => {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    return Err(AppError::BadRequest("name cannot be empty".into()));
+                }
+                Some(trimmed.to_owned())
+            }
+            None => None,
+        };
+
+        let mut tx = self.pool.begin().await?;
+        // Lock ordering: acquire personal_food_create name lock before meal_templates
+        // row lock so concurrent create_food and update_food calls remain deadlock-free.
+        if let Some(ref candidate_name) = trimmed_name {
+            lock_personal_food_create_key(&mut tx, user_id, candidate_name).await?;
+            #[cfg(test)]
+            if let Some(hook) = after_name_lock {
+                hook.await;
+            }
+        }
+
+        let row = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            SELECT id, user_id, is_official, name, details, source_provider, external_id,
+                   updated_at, deleted_at
+            FROM meal_templates
+            WHERE id = $1 AND user_id = $2 AND is_official = FALSE
+            FOR UPDATE
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            return Err(AppError::NotFound("Food not found".into()));
+        };
+        if row.deleted_at.is_some() {
+            return Err(AppError::NotFound("Food not found".into()));
+        }
+
+        let old_details: FoodDetails = serde_json::from_value(row.details)
+            .map_err(|error| AppError::Internal(format!("Invalid food details: {error}")))?;
+        let canonical_old = canonical_food_details(&old_details);
+
+        let new_name = trimmed_name.unwrap_or_else(|| row.name.clone());
+        let mut new_details = old_details;
+        if let Some(calories) = patch.calories {
+            new_details.nutrition_per100.calories = calories;
+        }
+        if let Some(protein) = patch.protein {
+            new_details.nutrition_per100.protein = protein;
+        }
+        if let Some(carbs) = patch.carbs {
+            new_details.nutrition_per100.carbs = carbs;
+        }
+        if let Some(fat) = patch.fat {
+            new_details.nutrition_per100.fat = fat;
+        }
+        if let Some(fiber) = patch.fiber {
+            new_details.nutrition_per100.fiber = fiber;
+        }
+        if let Some(sodium_mg) = patch.sodium_mg {
+            new_details.nutrition_per100.sodium_mg = sodium_mg;
+        }
+        if let Some(cholesterol_mg) = patch.cholesterol_mg {
+            new_details.nutrition_per100.cholesterol_mg = cholesterol_mg;
+        }
+        if let Some(portions) = &patch.portions {
+            new_details.portions = portions.clone();
+        }
+        if let Some(chilean_seals) = &patch.chilean_seals {
+            new_details.chilean_seals = chilean_seals.clone();
+        }
+        if let Some(brand) = &patch.brand {
+            new_details.brand = normalize_optional_brand(brand.clone());
+        }
+        if let Some(category) = &patch.category {
+            new_details.category = category.clone();
+        }
+        if let Some(typical_time) = &patch.typical_time {
+            new_details.typical_time = typical_time.clone();
+        }
+        new_details.normalize();
+        new_details.validate()?;
+
+        let canonical_new = canonical_food_details(&new_details);
+        if new_name == row.name && canonical_new == canonical_old {
+            return Err(AppError::BadRequest("Patch produces no changes".into()));
+        }
+
+        if patch.name.is_some() && new_name.to_lowercase() != row.name.trim().to_lowercase() {
+            let duplicate_exists: bool = sqlx::query_scalar(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM meal_templates
+                    WHERE user_id = $1
+                      AND is_official = FALSE
+                      AND deleted_at IS NULL
+                      AND lower(btrim(name)) = lower(btrim($2))
+                      AND id <> $3
+                )
+                "#,
+            )
+            .bind(user_id)
+            .bind(&new_name)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if duplicate_exists {
+                return Err(AppError::Conflict(
+                    "A personal food with the same name already exists".into(),
+                ));
+            }
+        }
+
+        let details_json = serde_json::to_value(&canonical_new)
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let updated = sqlx::query_as::<_, MealTemplateRow>(
+            r#"
+            UPDATE meal_templates
+            SET name = $3,
+                details = $4,
+                updated_at = GREATEST(
+                    floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                    updated_at + 1
+                )
+            WHERE id = $1
+              AND user_id = $2
+              AND is_official = FALSE
+              AND deleted_at IS NULL
+            RETURNING id, user_id, is_official, name, details, source_provider, external_id,
+                      updated_at, deleted_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(&new_name)
+        .bind(details_json)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        food_template_from_row(updated)
+    }
+
+    pub async fn soft_delete_personal_food(
+        &self,
+        user_id: i32,
+        id: Uuid,
+    ) -> Result<(i64, bool), AppError> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, (i64, Option<i64>)>(
+            r#"
+            SELECT updated_at, deleted_at
+            FROM meal_templates
+            WHERE id = $1 AND user_id = $2 AND is_official = FALSE
+            FOR UPDATE
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some((updated_at, deleted_at)) = row else {
+            return Err(AppError::NotFound("Food not found".into()));
+        };
+        if deleted_at.is_some() {
+            tx.commit().await?;
+            return Ok((updated_at, true));
+        }
+
+        let new_ts: i64 = sqlx::query_scalar(
+            r#"
+            WITH next_ts AS (
+                SELECT GREATEST(
+                    floor(extract(epoch from clock_timestamp()) * 1000)::bigint,
+                    $3::bigint + 1
+                ) AS ts
+            )
+            UPDATE meal_templates
+            SET deleted_at = next_ts.ts,
+                updated_at = next_ts.ts
+            FROM next_ts
+            WHERE meal_templates.id = $1
+              AND meal_templates.user_id = $2
+              AND meal_templates.is_official = FALSE
+              AND meal_templates.deleted_at IS NULL
+            RETURNING meal_templates.updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(updated_at)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((new_ts, false))
     }
 
     #[allow(dead_code)]
@@ -4595,6 +4873,202 @@ mod copy_tests {
                 .await
                 .unwrap();
         assert_eq!(malformed_inserted, 0);
+
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn update_and_soft_delete_personal_food_locking_and_concurrency_postgres() {
+        use crate::connectors::user::NewUser;
+        use std::time::Duration;
+        use tokio::sync::oneshot;
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let user_a = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal103-sync-user-a",
+                &NewUser {
+                    email: "sync-uf-a@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let details = FoodDetails {
+            schema_version: FOOD_SCHEMA_VERSION,
+            canonical_unit: CanonicalUnit::G,
+            nutrition_per100: NutritionValues {
+                calories: 200.0,
+                protein: 10.0,
+                carbs: 20.0,
+                fat: 5.0,
+                fiber: Some(3.0),
+                sodium_mg: None,
+                cholesterol_mg: None,
+                extended_nutrition: Default::default(),
+            },
+            portions: vec![],
+            chilean_seals: vec![],
+            brand: None,
+            category: None,
+            typical_time: None,
+        };
+
+        let existing_id = Uuid::new_v4();
+        let CreatePersonalFoodOutcome::Created(created) = db
+            .sync
+            .create_mcp_food(user_a.id, existing_id, "Original Name", &details)
+            .await
+            .unwrap()
+        else {
+            panic!("expected Created");
+        };
+
+        // Case-only rename on the same row succeeds.
+        let case_renamed = db
+            .sync
+            .update_personal_food(
+                user_a.id,
+                existing_id,
+                &PersonalFoodPatch {
+                    name: Some("original name".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(case_renamed.name, "original name");
+        assert!(case_renamed.updated_at > created.updated_at);
+
+        // Deterministic two-connection contention: update_personal_food renaming to "Shared Name"
+        // holds the per-user advisory lock while create_mcp_food tries to create "Shared Name".
+        let (lock_acquired_tx, lock_acquired_rx) = oneshot::channel::<()>();
+        let (release_lock_tx, release_lock_rx) = oneshot::channel::<()>();
+
+        let sync_a = db.sync.clone();
+        let rename_task = tokio::spawn(async move {
+            sync_a
+                .update_personal_food_with_hooks(
+                    user_a.id,
+                    existing_id,
+                    &PersonalFoodPatch {
+                        name: Some("Shared Name".into()),
+                        ..Default::default()
+                    },
+                    Some(Box::pin(async move {
+                        let _ = lock_acquired_tx.send(());
+                        let _ = tokio::time::timeout(Duration::from_secs(5), release_lock_rx).await;
+                    })),
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), lock_acquired_rx)
+            .await
+            .expect("rename task should acquire advisory lock")
+            .unwrap();
+
+        let sync_b = db.sync.clone();
+        let details_b = details.clone();
+        let create_op_id = Uuid::new_v4();
+        let create_task = tokio::spawn(async move {
+            sync_b
+                .create_mcp_food(user_a.id, create_op_id, "  shared name  ", &details_b)
+                .await
+        });
+
+        let mut saw_waiting_lock = false;
+        for _ in 0..100 {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted",
+            )
+            .fetch_one(&db.sync.pool)
+            .await
+            .unwrap();
+            if waiting >= 1 {
+                saw_waiting_lock = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            saw_waiting_lock,
+            "expected create_mcp_food to block on advisory lock held by update_personal_food"
+        );
+
+        let _ = release_lock_tx.send(());
+        let renamed = rename_task.await.unwrap().unwrap();
+        assert_eq!(renamed.name, "Shared Name");
+        let create_outcome = create_task.await.unwrap().unwrap();
+        assert!(
+            matches!(create_outcome, CreatePersonalFoodOutcome::Duplicate(_)),
+            "expected concurrent create_mcp_food to see Duplicate after rename committed, got {create_outcome:?}"
+        );
+
+        // Monotonic updated_at even when stored updated_at is in the far future.
+        let future_ts = i64::MAX / 4;
+        sqlx::query("UPDATE meal_templates SET updated_at = $1 WHERE id = $2")
+            .bind(future_ts)
+            .bind(existing_id)
+            .execute(&db.sync.pool)
+            .await
+            .unwrap();
+        let updated_future = db
+            .sync
+            .update_personal_food(
+                user_a.id,
+                existing_id,
+                &PersonalFoodPatch {
+                    calories: Some(250.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated_future.updated_at, future_ts + 1);
+
+        let (deleted_ts, already_deleted) = db
+            .sync
+            .soft_delete_personal_food(user_a.id, existing_id)
+            .await
+            .unwrap();
+        assert!(!already_deleted);
+        assert_eq!(deleted_ts, future_ts + 2);
+
+        // soft_delete_personal_food succeeds even when stored details JSON is malformed.
+        let malformed_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_templates (id, user_id, is_official, name, details, updated_at, deleted_at) \
+             VALUES ($1, $2, FALSE, 'Broken JSON Food', $3, 5000, NULL)",
+        )
+        .bind(malformed_id)
+        .bind(user_a.id)
+        .bind(serde_json::json!({ "broken": true }))
+        .execute(&db.sync.pool)
+        .await
+        .unwrap();
+        let (broken_ts, broken_already) = db
+            .sync
+            .soft_delete_personal_food(user_a.id, malformed_id)
+            .await
+            .unwrap();
+        assert!(!broken_already);
+        assert!(broken_ts > 5000);
+        let (broken_ts_2, broken_already_2) = db
+            .sync
+            .soft_delete_personal_food(user_a.id, malformed_id)
+            .await
+            .unwrap();
+        assert!(broken_already_2);
+        assert_eq!(broken_ts_2, broken_ts);
 
         cleanup_identity_test_database(&db, &schema).await;
     }
