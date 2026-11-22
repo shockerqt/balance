@@ -722,8 +722,9 @@ async fn call_tool(
             let consumptions = db.sync.get_daily_consumptions(user_id, &date).await?;
             let (items, totals) =
                 daily_nutrition_output(&consumptions, args.include_extended_nutrition)?;
+            let summary = daily_log_summary(&date, &totals);
             Ok((
-                format!("Hay {} consumos registrados para {date}.", items.len()),
+                summary,
                 json!({
                     "date": date,
                     "timezone": TIMEZONE,
@@ -1162,7 +1163,7 @@ fn nutrition_output(value: &NutritionValues) -> NutritionValues {
     }
 }
 
-/// Project nutrition values for read tools (`search_foods`, `get_daily_log` items, and totals).
+/// Project nutrition values for read tools (`search_foods` and `get_daily_log` items).
 /// Bulk nutrients (`calories`, `protein`, `carbs`, `fat`, and present `fiber`) round to 2 decimal
 /// places; `sodiumMg`, `cholesterolMg`, and `extendedNutrition` entries round to 6 decimal places
 /// while retaining positive traces that would round to zero.
@@ -1192,6 +1193,155 @@ fn read_nutrition_output(
 
 const NUTRITION_RENDER_ERROR: &str = "Nutrition result cannot be represented";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum NutrientCompletenessStatus {
+    Complete,
+    Partial,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NutrientCompleteness {
+    known_items: usize,
+    status: NutrientCompletenessStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DailyTotalsCompleteness {
+    item_count: usize,
+    fiber: NutrientCompleteness,
+    sodium_mg: NutrientCompleteness,
+    cholesterol_mg: NutrientCompleteness,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DailyTotals {
+    calories: f64,
+    protein: f64,
+    carbs: f64,
+    fat: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fiber: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sodium_mg: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cholesterol_mg: Option<f64>,
+    completeness: DailyTotalsCompleteness,
+}
+
+#[derive(Default)]
+struct OptionalNutrientAccumulator {
+    known_items: usize,
+    sum: f64,
+}
+
+impl OptionalNutrientAccumulator {
+    fn add(&mut self, value: Option<f64>) {
+        if let Some(amount) = value {
+            self.known_items += 1;
+            self.sum += amount;
+        }
+    }
+
+    fn finish(self, item_count: usize) -> (Option<f64>, NutrientCompleteness) {
+        if item_count == 0 {
+            (
+                Some(0.0),
+                NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+            )
+        } else if self.known_items == 0 {
+            (
+                None,
+                NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Unknown,
+                },
+            )
+        } else {
+            let status = if self.known_items == item_count {
+                NutrientCompletenessStatus::Complete
+            } else {
+                NutrientCompletenessStatus::Partial
+            };
+            (
+                Some(self.sum),
+                NutrientCompleteness {
+                    known_items: self.known_items,
+                    status,
+                },
+            )
+        }
+    }
+}
+
+fn empty_daily_totals() -> DailyTotals {
+    let empty_nutrient = NutrientCompleteness {
+        known_items: 0,
+        status: NutrientCompletenessStatus::Complete,
+    };
+    DailyTotals {
+        calories: 0.0,
+        protein: 0.0,
+        carbs: 0.0,
+        fat: 0.0,
+        fiber: Some(0.0),
+        sodium_mg: Some(0.0),
+        cholesterol_mg: Some(0.0),
+        completeness: DailyTotalsCompleteness {
+            item_count: 0,
+            fiber: empty_nutrient,
+            sodium_mg: empty_nutrient,
+            cholesterol_mg: empty_nutrient,
+        },
+    }
+}
+
+fn daily_log_summary(date: &str, totals: &DailyTotals) -> String {
+    let item_count = totals.completeness.item_count;
+    let mut summary = format!("Hay {item_count} consumos registrados para {date}.");
+    let mut partial = Vec::new();
+    let mut unknown = Vec::new();
+
+    for (label, completeness) in [
+        ("fibra", totals.completeness.fiber),
+        ("sodio", totals.completeness.sodium_mg),
+        ("colesterol", totals.completeness.cholesterol_mg),
+    ] {
+        match completeness.status {
+            NutrientCompletenessStatus::Complete => {}
+            NutrientCompletenessStatus::Partial => {
+                partial.push(format!(
+                    "{label} ({}/{item_count})",
+                    completeness.known_items
+                ));
+            }
+            NutrientCompletenessStatus::Unknown => unknown.push(label),
+        }
+    }
+
+    if !partial.is_empty() {
+        summary.push_str(&format!(
+            " Totales parciales (solo consumos con dato): {}.",
+            partial.join(", ")
+        ));
+    }
+    if !unknown.is_empty() {
+        summary.push_str(&format!(
+            " Sin datos disponibles para: {}.",
+            unknown.join(", ")
+        ));
+    }
+
+    summary
+}
+
 fn check_nutrition_finite(value: &NutritionValues) -> Result<(), AppError> {
     let amounts = [
         Some(value.calories),
@@ -1214,61 +1364,98 @@ fn check_nutrition_finite(value: &NutritionValues) -> Result<(), AppError> {
     }
 }
 
+fn check_daily_totals_finite(
+    calories: f64,
+    protein: f64,
+    carbs: f64,
+    fat: f64,
+    fiber: Option<f64>,
+    sodium_mg: Option<f64>,
+    cholesterol_mg: Option<f64>,
+) -> Result<(), AppError> {
+    if [
+        Some(calories),
+        Some(protein),
+        Some(carbs),
+        Some(fat),
+        fiber,
+        sodium_mg,
+        cholesterol_mg,
+    ]
+    .into_iter()
+    .flatten()
+    .all(f64::is_finite)
+    {
+        Ok(())
+    } else {
+        Err(AppError::Internal(NUTRITION_RENDER_ERROR.into()))
+    }
+}
+
 fn daily_nutrition_output(
     consumptions: &[Consumption],
     include_extended_nutrition: bool,
-) -> Result<(Vec<Value>, NutritionValues), AppError> {
-    let mut total = zero_nutrition();
+) -> Result<(Vec<Value>, DailyTotals), AppError> {
+    if consumptions.is_empty() {
+        return Ok((Vec::new(), empty_daily_totals()));
+    }
+
+    let mut calories = 0.0;
+    let mut protein = 0.0;
+    let mut carbs = 0.0;
+    let mut fat = 0.0;
+    let mut fiber = OptionalNutrientAccumulator::default();
+    let mut sodium_mg = OptionalNutrientAccumulator::default();
+    let mut cholesterol_mg = OptionalNutrientAccumulator::default();
     let mut items = Vec::with_capacity(consumptions.len());
+
     for consumption in consumptions {
         let nutrition = consumption.scaled_nutrition();
         check_nutrition_finite(&nutrition)?;
         let projected = read_nutrition_output(&nutrition, include_extended_nutrition);
         items.push(render_consumption(consumption, &projected));
-        add_nutrition(&mut total, &nutrition);
+        calories += nutrition.calories;
+        protein += nutrition.protein;
+        carbs += nutrition.carbs;
+        fat += nutrition.fat;
+        fiber.add(nutrition.fiber);
+        sodium_mg.add(nutrition.sodium_mg);
+        cholesterol_mg.add(nutrition.cholesterol_mg);
     }
-    check_nutrition_finite(&total)?;
+
+    let item_count = consumptions.len();
+    let (fiber_total, fiber_completeness) = fiber.finish(item_count);
+    let (sodium_total, sodium_completeness) = sodium_mg.finish(item_count);
+    let (cholesterol_total, cholesterol_completeness) = cholesterol_mg.finish(item_count);
+
+    check_daily_totals_finite(
+        calories,
+        protein,
+        carbs,
+        fat,
+        fiber_total,
+        sodium_total,
+        cholesterol_total,
+    )?;
+
     Ok((
         items,
-        read_nutrition_output(&total, include_extended_nutrition),
+        DailyTotals {
+            calories: read_bulk_number(calories),
+            protein: read_bulk_number(protein),
+            carbs: read_bulk_number(carbs),
+            fat: read_bulk_number(fat),
+            fiber: fiber_total.map(read_bulk_number),
+            sodium_mg: sodium_total.map(read_micro_number),
+            cholesterol_mg: cholesterol_total.map(read_micro_number),
+            completeness: DailyTotalsCompleteness {
+                item_count,
+                fiber: fiber_completeness,
+                sodium_mg: sodium_completeness,
+                cholesterol_mg: cholesterol_completeness,
+            },
+        },
     ))
-}
-
-fn zero_nutrition() -> NutritionValues {
-    NutritionValues {
-        calories: 0.0,
-        protein: 0.0,
-        carbs: 0.0,
-        fat: 0.0,
-        fiber: Some(0.0),
-        sodium_mg: None,
-        cholesterol_mg: None,
-        extended_nutrition: Default::default(),
-    }
-}
-
-fn add_nutrition(total: &mut NutritionValues, value: &NutritionValues) {
-    total.calories += value.calories;
-    total.protein += value.protein;
-    total.carbs += value.carbs;
-    total.fat += value.fat;
-    total.fiber = add_complete_optional(total.fiber, value.fiber);
-    total.sodium_mg = add_optional(total.sodium_mg, value.sodium_mg);
-    total.cholesterol_mg = add_optional(total.cholesterol_mg, value.cholesterol_mg);
-}
-
-fn add_complete_optional(left: Option<f64>, right: Option<f64>) -> Option<f64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left + right),
-        _ => None,
-    }
-}
-
-fn add_optional(left: Option<f64>, right: Option<f64>) -> Option<f64> {
-    match (left, right) {
-        (None, None) => None,
-        (left, right) => Some(left.unwrap_or(0.0) + right.unwrap_or(0.0)),
-    }
 }
 
 async fn require_weight_tracking(db: &Database, user_id: i32) -> Result<(), AppError> {
@@ -1473,7 +1660,7 @@ pub(crate) fn tool_definitions() -> Value {
         {
             "name": "get_daily_log",
             "title": "Consultar consumos por fecha",
-            "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago. Por defecto omite extendedNutrition; envía includeExtendedNutrition en true para incluir el detalle nutricional extendido disponible en cada consumo del diario.",
+            "description": "Consulta exclusivamente los consumos ya registrados y sus totales para una fecha del diario. Para varios días, llama esta herramienta una vez por cada fecha exacta. NUNCA busca alimentos en el catálogo. Si el usuario consulta su historial sin indicar una fecha, pide aclararla. Omite date solo cuando el usuario pide hoy; hoy se interpreta en America/Santiago. Por defecto omite extendedNutrition en cada consumo; envía includeExtendedNutrition en true para incluir el detalle nutricional extendido disponible en cada item (totals nunca incluye extendedNutrition). totals.completeness indica por nutriente (fiber, sodiumMg, cholesterolMg) cuántos consumos tienen dato (knownItems sobre itemCount) y su status (complete, partial o unknown): cuando es partial el número es un subtotal solo de los consumos con dato, cuando es unknown el nutriente se omite de totals, y solo debe presentarse como total diario completo cuando status es complete.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1830,9 +2017,58 @@ fn daily_output_schema() -> Value {
             "date": food_date_schema(),
             "timezone": { "type": "string", "const": TIMEZONE },
             "items": { "type": "array", "items": consumption_schema() },
-            "totals": nutrition_schema()
+            "totals": daily_totals_schema()
         },
         "required": ["date", "timezone", "items", "totals"],
+        "additionalProperties": false
+    })
+}
+
+fn nutrient_completeness_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "knownItems": { "type": "integer", "minimum": 0 },
+            "status": { "type": "string", "enum": ["complete", "partial", "unknown"] }
+        },
+        "required": ["knownItems", "status"],
+        "additionalProperties": false
+    })
+}
+
+fn daily_totals_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "calories": non_negative_number_schema(),
+            "protein": non_negative_number_schema(),
+            "carbs": non_negative_number_schema(),
+            "fat": non_negative_number_schema(),
+            "fiber": described_schema(
+                non_negative_number_schema(),
+                "Suma conocida de fibra en gramos; se omite cuando completeness.fiber.status es unknown."
+            ),
+            "sodiumMg": described_schema(
+                non_negative_number_schema(),
+                "Suma conocida de sodio en mg; se omite cuando completeness.sodiumMg.status es unknown."
+            ),
+            "cholesterolMg": described_schema(
+                non_negative_number_schema(),
+                "Suma conocida de colesterol en mg; se omite cuando completeness.cholesterolMg.status es unknown."
+            ),
+            "completeness": {
+                "type": "object",
+                "properties": {
+                    "itemCount": { "type": "integer", "minimum": 0 },
+                    "fiber": nutrient_completeness_schema(),
+                    "sodiumMg": nutrient_completeness_schema(),
+                    "cholesterolMg": nutrient_completeness_schema()
+                },
+                "required": ["itemCount", "fiber", "sodiumMg", "cholesterolMg"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["calories", "protein", "carbs", "fat", "completeness"],
         "additionalProperties": false
     })
 }
@@ -2052,7 +2288,7 @@ mod tests {
         for (slot, include_extended) in [(0, false), (1, true)] {
             let date = BUDGET_DATE;
             let (items, totals) = daily_nutrition_output(&consumptions, include_extended).unwrap();
-            let summary = format!("Hay {} consumos registrados para {date}.", items.len());
+            let summary = daily_log_summary(date, &totals);
             let payload = json!({
                 "date": date,
                 "timezone": TIMEZONE,
@@ -2069,6 +2305,15 @@ mod tests {
             assert_valid(&daily_output, structured);
             assert_eq!(structured["items"].as_array().unwrap().len(), 17);
             assert!(structured["totals"].get("extendedNutrition").is_none());
+            assert_eq!(
+                structured["totals"]["completeness"],
+                json!({
+                    "itemCount": 17,
+                    "fiber": {"knownItems": 17, "status": "complete"},
+                    "sodiumMg": {"knownItems": 17, "status": "complete"},
+                    "cholesterolMg": {"knownItems": 17, "status": "complete"}
+                })
+            );
             for item in structured["items"].as_array().unwrap() {
                 if include_extended {
                     let extended = item["nutrition"]["extendedNutrition"].as_object().unwrap();
@@ -2224,20 +2469,383 @@ mod tests {
             assert_eq!(totals.fiber, Some(2.47));
             assert_eq!(totals.sodium_mg, Some(0.000001));
             assert_eq!(totals.cholesterol_mg, Some(0.0));
-            assert!(totals.extended_nutrition.is_empty());
+            assert_eq!(
+                totals.completeness,
+                DailyTotalsCompleteness {
+                    item_count: 2,
+                    fiber: NutrientCompleteness {
+                        known_items: 2,
+                        status: NutrientCompletenessStatus::Complete,
+                    },
+                    sodium_mg: NutrientCompleteness {
+                        known_items: 2,
+                        status: NutrientCompletenessStatus::Complete,
+                    },
+                    cholesterol_mg: NutrientCompleteness {
+                        known_items: 2,
+                        status: NutrientCompletenessStatus::Complete,
+                    },
+                }
+            );
+            assert!(
+                serde_json::to_value(&totals)
+                    .unwrap()
+                    .get("extendedNutrition")
+                    .is_none()
+            );
         }
 
-        // Mixed known and missing fiber drops total fiber; explicit zero fiber is preserved; empty day keeps zero fiber.
+        // Mixed known and missing fiber reports the known subtotal as partial; explicit zero fiber is preserved; empty day is complete with all zeros.
         let mixed = [make_consumption(1, Some(1.234)), make_consumption(2, None)];
         let (_, mixed_totals) = daily_nutrition_output(&mixed, false).unwrap();
-        assert_eq!(mixed_totals.fiber, None);
+        assert_eq!(mixed_totals.fiber, Some(1.23));
+        assert_eq!(
+            mixed_totals.completeness.fiber,
+            NutrientCompleteness {
+                known_items: 1,
+                status: NutrientCompletenessStatus::Partial,
+            }
+        );
         let zero_fiber = [make_consumption(1, Some(0.0))];
         let (zero_items, zero_totals) = daily_nutrition_output(&zero_fiber, false).unwrap();
         assert_eq!(zero_items[0]["nutrition"]["fiber"], json!(0.0));
         assert_eq!(zero_totals.fiber, Some(0.0));
+        assert_eq!(
+            zero_totals.completeness.fiber,
+            NutrientCompleteness {
+                known_items: 1,
+                status: NutrientCompletenessStatus::Complete,
+            }
+        );
         let (empty_items, empty_totals) = daily_nutrition_output(&[], true).unwrap();
         assert!(empty_items.is_empty());
-        assert_eq!(empty_totals, zero_nutrition());
+        assert_eq!(empty_totals, empty_daily_totals());
+    }
+
+    #[test]
+    fn daily_nutrition_completeness_matrix_and_16_of_17() {
+        use crate::connectors::sync::{MealLogEntry, NutritionSnapshot};
+
+        let make_item = |index: u128,
+                         fiber: Option<f64>,
+                         sodium_mg: Option<f64>,
+                         cholesterol_mg: Option<f64>| Consumption {
+            id: Uuid::from_u128(index),
+            template_id: None,
+            name: format!("Completeness Item {index}"),
+            snapshot: NutritionSnapshot {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100: NutritionValues {
+                    calories: 50.0,
+                    protein: 5.0,
+                    carbs: 10.0,
+                    fat: 2.0,
+                    fiber,
+                    sodium_mg,
+                    cholesterol_mg,
+                    extended_nutrition: [("ironMg".to_string(), 1.5)].into_iter().collect(),
+                },
+                brand: None,
+            },
+            canonical_quantity: 100.0,
+            entry: MealLogEntry {
+                entered_quantity: 100.0,
+                portion_snapshot: None,
+            },
+            consumed_at: index as i64,
+            updated_at: index as i64,
+        };
+        let totals_validator = validator(&daily_totals_schema(), true);
+        let output_validator = validator(&daily_output_schema(), true);
+        let check_valid = |items: &[Value], totals: &DailyTotals| {
+            let totals_json = serde_json::to_value(totals).unwrap();
+            assert_valid(&totals_validator, &totals_json);
+            assert!(totals_json.get("extendedNutrition").is_none());
+            assert_valid(
+                &output_validator,
+                &json!({
+                    "date": "2025-01-02",
+                    "timezone": TIMEZONE,
+                    "items": items,
+                    "totals": totals_json
+                }),
+            );
+        };
+
+        // 1. Complete (2 + 3 -> 5)
+        let complete_items = [
+            make_item(1, Some(2.0), Some(100.0), Some(15.0)),
+            make_item(2, Some(3.0), Some(250.0), Some(25.0)),
+        ];
+        let (items, totals) = daily_nutrition_output(&complete_items, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(5.0));
+        assert_eq!(totals.sodium_mg, Some(350.0));
+        assert_eq!(totals.cholesterol_mg, Some(40.0));
+        assert_eq!(
+            totals.completeness,
+            DailyTotalsCompleteness {
+                item_count: 2,
+                fiber: NutrientCompleteness {
+                    known_items: 2,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+                sodium_mg: NutrientCompleteness {
+                    known_items: 2,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+                cholesterol_mg: NutrientCompleteness {
+                    known_items: 2,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+            }
+        );
+        assert_eq!(
+            daily_log_summary("2025-01-02", &totals),
+            "Hay 2 consumos registrados para 2025-01-02."
+        );
+
+        // 2. Partial (2 + None -> 2)
+        let partial_items = [
+            make_item(1, Some(2.0), Some(10.0), Some(5.0)),
+            make_item(2, None, None, None),
+        ];
+        let (items, totals) = daily_nutrition_output(&partial_items, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(2.0));
+        assert_eq!(totals.sodium_mg, Some(10.0));
+        assert_eq!(totals.cholesterol_mg, Some(5.0));
+        assert_eq!(
+            totals.completeness,
+            DailyTotalsCompleteness {
+                item_count: 2,
+                fiber: NutrientCompleteness {
+                    known_items: 1,
+                    status: NutrientCompletenessStatus::Partial,
+                },
+                sodium_mg: NutrientCompleteness {
+                    known_items: 1,
+                    status: NutrientCompletenessStatus::Partial,
+                },
+                cholesterol_mg: NutrientCompleteness {
+                    known_items: 1,
+                    status: NutrientCompletenessStatus::Partial,
+                },
+            }
+        );
+
+        // 3. 16-of-17 partial fiber day
+        let mut seventeen: Vec<Consumption> = (1..=16)
+            .map(|i| make_item(i, Some(1.5), Some(10.0), Some(2.0)))
+            .collect();
+        seventeen.push(make_item(17, None, Some(10.0), Some(2.0)));
+        let (items, totals) = daily_nutrition_output(&seventeen, true).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(24.0));
+        assert_eq!(totals.sodium_mg, Some(170.0));
+        assert_eq!(totals.cholesterol_mg, Some(34.0));
+        assert_eq!(
+            totals.completeness,
+            DailyTotalsCompleteness {
+                item_count: 17,
+                fiber: NutrientCompleteness {
+                    known_items: 16,
+                    status: NutrientCompletenessStatus::Partial,
+                },
+                sodium_mg: NutrientCompleteness {
+                    known_items: 17,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+                cholesterol_mg: NutrientCompleteness {
+                    known_items: 17,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+            }
+        );
+        let summary_16_17 = daily_log_summary("2025-01-02", &totals);
+        assert!(summary_16_17.contains("Hay 17 consumos registrados para 2025-01-02."));
+        assert!(summary_16_17.contains("fibra (16/17)"));
+        assert!(!summary_16_17.contains("sodio"));
+        assert!(!summary_16_17.contains("colesterol"));
+
+        // 4. All-unknown nonempty day omits numeric keys
+        let unknown_items = [
+            make_item(1, None, None, None),
+            make_item(2, None, None, None),
+        ];
+        let (items, totals) = daily_nutrition_output(&unknown_items, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, None);
+        assert_eq!(totals.sodium_mg, None);
+        assert_eq!(totals.cholesterol_mg, None);
+        let unknown_json = serde_json::to_value(&totals).unwrap();
+        assert!(unknown_json.get("fiber").is_none());
+        assert!(unknown_json.get("sodiumMg").is_none());
+        assert!(unknown_json.get("cholesterolMg").is_none());
+        assert_eq!(
+            totals.completeness,
+            DailyTotalsCompleteness {
+                item_count: 2,
+                fiber: NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Unknown,
+                },
+                sodium_mg: NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Unknown,
+                },
+                cholesterol_mg: NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Unknown,
+                },
+            }
+        );
+        let unknown_summary = daily_log_summary("2025-01-02", &totals);
+        assert!(unknown_summary.contains("Sin datos disponibles para: fibra, sodio, colesterol."));
+
+        // 5. Explicit zero alone (complete) and paired with None (partial)
+        let zero_alone = [make_item(1, Some(0.0), Some(0.0), Some(0.0))];
+        let (items, totals) = daily_nutrition_output(&zero_alone, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(0.0));
+        assert_eq!(totals.sodium_mg, Some(0.0));
+        assert_eq!(totals.cholesterol_mg, Some(0.0));
+        assert_eq!(
+            totals.completeness.fiber.status,
+            NutrientCompletenessStatus::Complete
+        );
+        assert_eq!(
+            totals.completeness.sodium_mg.status,
+            NutrientCompletenessStatus::Complete
+        );
+        assert_eq!(
+            totals.completeness.cholesterol_mg.status,
+            NutrientCompletenessStatus::Complete
+        );
+
+        let zero_and_missing = [
+            make_item(1, Some(0.0), Some(0.0), Some(0.0)),
+            make_item(2, None, None, None),
+        ];
+        let (items, totals) = daily_nutrition_output(&zero_and_missing, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(0.0));
+        assert_eq!(totals.sodium_mg, Some(0.0));
+        assert_eq!(totals.cholesterol_mg, Some(0.0));
+        assert_eq!(totals.completeness.fiber.known_items, 1);
+        assert_eq!(
+            totals.completeness.fiber.status,
+            NutrientCompletenessStatus::Partial
+        );
+        assert_eq!(totals.completeness.sodium_mg.known_items, 1);
+        assert_eq!(
+            totals.completeness.sodium_mg.status,
+            NutrientCompletenessStatus::Partial
+        );
+        assert_eq!(totals.completeness.cholesterol_mg.known_items, 1);
+        assert_eq!(
+            totals.completeness.cholesterol_mg.status,
+            NutrientCompletenessStatus::Partial
+        );
+
+        // 6. Empty day (0/0 complete with 0.0 for all 7 nutrients)
+        let (items, totals) = daily_nutrition_output(&[], false).unwrap();
+        check_valid(&items, &totals);
+        assert!(items.is_empty());
+        assert_eq!(totals, empty_daily_totals());
+        assert_eq!(
+            serde_json::to_value(&totals).unwrap(),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "fiber": 0.0,
+                "sodiumMg": 0.0,
+                "cholesterolMg": 0.0,
+                "completeness": {
+                    "itemCount": 0,
+                    "fiber": {"knownItems": 0, "status": "complete"},
+                    "sodiumMg": {"knownItems": 0, "status": "complete"},
+                    "cholesterolMg": {"knownItems": 0, "status": "complete"}
+                }
+            })
+        );
+        assert_eq!(
+            daily_log_summary("2025-01-02", &totals),
+            "Hay 0 consumos registrados para 2025-01-02."
+        );
+
+        // 7. Independent per-nutrient coverage (complete fiber, partial sodium, unknown cholesterol)
+        let independent = [
+            make_item(1, Some(1.234), Some(0.0000004), None),
+            make_item(2, Some(1.234), None, None),
+        ];
+        let (items, totals) = daily_nutrition_output(&independent, false).unwrap();
+        check_valid(&items, &totals);
+        assert_eq!(totals.fiber, Some(2.47));
+        assert_eq!(totals.sodium_mg, Some(0.0000004));
+        assert_eq!(totals.cholesterol_mg, None);
+        assert_eq!(
+            totals.completeness,
+            DailyTotalsCompleteness {
+                item_count: 2,
+                fiber: NutrientCompleteness {
+                    known_items: 2,
+                    status: NutrientCompletenessStatus::Complete,
+                },
+                sodium_mg: NutrientCompleteness {
+                    known_items: 1,
+                    status: NutrientCompletenessStatus::Partial,
+                },
+                cholesterol_mg: NutrientCompleteness {
+                    known_items: 0,
+                    status: NutrientCompletenessStatus::Unknown,
+                },
+            }
+        );
+        let independent_summary = daily_log_summary("2025-01-02", &totals);
+        assert!(
+            independent_summary
+                .contains("Totales parciales (solo consumos con dato): sodio (1/2).")
+        );
+        assert!(independent_summary.contains("Sin datos disponibles para: colesterol."));
+        assert!(!independent_summary.contains("fibra"));
+
+        // 8. Partial-day overflow for fiber, sodiumMg, and cholesterolMg returns NUTRITION_RENDER_ERROR
+        for (name, items) in [
+            (
+                "fiber",
+                [
+                    make_item(1, Some(1e308), None, None),
+                    make_item(2, Some(1e308), None, None),
+                    make_item(3, None, None, None),
+                ],
+            ),
+            (
+                "sodiumMg",
+                [
+                    make_item(1, None, Some(1e308), None),
+                    make_item(2, None, Some(1e308), None),
+                    make_item(3, None, None, None),
+                ],
+            ),
+            (
+                "cholesterolMg",
+                [
+                    make_item(1, None, None, Some(1e308)),
+                    make_item(2, None, None, Some(1e308)),
+                    make_item(3, None, None, None),
+                ],
+            ),
+        ] {
+            let err = daily_nutrition_output(&items, false).unwrap_err();
+            assert!(
+                matches!(err, AppError::Internal(ref message) if message == NUTRITION_RENDER_ERROR),
+                "expected NUTRITION_RENDER_ERROR for partial {name} overflow, got {err:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -3248,12 +3856,16 @@ mod tests {
     }
 
     fn iron_food_details() -> FoodDetails {
-        let mut nutrition = zero_nutrition();
-        nutrition.calories = 100.0;
-        nutrition.fiber = None;
-        nutrition.sodium_mg = Some(0.0);
-        nutrition.cholesterol_mg = Some(10.0);
-        nutrition.extended_nutrition.insert("ironMg".into(), 2.0);
+        let nutrition = NutritionValues {
+            calories: 100.0,
+            protein: 0.0,
+            carbs: 0.0,
+            fat: 0.0,
+            fiber: None,
+            sodium_mg: Some(0.0),
+            cholesterol_mg: Some(10.0),
+            extended_nutrition: [("ironMg".into(), 2.0)].into_iter().collect(),
+        };
         FoodDetails {
             schema_version: FOOD_SCHEMA_VERSION,
             canonical_unit: CanonicalUnit::G,
@@ -3298,18 +3910,14 @@ mod tests {
         }
 
         let daily_tool = tool_definition(&tools, "get_daily_log");
-        assert!(
-            daily_tool["description"]
-                .as_str()
-                .unwrap()
-                .contains("includeExtendedNutrition")
-        );
-        assert!(
-            daily_tool["description"]
-                .as_str()
-                .unwrap()
-                .contains("America/Santiago")
-        );
+        let daily_desc = daily_tool["description"].as_str().unwrap();
+        assert!(daily_desc.contains("includeExtendedNutrition"));
+        assert!(daily_desc.contains("America/Santiago"));
+        assert!(daily_desc.contains("totals nunca incluye extendedNutrition"));
+        assert!(daily_desc.contains("totals.completeness"));
+        assert!(daily_desc.contains("partial"));
+        assert!(daily_desc.contains("unknown"));
+        assert!(daily_desc.contains("complete"));
         assert_eq!(
             daily_tool["inputSchema"]["properties"]["includeExtendedNutrition"],
             json!({"type": "boolean", "default": false})
@@ -3343,8 +3951,99 @@ mod tests {
             ("9999-01-02", true),
             ("2025-02-29", false),
         ] {
-            let output = json!({"date": date, "timezone": TIMEZONE, "items": [], "totals": zero_nutrition()});
+            let output = json!({"date": date, "timezone": TIMEZONE, "items": [], "totals": empty_daily_totals()});
             assert_eq!(daily_output.is_valid(&output), valid, "{output}");
+        }
+        for invalid_totals in [
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "extendedNutrition": {"ironMg": 1.0},
+                "completeness": empty_daily_totals().completeness
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "fiber": null,
+                "completeness": empty_daily_totals().completeness
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "completeness": {
+                    "itemCount": -1,
+                    "fiber": {"knownItems": 0, "status": "complete"},
+                    "sodiumMg": {"knownItems": 0, "status": "complete"},
+                    "cholesterolMg": {"knownItems": 0, "status": "complete"}
+                }
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "completeness": {
+                    "itemCount": 1,
+                    "fiber": {"knownItems": 1, "status": "incomplete"},
+                    "sodiumMg": {"knownItems": 0, "status": "unknown"},
+                    "cholesterolMg": {"knownItems": 0, "status": "unknown"}
+                }
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "completeness": {
+                    "itemCount": 1,
+                    "fiber": {"knownItems": -1, "status": "partial"},
+                    "sodiumMg": {"knownItems": 0, "status": "unknown"},
+                    "cholesterolMg": {"knownItems": 0, "status": "unknown"}
+                }
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "completeness": {
+                    "itemCount": 0,
+                    "fiber": {"knownItems": 0, "status": "complete"},
+                    "sodiumMg": {"knownItems": 0, "status": "complete"}
+                }
+            }),
+            json!({
+                "calories": 0.0,
+                "protein": 0.0,
+                "carbs": 0.0,
+                "fat": 0.0,
+                "completeness": {
+                    "itemCount": 0,
+                    "fiber": {"knownItems": 0, "status": "complete", "extra": true},
+                    "sodiumMg": {"knownItems": 0, "status": "complete"},
+                    "cholesterolMg": {"knownItems": 0, "status": "complete"}
+                }
+            }),
+        ] {
+            let invalid_day = json!({
+                "date": "2025-01-02",
+                "timezone": TIMEZONE,
+                "items": [],
+                "totals": invalid_totals
+            });
+            assert!(!daily_output.is_valid(&invalid_day), "{invalid_day}");
         }
 
         let log_tool = tool_definition(&tools, "log_food");
@@ -3550,6 +4249,15 @@ mod tests {
             assert!(day["totals"].get("extendedNutrition").is_none());
             assert_eq!(day["totals"]["sodiumMg"], 0.0);
             assert_eq!(day["totals"]["cholesterolMg"], 3.0);
+            assert_eq!(
+                day["totals"]["completeness"],
+                json!({
+                    "itemCount": 1,
+                    "fiber": {"knownItems": 0, "status": "unknown"},
+                    "sodiumMg": {"knownItems": 1, "status": "complete"},
+                    "cholesterolMg": {"knownItems": 1, "status": "complete"}
+                })
+            );
             if include_extended {
                 assert_eq!(
                     day["items"][0]["nutrition"]["extendedNutrition"]["ironMg"],
@@ -3644,8 +4352,20 @@ mod tests {
             .extended_nutrition
             .clear();
         consumption.canonical_quantity = 100.0;
+        let base_nutrition = NutritionValues {
+            calories: 0.0,
+            protein: 0.0,
+            carbs: 0.0,
+            fat: 0.0,
+            fiber: None,
+            sodium_mg: None,
+            cholesterol_mg: None,
+            extended_nutrition: Default::default(),
+        };
+        let mut unknown_consumption = consumption.clone();
+        unknown_consumption.snapshot.nutrition_per100 = base_nutrition.clone();
         for nutrient in ["calories", "fiber", "sodiumMg", "cholesterolMg"] {
-            let mut nutrition = json!(zero_nutrition());
+            let mut nutrition = json!(base_nutrition);
             nutrition[nutrient] = json!(1e308);
             consumption.snapshot.nutrition_per100 = serde_json::from_value(nutrition).unwrap();
             assert_valid(
@@ -3661,6 +4381,20 @@ mod tests {
                     .is_err(),
                     "{nutrient}"
                 );
+                if nutrient != "calories" {
+                    assert!(
+                        daily_nutrition_output(
+                            &[
+                                consumption.clone(),
+                                consumption.clone(),
+                                unknown_consumption.clone()
+                            ],
+                            include_extended
+                        )
+                        .is_err(),
+                        "partial {nutrient}"
+                    );
+                }
             }
         }
         assert_eq!(public_number(f64::MAX), f64::MAX);
@@ -3883,6 +4617,7 @@ mod tests {
         assert_authenticated_rejections_are_inert(&fixture, oidc, subject).await;
         dispatch_weight_contract(&fixture).await;
         dispatch_food_contract(&fixture).await;
+        dispatch_daily_completeness_contract(&fixture).await;
         dispatch_nutrition_overflow(&fixture).await;
 
         cleanup_identity_test_database(&fixture.db, &schema).await;
@@ -4206,7 +4941,7 @@ mod tests {
                 let empty = fixture.success("get_daily_log", args).await;
                 assert_eq!(empty["date"], date);
                 assert_eq!(empty["items"], json!([]));
-                assert_eq!(empty["totals"], json!(zero_nutrition()));
+                assert_eq!(empty["totals"], json!(empty_daily_totals()));
                 assert!(empty["totals"].get("extendedNutrition").is_none());
             }
         }
@@ -4358,6 +5093,15 @@ mod tests {
         assert!(daily["totals"].get("extendedNutrition").is_none());
         assert!(daily["totals"].get("fiber").is_none());
         assert_eq!(daily["totals"]["sodiumMg"], 0.0);
+        assert_eq!(
+            daily["totals"]["completeness"],
+            json!({
+                "itemCount": 5,
+                "fiber": {"knownItems": 0, "status": "unknown"},
+                "sodiumMg": {"knownItems": 4, "status": "partial"},
+                "cholesterolMg": {"knownItems": 4, "status": "partial"}
+            })
+        );
 
         let daily_opt_in = fixture
             .success(
@@ -4379,6 +5123,10 @@ mod tests {
         assert!(daily_opt_in["totals"].get("extendedNutrition").is_none());
         assert!(daily_opt_in["totals"].get("fiber").is_none());
         assert_eq!(daily_opt_in["totals"]["sodiumMg"], 0.0);
+        assert_eq!(
+            daily_opt_in["totals"]["completeness"],
+            daily["totals"]["completeness"]
+        );
 
         let deleted = fixture
             .success("delete_food_log", json!({"logId": scoop_id}))
@@ -4421,6 +5169,194 @@ mod tests {
             let result = fixture.call("update_food_log", patch).await;
             assert_tool_error(&result, "invalid_arguments");
         }
+    }
+
+    async fn dispatch_daily_completeness_contract(fixture: &ContractFixture) {
+        const PARTIAL_16_17_DAY: &str = "2025-01-07";
+        const INDEPENDENT_DAY: &str = "2025-01-08";
+        const EMPTY_DAY: &str = "2025-01-09";
+        const PARTIAL_OVERFLOW_DAY: &str = "2025-01-10";
+
+        let make_details =
+            |fiber: Option<f64>, sodium_mg: Option<f64>, cholesterol_mg: Option<f64>| FoodDetails {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100: NutritionValues {
+                    calories: 100.0,
+                    protein: 5.0,
+                    carbs: 10.0,
+                    fat: 2.0,
+                    fiber,
+                    sodium_mg,
+                    cholesterol_mg,
+                    extended_nutrition: [("ironMg".into(), 1.25)].into_iter().collect(),
+                },
+                portions: vec![],
+                chilean_seals: vec![],
+                brand: None,
+                category: None,
+                typical_time: None,
+            };
+
+        let known_fiber_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                known_fiber_id,
+                &format!("Known Fiber {known_fiber_id}"),
+                &make_details(Some(1.5), Some(20.0), Some(5.0)),
+            )
+            .await;
+        let missing_fiber_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                missing_fiber_id,
+                &format!("Missing Fiber {missing_fiber_id}"),
+                &make_details(None, Some(20.0), Some(5.0)),
+            )
+            .await;
+
+        // 16-of-17 partial fiber day
+        for _ in 0..16 {
+            fixture
+                .success(
+                    "log_food",
+                    log_args(known_fiber_id, 100.0, PARTIAL_16_17_DAY),
+                )
+                .await;
+        }
+        fixture
+            .success(
+                "log_food",
+                log_args(missing_fiber_id, 100.0, PARTIAL_16_17_DAY),
+            )
+            .await;
+
+        let mut events = fixture.hub.subscribe();
+        let (partial_day, partial_summary) = fixture
+            .success_with_summary("get_daily_log", json!({"date": PARTIAL_16_17_DAY}))
+            .await;
+        assert_no_invalidation(&mut events);
+        assert_eq!(partial_day["items"].as_array().unwrap().len(), 17);
+        assert_eq!(partial_day["totals"]["fiber"], json!(24.0));
+        assert_eq!(partial_day["totals"]["sodiumMg"], json!(340.0));
+        assert_eq!(partial_day["totals"]["cholesterolMg"], json!(85.0));
+        assert!(partial_day["totals"].get("extendedNutrition").is_none());
+        assert_eq!(
+            partial_day["totals"]["completeness"],
+            json!({
+                "itemCount": 17,
+                "fiber": {"knownItems": 16, "status": "partial"},
+                "sodiumMg": {"knownItems": 17, "status": "complete"},
+                "cholesterolMg": {"knownItems": 17, "status": "complete"}
+            })
+        );
+        assert!(partial_summary.contains(&format!(
+            "Hay 17 consumos registrados para {PARTIAL_16_17_DAY}."
+        )));
+        assert!(
+            partial_summary.contains("Totales parciales (solo consumos con dato): fibra (16/17).")
+        );
+        assert!(!partial_summary.contains("Sin datos disponibles"));
+
+        // Independent nutrient completeness + explicit zero
+        let zero_sodium_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                zero_sodium_id,
+                &format!("Zero Sodium {zero_sodium_id}"),
+                &make_details(Some(2.0), Some(0.0), None),
+            )
+            .await;
+        let unknown_micro_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                unknown_micro_id,
+                &format!("Unknown Micro {unknown_micro_id}"),
+                &make_details(Some(3.0), None, None),
+            )
+            .await;
+        fixture
+            .success("log_food", log_args(zero_sodium_id, 100.0, INDEPENDENT_DAY))
+            .await;
+        fixture
+            .success(
+                "log_food",
+                log_args(unknown_micro_id, 100.0, INDEPENDENT_DAY),
+            )
+            .await;
+
+        let mut events = fixture.hub.subscribe();
+        let (independent_day, independent_summary) = fixture
+            .success_with_summary(
+                "get_daily_log",
+                json!({"date": INDEPENDENT_DAY, "includeExtendedNutrition": true}),
+            )
+            .await;
+        assert_no_invalidation(&mut events);
+        assert_eq!(independent_day["totals"]["fiber"], json!(5.0));
+        assert_eq!(independent_day["totals"]["sodiumMg"], json!(0.0));
+        assert!(independent_day["totals"].get("cholesterolMg").is_none());
+        assert!(independent_day["totals"].get("extendedNutrition").is_none());
+        assert_eq!(
+            independent_day["totals"]["completeness"],
+            json!({
+                "itemCount": 2,
+                "fiber": {"knownItems": 2, "status": "complete"},
+                "sodiumMg": {"knownItems": 1, "status": "partial"},
+                "cholesterolMg": {"knownItems": 0, "status": "unknown"}
+            })
+        );
+        assert!(
+            independent_summary
+                .contains("Totales parciales (solo consumos con dato): sodio (1/2).")
+        );
+        assert!(independent_summary.contains("Sin datos disponibles para: colesterol."));
+        assert!(!independent_summary.contains("fibra"));
+
+        // Empty day: 0/0 complete with 0.0 for all 7 nutrients
+        let mut events = fixture.hub.subscribe();
+        let (empty_day, empty_summary) = fixture
+            .success_with_summary("get_daily_log", json!({"date": EMPTY_DAY}))
+            .await;
+        assert_no_invalidation(&mut events);
+        assert_eq!(empty_day["totals"], json!(empty_daily_totals()));
+        assert_eq!(
+            empty_summary,
+            format!("Hay 0 consumos registrados para {EMPTY_DAY}.")
+        );
+
+        // Partial-day overflow returns sanitized internal_error and emits no invalidation
+        let overflow_fiber_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                overflow_fiber_id,
+                &format!("Overflow Fiber {overflow_fiber_id}"),
+                &make_details(Some(1e308), None, None),
+            )
+            .await;
+        for _ in 0..2 {
+            fixture
+                .success(
+                    "log_food",
+                    log_args(overflow_fiber_id, 100.0, PARTIAL_OVERFLOW_DAY),
+                )
+                .await;
+        }
+        fixture
+            .success(
+                "log_food",
+                log_args(missing_fiber_id, 100.0, PARTIAL_OVERFLOW_DAY),
+            )
+            .await;
+        let mut events = fixture.hub.subscribe();
+        let overflow_result = fixture
+            .call("get_daily_log", json!({"date": PARTIAL_OVERFLOW_DAY}))
+            .await;
+        assert_eq!(
+            assert_tool_error(&overflow_result, "internal_error"),
+            NUTRITION_RENDER_ERROR
+        );
+        assert_no_invalidation(&mut events);
     }
 
     async fn dispatch_nutrition_overflow(fixture: &ContractFixture) {
@@ -4550,29 +5486,71 @@ mod tests {
 
     #[test]
     fn public_nutrition_removes_float_artifacts_after_scaling_and_aggregation() {
-        let mut total = zero_nutrition();
-        let mut first = zero_nutrition();
-        first.fat = 12.219999999999;
-        first.protein = 0.1;
-        first.sodium_mg = Some(10.12345678);
-        first.extended_nutrition.insert("ironMg".into(), 0.00000049);
-        let mut second = zero_nutrition();
-        second.protein = 0.2;
+        use crate::connectors::sync::{MealLogEntry, NutritionSnapshot};
+
+        let first = NutritionValues {
+            calories: 0.0,
+            protein: 0.1,
+            carbs: 0.0,
+            fat: 12.219999999999,
+            fiber: Some(0.0),
+            sodium_mg: Some(10.12345678),
+            cholesterol_mg: None,
+            extended_nutrition: [("ironMg".into(), 0.00000049)].into_iter().collect(),
+        };
+        let second = NutritionValues {
+            calories: 0.0,
+            protein: 0.2,
+            carbs: 0.0,
+            fat: 0.0,
+            fiber: Some(0.0),
+            sodium_mg: None,
+            cholesterol_mg: None,
+            extended_nutrition: Default::default(),
+        };
 
         let item = serde_json::to_value(nutrition_output(&first)).unwrap();
         assert_eq!(item["fat"], json!(12.22));
         assert_eq!(item["sodiumMg"], json!(10.123457));
         assert_eq!(item["extendedNutrition"]["ironMg"], json!(0.0));
 
-        add_nutrition(&mut total, &first);
-        add_nutrition(&mut total, &second);
-        let totals = serde_json::to_value(nutrition_output(&total)).unwrap();
+        let make_consumption = |index: u128, nutrition_per100: NutritionValues| Consumption {
+            id: Uuid::from_u128(index),
+            template_id: None,
+            name: format!("Float Artifact {index}"),
+            snapshot: NutritionSnapshot {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100,
+                brand: None,
+            },
+            canonical_quantity: 100.0,
+            entry: MealLogEntry {
+                entered_quantity: 100.0,
+                portion_snapshot: None,
+            },
+            consumed_at: index as i64,
+            updated_at: index as i64,
+        };
+        let (_, daily_totals) = daily_nutrition_output(
+            &[make_consumption(1, first), make_consumption(2, second)],
+            false,
+        )
+        .unwrap();
+        let totals = serde_json::to_value(daily_totals).unwrap();
         assert_eq!(totals["protein"], json!(0.3));
         assert_eq!(totals["fiber"], json!(0.0));
+        assert_eq!(totals["sodiumMg"], json!(10.123457));
+        assert_eq!(
+            totals["completeness"]["sodiumMg"],
+            json!({"knownItems": 1, "status": "partial"})
+        );
     }
 
     #[test]
     fn optional_fiber_is_preserved_across_mcp_input_output_and_aggregation() {
+        use crate::connectors::sync::{MealLogEntry, NutritionSnapshot};
+
         let operation_id = Uuid::new_v4();
         let without_fiber = parse_args::<CreateFoodArgs>(json!({
             "operationId": operation_id,
@@ -4616,23 +5594,66 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert!(!required.contains(&json!("fiber")));
 
-        let mut total = zero_nutrition();
-        let known = NutritionValues {
-            calories: 1.0,
-            protein: 1.0,
-            carbs: 1.0,
-            fat: 1.0,
-            fiber: Some(2.0),
-            sodium_mg: None,
-            cholesterol_mg: None,
-            extended_nutrition: Default::default(),
+        let make_consumption = |index: u128, fiber: Option<f64>| Consumption {
+            id: Uuid::from_u128(index),
+            template_id: None,
+            name: format!("Fiber {index}"),
+            snapshot: NutritionSnapshot {
+                schema_version: FOOD_SCHEMA_VERSION,
+                canonical_unit: CanonicalUnit::G,
+                nutrition_per100: NutritionValues {
+                    calories: 1.0,
+                    protein: 1.0,
+                    carbs: 1.0,
+                    fat: 1.0,
+                    fiber,
+                    sodium_mg: None,
+                    cholesterol_mg: None,
+                    extended_nutrition: Default::default(),
+                },
+                brand: None,
+            },
+            canonical_quantity: 100.0,
+            entry: MealLogEntry {
+                entered_quantity: 100.0,
+                portion_snapshot: None,
+            },
+            consumed_at: index as i64,
+            updated_at: index as i64,
         };
-        add_nutrition(&mut total, &known);
-        assert_eq!(total.fiber, Some(2.0));
-        let mut unknown = known;
-        unknown.fiber = None;
-        add_nutrition(&mut total, &unknown);
-        assert_eq!(total.fiber, None);
+        let known = make_consumption(1, Some(2.0));
+        let unknown = make_consumption(2, None);
+
+        let (_, known_totals) =
+            daily_nutrition_output(std::slice::from_ref(&known), false).unwrap();
+        assert_eq!(known_totals.fiber, Some(2.0));
+        assert_eq!(
+            known_totals.completeness.fiber,
+            NutrientCompleteness {
+                known_items: 1,
+                status: NutrientCompletenessStatus::Complete,
+            }
+        );
+
+        let (_, partial_totals) = daily_nutrition_output(&[known, unknown.clone()], false).unwrap();
+        assert_eq!(partial_totals.fiber, Some(2.0));
+        assert_eq!(
+            partial_totals.completeness.fiber,
+            NutrientCompleteness {
+                known_items: 1,
+                status: NutrientCompletenessStatus::Partial,
+            }
+        );
+
+        let (_, unknown_totals) = daily_nutrition_output(&[unknown], false).unwrap();
+        assert_eq!(unknown_totals.fiber, None);
+        assert_eq!(
+            unknown_totals.completeness.fiber,
+            NutrientCompleteness {
+                known_items: 0,
+                status: NutrientCompletenessStatus::Unknown,
+            }
+        );
     }
 
     #[test]
