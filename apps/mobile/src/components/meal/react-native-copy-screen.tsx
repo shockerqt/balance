@@ -6,8 +6,10 @@ import { Button, DateTimePickerField, Field, Sheet, Text } from '@/components/ui
 import { useAuth } from '@/hooks/use-auth';
 import { useMealStore } from '@/hooks/use-meal-store';
 import { useMealReceipt } from '@/hooks/use-meal-receipt';
+import { logsDateStore } from '@/hooks/use-logs-date';
 import { currentTimeString, todayId } from '@/lib/dates';
 import { CalendarMonth } from './calendar-month';
+import { ChoiceRow } from './choice-row';
 import { prepareSelectionCopy } from './native/copy-selection-contract';
 import { selectionSources } from './selection-sources';
 
@@ -32,20 +34,28 @@ function CopySession() {
   const [operationId] = useState(randomUUID);
   const [date, setDate] = useState(todayId);
   const [time, setTime] = useState(currentTimeString);
+  // 0 keeps each record's original Chile time; 1 moves every copy to one chosen time.
+  const [mode, setMode] = useState(0);
   const [calendar, setCalendar] = useState(false);
-  const receipt = useMealReceipt(() => router.back());
-  const input = { ...source, operationId, destinationDate: date, time };
-  return <Sheet title="Copiar registros" subtitle={`${source.ids.length} registros · conserva sus datos originales`} onClose={() => { if (!receipt.saving) router.back(); }} closeLabel="Cancelar">
+  // Show the destination day once the copies are durable on this phone.
+  const receipt = useMealReceipt(() => { logsDateStore.set(date); router.back(); });
+  // The receipt key includes the mode, so a plan is never reused across modes.
+  const input = { ...source, operationId, destinationDate: date, time: mode === 1 ? time : null };
+  // An empty override would mean "keep original hours" to the contract; in this mode it is a missing answer.
+  const missingTime = mode === 1 && !time.trim();
+  return <Sheet title="Copiar registros" subtitle={`${source.ids.length} registros · ${mode === 1 ? `a las ${time}` : 'a sus horas originales'}`} onClose={() => { if (!receipt.saving) router.back(); }} closeLabel="Cancelar">
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, gap: 18 }}>
       <Field label="Fecha de destino"><DateTimePickerField mode="date" accessibilityLabel="Fecha de destino" value={date} onChange={setDate} placeholder="AAAA-MM-DD" disabled={receipt.saving} /></Field>
       <Button title={calendar ? 'Ocultar calendario' : 'Elegir fecha'} size="md" variant="secondary" disabled={receipt.saving} onPress={() => setCalendar(!calendar)} />
       {calendar ? <CalendarMonth value={date} onChange={value => { setDate(value); setCalendar(false); }} disabled={receipt.saving} /> : null}
-      <Field label="Hora de destino"><DateTimePickerField mode="time" accessibilityLabel="Hora de destino" value={time} onChange={setTime} placeholder="HH:MM" disabled={receipt.saving} /></Field>
+      <ChoiceRow values={['Mismas horas originales', 'Elegir una hora']} selected={mode} onChange={setMode} disabled={receipt.saving} />
+      {mode === 1 ? <Field label="Hora de destino"><DateTimePickerField mode="time" accessibilityLabel="Hora de destino" value={time} onChange={setTime} placeholder="HH:MM" disabled={receipt.saving} /></Field> : null}
       <Text tone="secondary">Los registros originales se mantienen en su día.</Text>
+      {missingTime ? <Text accessibilityRole="alert" tone="danger">Elige una hora de destino.</Text> : null}
       {receipt.error ? <Text selectable accessibilityRole="alert" tone="danger">{receipt.error}</Text> : null}
-      <Button title="Copiar registros" loading={receipt.saving} disabled={receipt.saved} onPress={() => receipt.submit(JSON.stringify(input),
+      <Button title="Copiar registros" loading={receipt.saving} disabled={receipt.saved || missingTime} onPress={() => { if (missingTime) return; receipt.submit(JSON.stringify(input),
         () => prepareSelectionCopy(input, liveDocuments.current, randomUUID).documents,
-        () => { selectionSources(liveDocuments.current, source.sourceDate, source.ids, source.revisions); })} />
+        () => { selectionSources(liveDocuments.current, source.sourceDate, source.ids, source.revisions); }); }} />
     </ScrollView>
   </Sheet>;
 }

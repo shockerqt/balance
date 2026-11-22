@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareSelectionCopy, selectionCopyPlanIsCurrent } from '../src/components/meal/native/copy-selection-contract.ts';
 import { acceptDailyEvent } from '../src/components/meal/native/daily-log-contract.ts';
-import { epochForChileDateTime, toDateId } from '../src/lib/dates.ts';
+import { chileTimeString, epochForChileDateTime, toDateId } from '../src/lib/dates.ts';
 
 const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const date = '2026-10-30';
@@ -75,6 +75,44 @@ test('Chilean destination rejects impossible dates, DST holes and the unsupporte
   for (const [destinationDate, time] of [['2026-02-30', '10:15'], ['2026-09-06', '00:30'], ['1900-01-01', '12:00'], [date, '25:00']]) {
     assert.throws(() => prepareSelectionCopy({ ...request, destinationDate, time }, original, () => uuid(101), 2000));
   }
+});
+
+test('omitted, null or empty time keeps every source Chile time on the destination day; a time still overrides', () => {
+  const original = [meal(1, '08:15'), meal(2, '19:40'), meal(3, '23:59')];
+  for (const time of [undefined, null, '']) {
+    const request = { ...input(original), time };
+    if (time === undefined) delete request.time;
+    let id = 100;
+    const plan = prepareSelectionCopy(request, original, () => uuid(++id), 2000);
+    assert.deepEqual(plan.documents.map(d => chileTimeString(d.consumedAt)), ['08:15', '19:40', '23:59']);
+    assert.ok(plan.documents.every(d => toDateId(new Date(d.consumedAt)) === '2026-11-01'));
+    assert.deepEqual(plan.documents.map(d => d.consumedAt), ['08:15', '19:40', '23:59'].map(t => epochForChileDateTime('2026-11-01', t)));
+  }
+  let id = 100;
+  const fixed = prepareSelectionCopy(input(original), original, () => uuid(++id), 2000);
+  assert.ok(fixed.documents.every(d => d.consumedAt === epochForChileDateTime('2026-11-01', '14:25')));
+});
+
+test('original hours reject a nonexistent Chilean DST hour and invalid days before allocating any ID', () => {
+  const early = { ...meal(1, '00:30') }, morning = meal(2, '08:15');
+  let allocations = 0;
+  const allocate = () => uuid(100 + ++allocations);
+  assert.throws(() => prepareSelectionCopy({ ...input([morning, early]), destinationDate: '2026-09-06', time: null }, [morning, early], allocate, 2000),
+    /Las 00:30 no existen el 2026-09-06/);
+  for (const destinationDate of ['2026-02-30', '1900-01-01'])
+    assert.throws(() => prepareSelectionCopy({ ...input([morning]), destinationDate, time: null }, [morning], allocate, 2000), /no existe|válidas/);
+  assert.throws(() => prepareSelectionCopy({ ...input([morning]), time: 1415 }, [morning], allocate, 2000), /válidas/);
+  assert.equal(allocations, 0);
+  const plan = prepareSelectionCopy({ ...input([morning]), destinationDate: '2026-09-06', time: null }, [morning], allocate, 2000);
+  assert.equal(chileTimeString(plan.documents[0].consumedAt), '08:15');
+  assert.equal(toDateId(new Date(plan.documents[0].consumedAt)), '2026-09-06');
+});
+
+test('original hours on the repeated Chilean fall-back hour keep the wall-clock time and day', () => {
+  const late = meal(1, '23:30');
+  const plan = prepareSelectionCopy({ ...input([late]), destinationDate: '2026-04-04', time: null }, [late], () => uuid(101), 2000);
+  assert.equal(chileTimeString(plan.documents[0].consumedAt), '23:30');
+  assert.equal(toDateId(new Date(plan.documents[0].consumedAt)), '2026-04-04');
 });
 
 test('copy bridge binds operation, context, sequence and revision map before local preparation', () => {

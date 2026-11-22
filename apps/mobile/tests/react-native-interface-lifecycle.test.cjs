@@ -185,10 +185,10 @@ test('RN copy preserves historical snapshots, IDs on retry, original date and re
   let fail = true;
   const h = await harness('react-native-copy-screen', { commit: async () => { if (fail) throw Error('disk'); } });
   try {
-    await h.fill('Fecha de destino', '2026-11-01'); await h.fill('Hora de destino', '14:25'); await h.click('Copiar registros');
+    await h.fill('Fecha de destino', '2026-11-01'); await h.click('Elegir una hora'); await h.fill('Hora de destino', '14:25'); await h.click('Copiar registros');
     const doc = h.writes[0][0]; assert.notEqual(doc.id, uuid(1)); assert.deepEqual(doc.nutritionSnapshot, source().nutritionSnapshot);
     assert.deepEqual(doc.copySource, { id: uuid(1), updatedAt: 1000 }); assert.equal(h.backs.length, 0);
-    fail = false; await h.click('Copiar registros'); assert.strictEqual(h.writes[0], h.writes[1]); assert.equal(h.backs.length, 1); assert.deepEqual(h.selections, []);
+    fail = false; await h.click('Copiar registros'); assert.strictEqual(h.writes[0], h.writes[1]); assert.equal(h.backs.length, 1); assert.deepEqual(h.selections, ['2026-11-01']);
   } finally { await h.close(); }
   const stale = await harness('react-native-copy-screen');
   try { await stale.changeDocuments([{ ...source(), updatedAt: 1001 }]); await stale.click('Copiar registros'); assert.equal(stale.writes.length, 0); }
@@ -378,3 +378,169 @@ test('summary weight renderer keeps one observation at the right edge without a 
   const h=await weightLineHarness([{date:'2026-11-10',kg:70}]);
   try{assert.equal(lineSegments(h.tree).length,0);const dot=h.tree.root.findAllByType('View').find(n=>n.props.style?.width===10);near(dot.props.style.left,303);near(dot.props.style.top,3);}finally{await h.close();}
 });
+
+// --- BAL-105 copy/clipboard ---
+test('RN copy defaults to the original hours and shows the destination day after the durable receipt', async () => {
+  const h = await harness('react-native-copy-screen');
+  try {
+    assert.equal(h.field('Hora de destino'), undefined, 'the single-time field is hidden by default');
+    assert.match(h.sheet().props.subtitle, /horas originales/);
+    await h.fill('Fecha de destino', '2026-11-01'); await h.click('Copiar registros');
+    const doc = h.writes[0][0];
+    assert.equal(dates.chileTimeString(doc.consumedAt), '08:15'); assert.equal(dates.toDateId(new Date(doc.consumedAt)), '2026-11-01');
+    assert.deepEqual(h.selections, ['2026-11-01']); assert.equal(h.backs.length, 1);
+  } finally { await h.close(); }
+});
+
+test('RN copy rejects an original hour inside the Chilean DST gap and accepts an explicit override', async () => {
+  const h = await harness('react-native-copy-screen', { documents: [{ ...source(), consumedAt: dates.epochForChileDateTime(date, '00:30') }] });
+  try {
+    await h.fill('Fecha de destino', '2026-09-06'); await h.click('Copiar registros');
+    assert.equal(h.writes.length, 0); assert.ok(h.text().some(line => /Las 00:30 no existen/.test(line)));
+    await h.click('Elegir una hora'); await h.fill('Hora de destino', '09:00'); await h.click('Copiar registros');
+    assert.equal(h.writes.length, 1); assert.equal(dates.chileTimeString(h.writes[0][0].consumedAt), '09:00');
+    assert.deepEqual(h.selections, ['2026-09-06']);
+  } finally { await h.close(); }
+});
+
+test('RN copy does not treat an empty chosen time as the original hours', async () => {
+  const h = await harness('react-native-copy-screen');
+  try {
+    await h.fill('Fecha de destino', '2026-11-01'); await h.click('Elegir una hora'); await h.fill('Hora de destino', '');
+    assert.equal(h.button('Copiar registros').props.disabled, true);
+    await h.click('Copiar registros');
+    assert.equal(h.writes.length, 0); assert.ok(h.text().includes('Elige una hora de destino.'));
+    await h.fill('Hora de destino', '10:00'); await h.click('Copiar registros');
+    assert.equal(h.writes.length, 1); assert.equal(dates.chileTimeString(h.writes[0][0].consumedAt), '10:00');
+  } finally { await h.close(); }
+});
+
+async function clipboardDiary({ start = '2026-10-16', today = date, commit = async () => {} } = {}) {
+  const navigation = local('./src/lib/log-navigation.ts');
+  const nav = navigation.createLogNavigation(start);
+  const at = (day, time, n) => ({ ...source(), id: uuid(n), consumedAt: dates.epochForChileDateTime(day, time), updatedAt: 1000 + n });
+  let documents = [at(start, '08:15', 11), at(start, '19:40', 12)];
+  const listeners = new Set(), writes = [], pushes = [], alerts = [];
+  const publish = next => { documents = next; listeners.forEach(listener => listener()); };
+  const useDocuments = () => React.useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener); }, () => documents);
+  const actions = { deleteMultipleFoods() {}, registerMealLogs: async docs => { writes.push(docs); await commit(docs); publish([...documents, ...docs]); } };
+  const host = name => props => React.createElement(name, props, props.children);
+  const stubs = {
+    react: React, 'react/jsx-runtime': local('react/jsx-runtime'),
+    'react-native': { View: host('View'), Alert: { alert: (...args) => alerts.push(args) } },
+    'expo-router': { useRouter: () => ({ push: value => pushes.push(value) }), useFocusEffect: fn => React.useEffect(fn, [fn]) },
+    'expo-router/react-navigation': { useIsFocused: () => true },
+    'expo-crypto': { randomUUID: crypto.randomUUID },
+    'react-native-reanimated': { __esModule: true, default: { View: host('AnimatedView') }, useSharedValue: v => React.useRef({ value: v }).current,
+      useAnimatedStyle: () => ({}), useAnimatedReaction() {}, runOnJS: fn => fn },
+    '@/components/ui': { Button: host('Button'), Card: host('Card'), Text: host('Text') },
+    '@/hooks/use-meal-store': {
+      useMealDay: day => { const docs = useDocuments(); return React.useMemo(() => ({ foods: docs.filter(d => dates.toDateId(new Date(d.consumedAt)) === day).map(d => ({ id: d.id, name: 'Avena' })) }), [docs, day]); },
+      useMealHydrated: () => true, useMealActions: () => actions, useMealStore: () => ({ mealDocuments: useDocuments() }),
+    },
+    '@/hooks/use-preferences-store': { usePreferencesStore: () => ({}) },
+    '@/hooks/use-logs-date': { logsDateStore: nav,
+      useLogsSelectedDate: () => [React.useSyncExternalStore(nav.subscribe, nav.get), nav.set],
+      useLogsDateRevision: () => React.useSyncExternalStore(nav.subscribe, nav.getRevision) },
+    '@/lib/dates': dates,
+    './date-strip-header': { DateStripHeader: host('DateHeader') }, './sticky-macro-header': { StickyMacroHeader: host('Summary') },
+    './native-day-window': { NativeDayWindow: props => React.createElement('Pager', props, props.renderDay(props.dateId)) },
+    './meal-group-feed': { MealGroupFeed: host('Feed') },
+    './native/copy-selection-contract': local('./src/components/meal/native/copy-selection-contract.ts'),
+  };
+  const load = relative => {
+    const filename = path.join(root, relative), m = new Module(filename, module); m.filename = filename;
+    m.require = name => { if (name in stubs) return stubs[name]; throw Error('Unexpected ' + name); };
+    m._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, filename);
+    return m.exports;
+  };
+  stubs['@/hooks/use-food-selection'] = load('src/hooks/use-food-selection.ts');
+  const { ReactNativeDiary } = load('src/components/meal/react-native-diary.tsx');
+  let view;
+  await renderer.act(async () => { view = renderer.create(React.createElement(ReactNativeDiary, { today })); });
+  const button = title => view.root.findAllByType('Button').find(node => node.props.title === title);
+  return { nav, writes, pushes, alerts, button, at,
+    get documents() { return documents; },
+    pager: () => view.root.findByType('Pager').props,
+    async select(ids) { await renderer.act(async () => { view.root.findByType('Feed').props.onLongPressGroup(ids); }); },
+    async click(title) { assert.ok(button(title), `missing ${title}`); await renderer.act(async () => { await button(title).props.onPress(); }); },
+    async go(day) { await renderer.act(async () => { nav.set(day); }); },
+    async change(next) { await renderer.act(async () => { publish(next); }); },
+    async close() { await renderer.act(async () => view.unmount()); },
+  };
+}
+
+test('diary Copiar a Hoy copies the selection at its original hours and jumps to today', async () => {
+  const h = await clipboardDiary();
+  try {
+    await h.select([uuid(11), uuid(12)]);
+    assert.equal(h.pager().scrollEnabled, false);
+    await h.click('Copiar a Hoy');
+    assert.equal(h.writes.length, 1);
+    assert.deepEqual(h.writes[0].map(d => dates.chileTimeString(d.consumedAt)), ['08:15', '19:40']);
+    assert.ok(h.writes[0].every(d => dates.toDateId(new Date(d.consumedAt)) === date));
+    assert.equal(h.nav.get(), date); assert.equal(h.button('Copiar a Hoy'), undefined);
+  } finally { await h.close(); }
+  const future = await clipboardDiary({ start: '2026-10-25' });
+  try { await future.select([uuid(11)]); assert.ok(future.button('Copiar a Hoy'), 'future days also offer Copiar a Hoy'); }
+  finally { await future.close(); }
+  const today = await clipboardDiary({ start: date });
+  try { await today.select([uuid(11)]); assert.ok(today.button('Copiar')); assert.equal(today.button('Copiar a Hoy'), undefined); }
+  finally { await today.close(); }
+});
+
+test('diary Copiar a Hoy keeps the selection and its frozen IDs after a failed receipt', async () => {
+  let fail = true;
+  const h = await clipboardDiary({ commit: async () => { if (fail) throw Error('disk'); } });
+  try {
+    await h.select([uuid(11)]); await h.click('Copiar a Hoy');
+    assert.equal(h.alerts.length, 1); assert.equal(h.nav.get(), '2026-10-16'); assert.ok(h.button('Copiar a Hoy'));
+    fail = false; await h.click('Copiar a Hoy');
+    assert.deepEqual(h.writes[1].map(d => d.id), h.writes[0].map(d => d.id)); assert.equal(h.nav.get(), date);
+  } finally { await h.close(); }
+});
+
+test('diary Copiar keeps a clipboard across days, pastes at original hours on several days and guards double presses', async () => {
+  const gate = deferred();
+  let gated = false;
+  const h = await clipboardDiary({ commit: () => gated ? gate.promise : undefined });
+  try {
+    await h.select([uuid(11), uuid(12)]); await h.click('Copiar');
+    assert.equal(h.pager().scrollEnabled, true, 'copying unlocks day paging');
+    assert.ok(h.button('2 copiados · Cancelar'));
+    await h.go('2026-10-20'); await h.click('Pegar aquí');
+    assert.equal(h.writes.length, 1);
+    assert.ok(h.writes[0].every(d => dates.toDateId(new Date(d.consumedAt)) === '2026-10-20'));
+    assert.deepEqual(h.writes[0].map(d => dates.chileTimeString(d.consumedAt)), ['08:15', '19:40']);
+    assert.ok(h.button('Pegar aquí'), 'the clipboard stays open for another day');
+    await h.go('2026-10-21'); gated = true;
+    let first;
+    await renderer.act(async () => { first = h.button('Pegar aquí').props.onPress(); await h.button('Pegar aquí').props.onPress(); await tick(); });
+    await renderer.act(async () => { gate.resolve(); await first; await tick(); });
+    assert.equal(h.writes.length, 2, 'a second press while saving does not write again');
+    assert.ok(h.writes[1].every(d => dates.toDateId(new Date(d.consumedAt)) === '2026-10-21'));
+    assert.equal(new Set([...h.writes[0], ...h.writes[1]].map(d => d.id)).size, 4, 'each day paste is a fresh operation');
+    await h.select([h.writes[1][0].id]);
+    assert.equal(h.button('Pegar aquí'), undefined, 'the clipboard hides while a selection is active');
+    await h.click('1 seleccionados · Cancelar');
+    assert.ok(h.button('Pegar aquí'));
+    await h.click('2 copiados · Cancelar');
+    assert.equal(h.button('Pegar aquí'), undefined);
+  } finally { await h.close(); }
+});
+
+test('diary clipboard opens A fecha… with the copied revisions and rejects a changed source', async () => {
+  const h = await clipboardDiary();
+  try {
+    await h.select([uuid(11)]); await h.click('Copiar');
+    await h.click('A fecha…');
+    assert.deepEqual(h.pushes.pop(), { pathname: '/batch-copy', params: { dateId: '2026-10-16', ids: uuid(11), revisions: JSON.stringify({ [uuid(11)]: 1011 }) } });
+    assert.equal(h.button('Pegar aquí'), undefined, 'A fecha… hands the clipboard to the copy sheet');
+    await h.select([uuid(11)]); await h.click('Copiar');
+    await h.change(h.documents.map(d => d.id === uuid(11) ? { ...d, updatedAt: 2000 } : d));
+    await h.go('2026-10-20'); await h.click('Pegar aquí');
+    assert.equal(h.writes.length, 0); assert.match(h.alerts[0][1], /cambiaron/);
+    assert.ok(h.button('Pegar aquí'), 'a stale paste keeps the clipboard so the user can cancel or recopy');
+  } finally { await h.close(); }
+});
+// --- end BAL-105 copy/clipboard ---
