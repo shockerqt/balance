@@ -484,6 +484,220 @@ const FOOD_NAME_ALIASES: &[&[&str]] = &[
         "avocado",
         "avocados",
     ],
+    // Proteins & seafood
+    &["huevo", "huevos", "egg", "eggs"],
+    &["vacuno", "carne de vacuno", "res", "carne de res", "beef"],
+    &["cerdo", "chancho", "pork"],
+    &["pavo", "pavos", "turkey", "turkeys"],
+    &["cordero", "lamb"],
+    &["jamon", "ham"],
+    &["tocino", "panceta", "bacon"],
+    &["atun", "tuna"],
+    &["salmon", "salmones", "salmons"],
+    &["sardina", "sardinas", "sardine", "sardines"],
+    &["bacalao", "cod"],
+    &[
+        "camaron",
+        "camarones",
+        "gamba",
+        "gambas",
+        "shrimp",
+        "shrimps",
+        "prawn",
+        "prawns",
+    ],
+    // Vegetables & legumes
+    &["zanahoria", "zanahorias", "carrot", "carrots"],
+    &["choclo", "choclos", "maiz", "elote", "elotes", "corn"],
+    &[
+        "zapallo",
+        "zapallos",
+        "calabaza",
+        "calabazas",
+        "pumpkin",
+        "pumpkins",
+    ],
+    &[
+        "zapallo italiano",
+        "zapallos italianos",
+        "calabacin",
+        "calabacines",
+        "zucchini",
+        "zucchinis",
+    ],
+    &[
+        "betarraga",
+        "betarragas",
+        "remolacha",
+        "remolachas",
+        "beet",
+        "beets",
+        "beetroot",
+    ],
+    &["poroto", "porotos", "frijol", "frijoles", "bean", "beans"],
+    &[
+        "poroto verde",
+        "porotos verdes",
+        "ejote",
+        "ejotes",
+        "judia verde",
+        "judias verdes",
+        "green bean",
+        "green beans",
+    ],
+    &[
+        "arveja",
+        "arvejas",
+        "guisante",
+        "guisantes",
+        "chicharo",
+        "chicharos",
+        "pea",
+        "peas",
+    ],
+    &["lenteja", "lentejas", "lentil", "lentils"],
+    &["garbanzo", "garbanzos", "chickpea", "chickpeas"],
+    &[
+        "tomate",
+        "tomates",
+        "jitomate",
+        "jitomates",
+        "tomato",
+        "tomatoes",
+    ],
+    &["cebolla", "cebollas", "onion", "onions"],
+    &["ajo", "ajos", "garlic"],
+    &["lechuga", "lechugas", "lettuce"],
+    &["espinaca", "espinacas", "spinach"],
+    &["brocoli", "brocolis", "broccoli"],
+    &["coliflor", "coliflores", "cauliflower"],
+    &["repollo", "repollos", "col", "cabbage"],
+    &["pepino", "pepinos", "cucumber", "cucumbers"],
+    &[
+        "pimenton",
+        "pimentones",
+        "pimiento",
+        "pimientos",
+        "morron",
+        "morrones",
+        "bell pepper",
+        "bell peppers",
+    ],
+    &[
+        "champinon",
+        "champinones",
+        "hongo",
+        "hongos",
+        "seta",
+        "setas",
+        "mushroom",
+        "mushrooms",
+    ],
+    &["esparrago", "esparragos", "asparagus"],
+    &["apio", "celery"],
+    &[
+        "rabano",
+        "rabanos",
+        "rabanito",
+        "rabanitos",
+        "radish",
+        "radishes",
+    ],
+    &[
+        "camote",
+        "camotes",
+        "batata",
+        "batatas",
+        "boniato",
+        "boniatos",
+        "sweet potato",
+        "sweet potatoes",
+    ],
+    // Fruits
+    &[
+        "frutilla",
+        "frutillas",
+        "fresa",
+        "fresas",
+        "strawberry",
+        "strawberries",
+    ],
+    &[
+        "platano", "platanos", "banana", "bananas", "banano", "bananos",
+    ],
+    &["manzana", "manzanas", "apple", "apples"],
+    &["naranja", "naranjas", "orange", "oranges"],
+    &["limon", "limones", "lemon", "lemons", "lime", "limes"],
+    &["pera", "peras", "pear", "pears"],
+    &[
+        "durazno",
+        "duraznos",
+        "melocoton",
+        "melocotones",
+        "peach",
+        "peaches",
+    ],
+    &[
+        "damasco",
+        "damascos",
+        "albaricoque",
+        "albaricoques",
+        "apricot",
+        "apricots",
+    ],
+    &["uva", "uvas", "grape", "grapes"],
+    &["sandia", "sandias", "watermelon", "watermelons"],
+    &[
+        "pina",
+        "pinas",
+        "anana",
+        "ananas",
+        "pineapple",
+        "pineapples",
+    ],
+    &["arandano", "arandanos", "blueberry", "blueberries"],
+    &["frambuesa", "frambuesas", "raspberry", "raspberries"],
+    &["cereza", "cerezas", "cherry", "cherries"],
+    &["mango", "mangos", "mangoes"],
+    &["papaya", "papayas"],
+    // Dairy, grains, nuts & seeds
+    &["leche", "milk"],
+    &["queso", "quesos", "cheese", "cheeses"],
+    &["mantequilla", "manteca", "butter"],
+    &["yogur", "yogurt", "yogures", "yogurts", "yoghurt"],
+    &["arroz", "rice"],
+    &["avena", "oat", "oats", "oatmeal"],
+    &["pan", "panes", "bread", "breads"],
+    &["trigo", "wheat"],
+    &["cebada", "barley"],
+    &["centeno", "rye"],
+    &[
+        "fideo",
+        "fideos",
+        "tallarin",
+        "tallarines",
+        "pasta",
+        "noodle",
+        "noodles",
+    ],
+    &[
+        "mani",
+        "cacahuate",
+        "cacahuates",
+        "cacahuete",
+        "cacahuetes",
+        "peanut",
+        "peanuts",
+    ],
+    &["almendra", "almendras", "almond", "almonds"],
+    &["nuez", "nueces", "walnut", "walnuts"],
+    // Beverages, pantry, oils & condiments
+    &["cafe", "cafes", "coffee", "coffees"],
+    &["te negro", "black tea"],
+    &["te verde", "green tea"],
+    &["aceite de oliva", "olive oil"],
+    &["miel", "honey"],
+    &["azucar", "sugar", "sugars"],
 ];
 
 const FOOD_SEARCH_SQL: &str = r#"
@@ -2080,6 +2294,70 @@ mod tests {
             .await
             .unwrap();
         assert!(!datasource.weight_tracking_enabled(1).await.unwrap());
+    }
+
+    #[test]
+    fn food_name_aliases_are_curated_valid_and_unique() {
+        assert!(
+            (60..=80).contains(&FOOD_NAME_ALIASES.len()),
+            "expected 60..=80 alias groups, got {}",
+            FOOD_NAME_ALIASES.len()
+        );
+        assert_eq!(
+            FOOD_NAME_ALIASES[0],
+            &["pollo", "pollos", "chicken", "chickens"]
+        );
+        assert_eq!(
+            FOOD_NAME_ALIASES[1],
+            &["papa", "papas", "patata", "patatas", "potato", "potatoes"]
+        );
+        assert_eq!(
+            FOOD_NAME_ALIASES[2],
+            &[
+                "palta",
+                "paltas",
+                "aguacate",
+                "aguacates",
+                "avocado",
+                "avocados",
+            ]
+        );
+
+        let mut seen = std::collections::HashSet::new();
+        for (group_index, group) in FOOD_NAME_ALIASES.iter().enumerate() {
+            assert!(
+                group.len() >= 2,
+                "alias group {group_index} must contain at least 2 terms"
+            );
+            for &term in *group {
+                assert_eq!(
+                    term,
+                    term.trim(),
+                    "alias term {term:?} in group {group_index} must not have surrounding whitespace"
+                );
+                assert!(
+                    !term.contains("  "),
+                    "alias term {term:?} in group {group_index} must not contain consecutive spaces"
+                );
+                assert!(
+                    term.bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte == b' '),
+                    "alias term {term:?} in group {group_index} must use only lowercase ASCII letters and single spaces"
+                );
+                let letter_count = term
+                    .bytes()
+                    .filter(|byte| byte.is_ascii_lowercase())
+                    .count();
+                assert!(
+                    letter_count >= 3,
+                    "alias term {term:?} in group {group_index} must have at least 3 letters"
+                );
+                assert!(
+                    seen.insert(term),
+                    "duplicate alias term {term:?} found in group {group_index}"
+                );
+            }
+        }
     }
 }
 
