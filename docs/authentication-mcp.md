@@ -106,7 +106,7 @@ los IDs de porciones.
 
 | Herramienta | Uso |
 | --- | --- |
-| `search_foods` | Busca en el catálogo por nombre de alimento o marca. `query` debe tener de 1 a 120 caracteres tras recortar espacios. `source` acepta `all` (predeterminado), `personal` u `official`. `limit` va de 1 a 20 y por defecto es 10. Pasa el `foods[].id` seleccionado como `log_food.arguments.foodId`. |
+| `search_foods` | Busca en el catálogo por nombre o marca sin distinguir mayúsculas ni acentos. `query` debe tener de 1 a 120 caracteres tras recortar espacios. `source` acepta `all` (predeterminado), `personal` u `official`. `limit` va de 1 a 20 y por defecto es 10. Pasa el `foods[].id` seleccionado como `log_food.arguments.foodId`. |
 | `get_daily_log` | Lee un día de Santiago por llamada. `date` omitido equivale a hoy. Los consumos conservan una copia de los datos usados en el registro, incluida su nutrición y conversión. La respuesta incluye los totales nutricionales del día. |
 | `create_food` | Crea un alimento personal. `name` admite hasta 160 caracteres, `brand` opcional hasta 120 y `category` hasta 80. Admite hasta 50 porciones con nombre e ID único (hasta 80 caracteres por ID) y hasta cuatro sellos chilenos. Declara la nutrición por 100 g o 100 ml según `canonicalUnit`. Para reintentar la misma creación, reutiliza el mismo `operationId` y los mismos datos. |
 | `log_food` | Pon el `foods[].id` seleccionado en `arguments.foodId`. Envía una `quantity` positiva en g o ml según la unidad canónica. Con `portionId`, la cantidad es el número de porciones de ese tipo. Envía `date` y `time` juntos u omite ambos para usar la fecha y hora actuales. Para reintentar el mismo registro, reutiliza el mismo `operationId` y los mismos datos. |
@@ -115,6 +115,31 @@ los IDs de porciones.
 | `get_weight_history` | Requiere activar el seguimiento de peso en Configuración. Envía ambos límites inclusivos (`startDate` y `endDate`) u omite ambos. El rango debe estar ordenado y terminar como máximo hoy en Santiago. `limit` va de 1 a 366 y por defecto es 30. |
 | `set_weight` | Requiere seguimiento de peso. Guarda un valor por fecha de Santiago, entre 1 y 500 kg, con hasta un decimal. Repetir el mismo valor en la misma fecha es idempotente. Para restaurar un peso, usa `set_weight` con el valor y la fecha originales. |
 | `delete_weight_log` | Requiere seguimiento de peso y confirmar la fecha que se va a borrar. Omite `date` solo para operar sobre hoy. `deleted` indica que se borró la medición y `alreadyDeleted` que ya estaba borrada. Si la solicitud se reintenta, fija la misma fecha de Santiago. |
+
+### Búsqueda en el catálogo
+
+El catálogo combina nombres en español e inglés y conserva su escritura al
+mostrarlos. La búsqueda literal encuentra fragmentos en el nombre y la marca.
+Si toda la consulta coincide con una de estas variantes, también busca las
+demás como palabras completas en el nombre del alimento.
+
+| Alimento | Variantes |
+| --- | --- |
+| Pollo | `pollo`, `pollos`, `chicken`, `chickens` |
+| Papa | `papa`, `papas`, `patata`, `patatas`, `potato`, `potatoes` |
+| Palta | `palta`, `paltas`, `aguacate`, `aguacates`, `avocado`, `avocados` |
+
+Con `hasMore: true`, hay coincidencias elegibles fuera de la lista mostrada.
+Refina la consulta por nombre, marca o `source`. Si usaste un límite menor,
+puedes aumentarlo hasta 20. Por ejemplo, en un catálogo de prueba con 21
+alimentos «Avena lote», `{"query":"avena lote","limit":20}` deja fuera
+«Avena lote 21». `{"query":"avena lote 21"}` recupera el ID de ese alimento.
+
+Si la lista está vacía, vuelve a buscar en el otro idioma. Pide confirmación
+antes de crear un alimento. Una lista parcial deja pendiente la identificación
+del alimento y si se encuentra en el catálogo. Si hay varios candidatos,
+preséntalos con sus nombres y marcas y pide al usuario elegir un `foodId`.
+Usa `get_daily_log` para consultar consumos.
 
 Si una conexión se corta o expira después de enviar una escritura, conserva la
 identidad y los datos de esa operación para un reintento idempotente. Envía una

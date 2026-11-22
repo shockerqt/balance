@@ -2,8 +2,8 @@
 # Balance database schema snapshot
 
 - PostgreSQL major: 17
-- Migration head: `20261011010000 oidc user identities checksum=792859e88a932c5fadcb2e463066470c098e45bc2b53ba7a72368e0d19780056cde7894eaefbaa973908dbd8dc37c321`
-- Schema fingerprint: `sha256:a1e245ab4c1efe031d471abb64eee5a1afb7d4c5821c82bc625fdb344cfec05a`
+- Migration head: `20261121000000 food search indexes checksum=e5d83aefd10631c74de78e42a507092ee22509b55c985bb0c8d7903f5761d8324ae6b805066f4aa96f37ddcaa8febcde`
+- Schema fingerprint: `sha256:8ca0e651abe14955d56c27578258e40ad441dac010a283969833e57e280e2abe`
 
 The active SQLx migrations are the source of truth. This data-free catalog
 is generated for human and LLM inspection and is verified by CI.
@@ -105,6 +105,8 @@ INDEX|meal_logs|idx_meal_logs_sync|CREATE INDEX idx_meal_logs_sync ON public.mea
 INDEX|meal_logs|meal_logs_pkey|CREATE UNIQUE INDEX meal_logs_pkey ON public.meal_logs USING btree (id)
 INDEX|meal_templates|idx_meal_templates_import_identity|CREATE UNIQUE INDEX idx_meal_templates_import_identity ON public.meal_templates USING btree (user_id, source_provider, external_id) WHERE ((source_provider IS NOT NULL) AND (external_id IS NOT NULL))
 INDEX|meal_templates|idx_meal_templates_official|CREATE INDEX idx_meal_templates_official ON public.meal_templates USING btree (is_official, deleted_at)
+INDEX|meal_templates|idx_meal_templates_search_brand|CREATE INDEX idx_meal_templates_search_brand ON public.meal_templates USING gin (fold_food_search(COALESCE((details ->> 'brand'::text), ''::text)) gin_trgm_ops) WHERE (deleted_at IS NULL)
+INDEX|meal_templates|idx_meal_templates_search_name|CREATE INDEX idx_meal_templates_search_name ON public.meal_templates USING gin (fold_food_search((name)::text) gin_trgm_ops) WHERE (deleted_at IS NULL)
 INDEX|meal_templates|idx_meal_templates_sync|CREATE INDEX idx_meal_templates_sync ON public.meal_templates USING btree (user_id, updated_at, id)
 INDEX|meal_templates|meal_templates_pkey|CREATE UNIQUE INDEX meal_templates_pkey ON public.meal_templates USING btree (id)
 INDEX|oidc_user_identities|oidc_user_identities_pkey|CREATE UNIQUE INDEX oidc_user_identities_pkey ON public.oidc_user_identities USING btree (issuer, subject)

@@ -468,6 +468,94 @@ pub struct FoodTemplate {
     pub updated_at: i64,
 }
 
+pub struct FoodSearchResult {
+    pub foods: Vec<FoodTemplate>,
+    pub has_more: bool,
+}
+
+const FOOD_NAME_ALIASES: &[&[&str]] = &[
+    &["pollo", "pollos", "chicken", "chickens"],
+    &["papa", "papas", "patata", "patatas", "potato", "potatoes"],
+    &[
+        "palta",
+        "paltas",
+        "aguacate",
+        "aguacates",
+        "avocado",
+        "avocados",
+    ],
+];
+
+const FOOD_SEARCH_SQL: &str = r#"
+    SELECT id, user_id, is_official, name, details, source_provider, external_id,
+           updated_at, deleted_at
+    FROM meal_templates
+    WHERE deleted_at IS NULL
+      AND (user_id = $1 OR is_official = TRUE)
+      AND (
+            fold_food_search(name) LIKE $2 ESCAPE '\'
+         OR fold_food_search(COALESCE(details->>'brand', '')) LIKE $2 ESCAPE '\'
+         OR fold_food_search(name) ~ $6
+      )
+      AND (
+            $3 = 'all'
+         OR ($3 = 'personal' AND user_id = $1 AND is_official = FALSE)
+         OR ($3 = 'official' AND is_official = TRUE)
+      )
+    ORDER BY CASE
+                 WHEN fold_food_search(name) = $4 THEN 0
+                 WHEN fold_food_search(COALESCE(details->>'brand', '')) = $4 THEN 1
+                 ELSE 2
+             END,
+             is_official DESC,
+             name ASC,
+             id ASC
+    LIMIT $5
+"#;
+
+struct FoodSearchQuery {
+    folded: String,
+    pattern: String,
+    alias_pattern: Option<String>,
+}
+
+impl FoodSearchQuery {
+    async fn new(pool: &PgPool, query: &str) -> Result<Self, sqlx::Error> {
+        let folded: String = sqlx::query_scalar("SELECT fold_food_search($1)")
+            .bind(query.trim())
+            .fetch_one(pool)
+            .await?;
+        let escaped = folded
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let alias_pattern = FOOD_NAME_ALIASES
+            .iter()
+            .find(|group| group.contains(&folded.as_str()))
+            .map(|group| format!("(^|[^[:alnum:]])({})([^[:alnum:]]|$)", group.join("|")));
+        Ok(Self {
+            folded,
+            pattern: format!("%{escaped}%"),
+            alias_pattern,
+        })
+    }
+
+    fn bind<'a>(
+        &'a self,
+        user_id: i32,
+        source: &'a str,
+        limit: i64,
+    ) -> sqlx::query::QueryAs<'a, Postgres, MealTemplateRow, sqlx::postgres::PgArguments> {
+        sqlx::query_as(FOOD_SEARCH_SQL)
+            .bind(user_id)
+            .bind(&self.pattern)
+            .bind(source)
+            .bind(&self.folded)
+            .bind(limit + 1)
+            .bind(&self.alias_pattern)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Consumption {
@@ -1086,48 +1174,28 @@ impl SyncDatasource {
         query: &str,
         source: &str,
         limit: i64,
-    ) -> Result<Vec<FoodTemplate>, AppError> {
-        let escaped = query
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        let pattern = format!("%{escaped}%");
-        let rows = sqlx::query_as::<_, MealTemplateRow>(
-            r#"
-            SELECT id, user_id, is_official, name, details, source_provider, external_id,
-                   updated_at, deleted_at
-            FROM meal_templates
-            WHERE deleted_at IS NULL
-              AND (user_id = $1 OR is_official = TRUE)
-              AND (
-                    name ILIKE $2 ESCAPE '\'
-                 OR COALESCE(details->>'brand', '') ILIKE $2 ESCAPE '\'
-              )
-              AND (
-                    $3 = 'all'
-                 OR ($3 = 'personal' AND user_id = $1 AND is_official = FALSE)
-                 OR ($3 = 'official' AND is_official = TRUE)
-              )
-            ORDER BY CASE
-                         WHEN lower(name) = lower($4) THEN 0
-                         WHEN lower(COALESCE(details->>'brand', '')) = lower($4) THEN 1
-                         ELSE 2
-                     END,
-                     is_official DESC,
-                     name ASC,
-                     id ASC
-            LIMIT $5
-            "#,
-        )
-        .bind(user_id)
-        .bind(pattern)
-        .bind(source)
-        .bind(query)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+    ) -> Result<FoodSearchResult, AppError> {
+        let query = FoodSearchQuery::new(&self.pool, query).await?;
+        if query.folded.is_empty() {
+            return Ok(FoodSearchResult {
+                foods: Vec::new(),
+                has_more: false,
+            });
+        }
 
-        rows.into_iter().map(food_template_from_row).collect()
+        let mut rows = query
+            .bind(user_id, source, limit)
+            .fetch_all(&self.pool)
+            .await?;
+        let has_more = rows.len() > limit as usize;
+        if has_more {
+            rows.pop();
+        }
+        let foods = rows
+            .into_iter()
+            .map(food_template_from_row)
+            .collect::<Result<_, _>>()?;
+        Ok(FoodSearchResult { foods, has_more })
     }
 
     pub async fn create_personal_food(
@@ -2012,6 +2080,138 @@ mod tests {
             .await
             .unwrap();
         assert!(!datasource.weight_tracking_enabled(1).await.unwrap());
+    }
+}
+
+#[cfg(test)]
+mod food_search_tests {
+    use super::*;
+    use crate::connectors::user::{
+        cleanup_identity_test_database, isolated_identity_test_database,
+    };
+    use sqlx::Connection;
+
+    #[tokio::test]
+    #[ignore = "requires isolated PostgreSQL 17 and measures the production query plan"]
+    async fn food_search_index_plan() {
+        let (db, schema) = isolated_identity_test_database()
+            .await
+            .expect("set BALANCE_TEST_DATABASE_URL to an isolated PostgreSQL 17 database");
+        let pool = &db.sync.pool;
+        sqlx::raw_sql(
+            r#"
+            INSERT INTO meal_templates (id, name, details, updated_at, is_official)
+            SELECT md5(n::text)::uuid, 'Producto lote ' || n || ' %_',
+                   jsonb_build_object('brand', 'Marca lote ' || (n % 1000)), 1, true
+            FROM generate_series(1, 50000) AS n;
+            INSERT INTO meal_templates (id, name, details, updated_at, is_official)
+            VALUES ('00000000-0000-0000-0000-000000000001', 'Quínoa selectiva', '{}', 1, true),
+                   ('00000000-0000-0000-0000-000000000002', 'Bebida', '{"brand":"Viñedo singular"}', 1, true),
+                   ('00000000-0000-0000-0000-000000000003', 'Chicken fillet', '{}', 1, true);
+            "#,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        // Match the state after an index build by draining the bulk insert's GIN pending lists.
+        sqlx::query("VACUUM (ANALYZE) meal_templates")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let mut connection = pool.acquire().await.unwrap();
+        let settings: (String, String, String) = sqlx::query_as(
+            "SELECT current_setting('plan_cache_mode'), current_setting('enable_seqscan'),
+                    current_setting('server_version_num')",
+        )
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+        assert_eq!(settings.0, "auto");
+        assert_eq!(settings.1, "on");
+        assert!(settings.2.starts_with("17"), "{settings:?}");
+
+        for source in ["official", "all"] {
+            for (literal, expected) in [
+                ("quinoa", Some((1, "idx_meal_templates_search_name"))),
+                (
+                    "vinedo singular",
+                    Some((2, "idx_meal_templates_search_brand")),
+                ),
+                ("pollo", Some((3, "idx_meal_templates_search_name"))),
+                ("lote", None),
+                ("lo", None),
+                ("%_", None),
+            ] {
+                connection.clear_cached_statements().await.unwrap();
+                let query = FoodSearchQuery::new(pool, literal).await.unwrap();
+                let rows = query
+                    .bind(1, source, 20)
+                    .fetch_all(&mut *connection)
+                    .await
+                    .unwrap();
+                if let Some((id, _)) = expected {
+                    assert_eq!(
+                        rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+                        [Uuid::from_u128(id)]
+                    );
+                } else {
+                    assert_eq!(rows.len(), 21);
+                }
+
+                let explain: String = sqlx::query_scalar(
+                    "SELECT format('EXPLAIN (ANALYZE, BUFFERS) EXECUTE %I(%L, %L, %L, %L, %L, %L)',
+                                   name, 1, $2::text, $3::text, $4::text, 21, $5::text)
+                     FROM pg_prepared_statements WHERE statement = $1",
+                )
+                .bind(FOOD_SEARCH_SQL)
+                .bind(&query.pattern)
+                .bind(source)
+                .bind(&query.folded)
+                .bind(&query.alias_pattern)
+                .fetch_one(&mut *connection)
+                .await
+                .unwrap();
+
+                for phase in ["initial", "reused"] {
+                    if phase == "reused" {
+                        for _ in 0..8 {
+                            query
+                                .bind(1, source, 20)
+                                .fetch_all(&mut *connection)
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    let plan = sqlx::query_scalar::<_, String>(&explain)
+                        .persistent(false)
+                        .fetch_all(&mut *connection)
+                        .await
+                        .unwrap()
+                        .join("\n");
+                    let counts: (i64, i64) = sqlx::query_as(
+                        "SELECT custom_plans, generic_plans FROM pg_prepared_statements WHERE statement = $1",
+                    )
+                    .bind(FOOD_SEARCH_SQL)
+                    .fetch_one(&mut *connection)
+                    .await
+                    .unwrap();
+                    println!("{source} {literal:?} {phase} (custom, generic)={counts:?}\n{plan}");
+                    if let Some((_, index)) = expected {
+                        assert!(plan.contains(index), "{plan}");
+                        assert!(
+                            !plan
+                                .lines()
+                                .any(|line| line.contains("Seq Scan")
+                                    && line.contains("meal_templates")),
+                            "{plan}"
+                        );
+                    }
+                }
+            }
+        }
+        drop(connection);
+        cleanup_identity_test_database(&db, &schema).await;
     }
 }
 
