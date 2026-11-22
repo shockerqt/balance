@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -27,11 +27,12 @@ use crate::{
     connectors::{
         db::Database,
         sync::{
-            CanonicalUnit, Consumption, CreatePersonalFoodOutcome, DuplicatePersonalFood,
-            EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails, LogFoodTimeIntent,
-            MAX_BRAND_CHARS, MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES, NutritionValues,
-            PersonalFoodPatch, PortionDefinition, WeightLogRow, WeightUpsertStatus,
-            deserialize_optional_brand, validate_optional_brand,
+            BatchDeleteFoodLogStatus, CanonicalUnit, Consumption, CreatePersonalFoodOutcome,
+            DuplicatePersonalFood, EXTENDED_NUTRIENT_KEYS, FOOD_SCHEMA_VERSION, FoodDetails,
+            LogFoodTimeIntent, MAX_BATCH_DELETE_FOOD_LOG_IDS, MAX_BRAND_CHARS,
+            MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES, NutritionValues, PersonalFoodPatch,
+            PortionDefinition, WeightLogRow, WeightUpsertStatus, deserialize_optional_brand,
+            validate_optional_brand,
         },
     },
     modules::{
@@ -447,6 +448,12 @@ struct DeleteFoodLogArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BatchDeleteFoodLogArgs {
+    log_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GetWeightHistoryArgs {
     start_date: Option<String>,
     end_date: Option<String>,
@@ -709,6 +716,7 @@ fn known_tool(tool: &str) -> Option<&'static str> {
         "log_food" => Some("log_food"),
         "update_food_log" => Some("update_food_log"),
         "delete_food_log" => Some("delete_food_log"),
+        "batch_delete_food_log" => Some("batch_delete_food_log"),
         "get_weight_history" => Some("get_weight_history"),
         "set_weight" => Some("set_weight"),
         "delete_weight_log" => Some("delete_weight_log"),
@@ -1118,6 +1126,61 @@ async fn call_tool(
                     "status": "deleted",
                     "logId": consumption.id,
                     "updatedAt": consumption.updated_at
+                }),
+            })
+        }
+        "batch_delete_food_log" => {
+            let args: BatchDeleteFoodLogArgs = parse_args(args)?;
+            if !(1..=MAX_BATCH_DELETE_FOOD_LOG_IDS).contains(&args.log_ids.len()) {
+                return Err(AppError::BadRequest(
+                    "logIds must contain between 1 and 30 items".into(),
+                ));
+            }
+            let mut seen = HashSet::with_capacity(args.log_ids.len());
+            for id in &args.log_ids {
+                if !seen.insert(*id) {
+                    return Err(AppError::BadRequest(
+                        "logIds must not contain duplicate IDs".into(),
+                    ));
+                }
+            }
+            let batch = db
+                .sync
+                .batch_soft_delete_consumptions(user_id, &args.log_ids)
+                .await?;
+            if batch.deleted_count > 0 {
+                *mutated_collection = Some("mealLogs");
+            }
+            let summary = match (batch.deleted_count, batch.already_deleted_count) {
+                (1, 0) => "Se eliminó 1 consumo.".to_string(),
+                (d, 0) => format!("Se eliminaron {d} consumos."),
+                (0, 1) => "1 consumo ya estaba eliminado.".to_string(),
+                (0, a) => format!("Los {a} consumos ya estaban eliminados."),
+                (1, 1) => "Se eliminó 1 consumo (1 ya estaba eliminado).".to_string(),
+                (1, a) => format!("Se eliminó 1 consumo ({a} ya estaban eliminados)."),
+                (d, 1) => format!("Se eliminaron {d} consumos (1 ya estaba eliminado)."),
+                (d, a) => format!("Se eliminaron {d} consumos ({a} ya estaban eliminados)."),
+            };
+            let results: Vec<Value> = batch
+                .results
+                .iter()
+                .map(|item| {
+                    json!({
+                        "logId": item.log_id,
+                        "status": match item.status {
+                            BatchDeleteFoodLogStatus::Deleted => "deleted",
+                            BatchDeleteFoodLogStatus::AlreadyDeleted => "alreadyDeleted",
+                        },
+                        "updatedAt": item.updated_at,
+                    })
+                })
+                .collect();
+            Ok(ToolCallOutcome::Success {
+                summary,
+                structured: json!({
+                    "results": results,
+                    "deletedCount": batch.deleted_count,
+                    "alreadyDeletedCount": batch.already_deleted_count,
                 }),
             })
         }
@@ -2058,6 +2121,57 @@ pub(crate) fn tool_definitions() -> Value {
                     "updatedAt": { "type": "integer" }
                 },
                 "required": ["status", "logId", "updatedAt"],
+                "additionalProperties": false
+            },
+            "securitySchemes": auth,
+            "_meta": { "securitySchemes": auth },
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            }
+        },
+        {
+            "name": "batch_delete_food_log",
+            "title": "Eliminar varios consumos",
+            "description": "Elimina de forma reversible y atómica entre 1 y 30 consumos concretos en una sola operación. Confirma con el usuario el conjunto completo de registros seleccionados antes de usar esta herramienta.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "logIds": {
+                        "type": "array",
+                        "items": uuid_schema(),
+                        "minItems": 1,
+                        "maxItems": MAX_BATCH_DELETE_FOOD_LOG_IDS,
+                        "uniqueItems": true
+                    }
+                },
+                "required": ["logIds"],
+                "additionalProperties": false
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "results": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_BATCH_DELETE_FOOD_LOG_IDS,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "logId": uuid_schema(),
+                                "status": { "type": "string", "enum": ["deleted", "alreadyDeleted"] },
+                                "updatedAt": { "type": "integer" }
+                            },
+                            "required": ["logId", "status", "updatedAt"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "deletedCount": { "type": "integer", "minimum": 0 },
+                    "alreadyDeletedCount": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["results", "deletedCount", "alreadyDeletedCount"],
                 "additionalProperties": false
             },
             "securitySchemes": auth,
@@ -6069,12 +6183,13 @@ mod tests {
                 "log_food",
                 "update_food_log",
                 "delete_food_log",
+                "batch_delete_food_log",
                 "get_weight_history",
                 "set_weight",
                 "delete_weight_log"
             ]
         );
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
     }
 
     #[test]
@@ -6151,6 +6266,7 @@ mod tests {
             "log_food",
             "update_food_log",
             "delete_food_log",
+            "batch_delete_food_log",
         ];
         for name in mutation_tools {
             let tool = tools
@@ -6212,6 +6328,11 @@ mod tests {
         assert!(
             get_desc("delete_food_log")
                 .contains("Confirma con el usuario el registro seleccionado")
+        );
+        assert!(
+            get_desc("batch_delete_food_log").contains(
+                "Confirma con el usuario el conjunto completo de registros seleccionados"
+            )
         );
     }
 
@@ -8457,6 +8578,355 @@ mod tests {
         );
 
         cleanup_identity_test_database(&fixture_a.db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn batch_delete_food_log_schema_and_pre_db_validation() {
+        use crate::connectors::{
+            imports::ImportDatasource, sync::SyncDatasource, user::UserDatasource,
+        };
+
+        let tools = tool_definitions();
+        let tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "batch_delete_food_log")
+            .expect("batch_delete_food_log tool must be registered");
+
+        assert_eq!(tool["annotations"]["readOnlyHint"], false);
+        assert_eq!(tool["annotations"]["destructiveHint"], true);
+        assert_eq!(tool["annotations"]["idempotentHint"], true);
+        assert_eq!(tool["annotations"]["openWorldHint"], false);
+
+        let input_validator = validator(&tool["inputSchema"], true);
+        let output_validator = validator(&tool["outputSchema"], true);
+
+        let one_id = Uuid::new_v4().to_string();
+        let thirty_ids: Vec<String> = (0..30).map(|_| Uuid::new_v4().to_string()).collect();
+        let thirty_one_ids: Vec<String> = (0..31).map(|_| Uuid::new_v4().to_string()).collect();
+
+        // Valid input boundaries.
+        assert_valid(&input_validator, &json!({ "logIds": [one_id] }));
+        assert_valid(&input_validator, &json!({ "logIds": thirty_ids }));
+
+        // Invalid inputs rejected by Draft 2020-12 inputSchema.
+        assert!(!input_validator.is_valid(&json!({})));
+        assert!(!input_validator.is_valid(&json!({ "logIds": [] })));
+        assert!(!input_validator.is_valid(&json!({ "logIds": thirty_one_ids })));
+        assert!(!input_validator.is_valid(&json!({ "logIds": ["not-a-uuid"] })));
+        assert!(!input_validator.is_valid(&json!({ "logIds": [one_id, one_id] })));
+        assert!(!input_validator.is_valid(&json!({ "logIds": [one_id], "extra": true })));
+
+        // Valid and invalid outputs against Draft 2020-12 outputSchema.
+        assert_valid(
+            &output_validator,
+            &json!({
+                "results": [
+                    { "logId": one_id, "status": "deleted", "updatedAt": 1700000000001_i64 },
+                    { "logId": Uuid::new_v4(), "status": "alreadyDeleted", "updatedAt": 1700000000000_i64 }
+                ],
+                "deletedCount": 1,
+                "alreadyDeletedCount": 1
+            }),
+        );
+        assert!(!output_validator.is_valid(&json!({
+            "results": [],
+            "deletedCount": 0,
+            "alreadyDeletedCount": 0
+        })));
+        assert!(!output_validator.is_valid(&json!({
+            "results": [{ "logId": one_id, "status": "unknown", "updatedAt": 1 }],
+            "deletedCount": 1,
+            "alreadyDeletedCount": 0
+        })));
+        assert!(!output_validator.is_valid(&json!({
+            "results": [{ "logId": one_id, "status": "deleted", "updatedAt": 1, "extra": 1 }],
+            "deletedCount": 1,
+            "alreadyDeletedCount": 0
+        })));
+        assert!(!output_validator.is_valid(&json!({
+            "results": [{ "logId": one_id, "status": "deleted", "updatedAt": 1 }],
+            "deletedCount": -1,
+            "alreadyDeletedCount": 0
+        })));
+        assert!(!output_validator.is_valid(&json!({
+            "results": [{ "logId": one_id, "status": "deleted", "updatedAt": 1 }],
+            "deletedCount": 1,
+            "alreadyDeletedCount": 0,
+            "extra": true
+        })));
+
+        // Pre-DB runtime validation using a lazy disconnected pool must return invalid_arguments
+        // without touching PostgreSQL and emit zero SyncHub notifications.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://synthetic@127.0.0.1:1/unused")
+            .unwrap();
+        let db = Arc::new(Database {
+            user: UserDatasource { pool: pool.clone() },
+            sync: SyncDatasource::new(pool.clone()),
+            imports: ImportDatasource::new(pool),
+        });
+        let hub = SyncHub::default();
+        let mut events = hub.subscribe();
+
+        let dup_uuid = Uuid::new_v4();
+        let dup_lower = dup_uuid.hyphenated().to_string();
+        let dup_upper = dup_lower.to_uppercase();
+        let dup_simple = dup_uuid.simple().to_string();
+
+        let invalid_cases = vec![
+            json!({}),
+            json!({ "logIds": "not-an-array" }),
+            json!({ "logIds": [] }),
+            json!({ "logIds": thirty_one_ids }),
+            json!({ "logIds": ["not-a-uuid"] }),
+            json!({ "logIds": [dup_lower, dup_lower] }),
+            json!({ "logIds": [dup_lower, dup_upper] }),
+            json!({ "logIds": [dup_lower, dup_simple] }),
+            json!({ "logIds": [dup_lower], "unexpected": 1 }),
+        ];
+
+        for case in invalid_cases {
+            let res = dispatch(&db, &hub, 1, "batch_delete_food_log", case.clone()).await;
+            assert_tool_error(&res, "invalid_arguments");
+        }
+        assert!(
+            events.try_recv().is_err(),
+            "validation failures must not emit SyncHub notifications"
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_delete_food_log_contract_and_notifications_postgres() {
+        use crate::connectors::user::{
+            NewUser, cleanup_identity_test_database, isolated_identity_test_database,
+        };
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+        let user_a = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal104-mcp-user-a",
+                &NewUser {
+                    email: "mcp-bdfl-a@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+        let user_b = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal104-mcp-user-b",
+                &NewUser {
+                    email: "mcp-bdfl-b@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let fixture = ContractFixture::new(db, user_a.id);
+        let mut events = fixture.hub.subscribe();
+
+        let food_id = Uuid::new_v4();
+        fixture
+            .seed_food(
+                food_id,
+                "Manzana Batch",
+                &FoodDetails {
+                    schema_version: FOOD_SCHEMA_VERSION,
+                    canonical_unit: CanonicalUnit::G,
+                    nutrition_per100: NutritionValues {
+                        calories: 52.0,
+                        protein: 0.3,
+                        carbs: 14.0,
+                        fat: 0.2,
+                        fiber: Some(2.4),
+                        sodium_mg: None,
+                        cholesterol_mg: None,
+                        extended_nutrition: Default::default(),
+                    },
+                    portions: vec![],
+                    chilean_seals: vec![],
+                    brand: None,
+                    category: None,
+                    typical_time: None,
+                },
+            )
+            .await;
+
+        async fn create_log(f: &ContractFixture, food_id: Uuid, date: &str, time: &str) -> Uuid {
+            let op_id = Uuid::new_v4();
+            let res = f
+                .success(
+                    "log_food",
+                    json!({
+                        "operationId": op_id,
+                        "foodId": food_id,
+                        "quantity": 100.0,
+                        "date": date,
+                        "time": time
+                    }),
+                )
+                .await;
+            Uuid::parse_str(res["log"]["id"].as_str().unwrap()).unwrap()
+        }
+
+        let log_1 = create_log(&fixture, food_id, "2026-04-15", "08:00").await;
+        let log_2 = create_log(&fixture, food_id, "2026-04-15", "09:00").await;
+        let log_3 = create_log(&fixture, food_id, "2026-04-15", "10:00").await;
+        while events.try_recv().is_ok() {}
+
+        // 1-item delete emits exactly one mealLogs notification.
+        let single = fixture
+            .success("batch_delete_food_log", json!({ "logIds": [log_1] }))
+            .await;
+        assert_eq!(single["deletedCount"], 1);
+        assert_eq!(single["alreadyDeletedCount"], 0);
+        assert_eq!(single["results"][0]["logId"], log_1.to_string());
+        assert_eq!(single["results"][0]["status"], "deleted");
+        let log_1_ts = single["results"][0]["updatedAt"].as_i64().unwrap();
+        fixture.assert_meal_invalidation(&mut events);
+        assert!(events.try_recv().is_err());
+
+        // Replay of already-deleted row returns alreadyDeleted with preserved updatedAt and zero notifications.
+        let single_replay = fixture
+            .success("batch_delete_food_log", json!({ "logIds": [log_1] }))
+            .await;
+        assert_eq!(single_replay["deletedCount"], 0);
+        assert_eq!(single_replay["alreadyDeletedCount"], 1);
+        assert_eq!(single_replay["results"][0]["status"], "alreadyDeleted");
+        assert_eq!(single_replay["results"][0]["updatedAt"], log_1_ts);
+        assert!(
+            events.try_recv().is_err(),
+            "all-tombstone replay must emit zero SyncHub notifications"
+        );
+
+        // Mixed batch preserves request order, keeps tombstone timestamp, advances active rows, and emits 1 notification.
+        let mixed = fixture
+            .success(
+                "batch_delete_food_log",
+                json!({ "logIds": [log_3, log_1, log_2] }),
+            )
+            .await;
+        assert_eq!(mixed["deletedCount"], 2);
+        assert_eq!(mixed["alreadyDeletedCount"], 1);
+        assert_eq!(mixed["results"][0]["logId"], log_3.to_string());
+        assert_eq!(mixed["results"][0]["status"], "deleted");
+        assert_eq!(mixed["results"][1]["logId"], log_1.to_string());
+        assert_eq!(mixed["results"][1]["status"], "alreadyDeleted");
+        assert_eq!(mixed["results"][1]["updatedAt"], log_1_ts);
+        assert_eq!(mixed["results"][2]["logId"], log_2.to_string());
+        assert_eq!(mixed["results"][2]["status"], "deleted");
+        fixture.assert_meal_invalidation(&mut events);
+        assert!(events.try_recv().is_err());
+
+        // Missing ID or foreign-user ID mixed with valid active ID returns identical generic not_found,
+        // performs zero writes, and emits zero notifications.
+        let active_keep = create_log(&fixture, food_id, "2026-04-15", "11:00").await;
+        while events.try_recv().is_ok() {}
+        let foreign_log_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO meal_logs (id, user_id, template_id, name_snapshot, nutrition_snapshot, canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at) \
+             VALUES ($1, $2, NULL, 'Foreign Log', '{\"calories\":10,\"protein\":1,\"carbs\":1,\"fat\":0}'::jsonb, 50.0, '{\"mode\":\"canonical\",\"canonicalUnit\":\"g\"}'::jsonb, 1700000000000, 1000, NULL)",
+        )
+        .bind(foreign_log_id)
+        .bind(user_b.id)
+        .execute(&fixture.db.sync.pool)
+        .await
+        .unwrap();
+
+        let missing_id = Uuid::new_v4();
+        let err_missing = fixture
+            .call(
+                "batch_delete_food_log",
+                json!({ "logIds": [active_keep, missing_id] }),
+            )
+            .await;
+        let err_foreign = fixture
+            .call(
+                "batch_delete_food_log",
+                json!({ "logIds": [active_keep, foreign_log_id] }),
+            )
+            .await;
+        assert_tool_error(&err_missing, "not_found");
+        assert_tool_error(&err_foreign, "not_found");
+        assert_eq!(err_missing["content"], err_foreign["content"]);
+        let err_text = err_missing["content"][0]["text"].as_str().unwrap();
+        assert!(!err_text.contains(&missing_id.to_string()));
+        assert!(!err_text.contains(&foreign_log_id.to_string()));
+        assert!(!err_text.contains(&active_keep.to_string()));
+        assert!(
+            events.try_recv().is_err(),
+            "not_found rollback must emit zero SyncHub notifications"
+        );
+        let active_deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM meal_logs WHERE id = $1")
+                .bind(active_keep)
+                .fetch_one(&fixture.db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(active_deleted_at, None);
+
+        // 30-item batch succeeds, preserves order, emits 1 notification, and is visible in pull_meal_logs.
+        let mut thirty_ids = Vec::with_capacity(MAX_BATCH_DELETE_FOOD_LOG_IDS);
+        for idx in 0..MAX_BATCH_DELETE_FOOD_LOG_IDS {
+            let id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO meal_logs (id, user_id, template_id, name_snapshot, nutrition_snapshot, canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at) \
+                 VALUES ($1, $2, NULL, 'Batch Item', '{\"calories\":10,\"protein\":1,\"carbs\":1,\"fat\":0}'::jsonb, 10.0, '{\"mode\":\"canonical\",\"canonicalUnit\":\"g\"}'::jsonb, $3, 5000, NULL)",
+            )
+            .bind(id)
+            .bind(user_a.id)
+            .bind(1_700_000_000_000_i64 + idx as i64)
+            .execute(&fixture.db.sync.pool)
+            .await
+            .unwrap();
+            thirty_ids.push(id);
+        }
+        let batch_30 = fixture
+            .success("batch_delete_food_log", json!({ "logIds": thirty_ids }))
+            .await;
+        assert_eq!(batch_30["deletedCount"], 30);
+        assert_eq!(batch_30["alreadyDeletedCount"], 0);
+        let returned_30: Vec<String> = batch_30["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["logId"].as_str().unwrap().to_owned())
+            .collect();
+        let expected_30: Vec<String> = thirty_ids.iter().map(Uuid::to_string).collect();
+        assert_eq!(returned_30, expected_30);
+        fixture.assert_meal_invalidation(&mut events);
+        assert!(events.try_recv().is_err());
+
+        let pulled = fixture
+            .db
+            .sync
+            .pull_meal_logs(user_a.id, 5000, None, 100)
+            .await
+            .unwrap();
+        for id in &thirty_ids {
+            let row = pulled
+                .iter()
+                .find(|r| r.id == *id)
+                .expect("row must be pulled");
+            assert_eq!(row.deleted_at, Some(row.updated_at));
+        }
+
+        cleanup_identity_test_database(&fixture.db, &schema).await;
     }
 }
 

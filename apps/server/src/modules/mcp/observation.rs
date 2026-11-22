@@ -1946,6 +1946,101 @@ mod tests {
         assert!(!output.contains(secret_name));
         assert!(!output.contains(secret_brand));
     }
+
+    #[test]
+    fn batch_delete_food_log_is_classified_and_redacted() {
+        let capture = Capture::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(logging_filter(None))
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish();
+        let secret_log_id_1 = "aaaaaaaa-1111-4222-8333-444444444444";
+        let secret_log_id_2 = "bbbbbbbb-5555-4666-8777-888888888888";
+        let secret_rpc_id = "SECRET_RPC_ID_BAL104";
+        let secret_bearer = "SECRET_BEARER_TOKEN_BAL104";
+        let secret_user_marker = "SECRET_USER_987654";
+
+        tracing::subscriber::with_default(subscriber, || {
+            let observer = Arc::new(Observer::new());
+
+            let ok_obs = Observation::new(observer.clone(), &Method::POST);
+            ok_obs.request("tools/call", Some("batch_delete_food_log"));
+            let ok_resp = super::super::tool_success(
+                json!(secret_rpc_id),
+                "Se eliminaron 2 consumos.",
+                json!({
+                    "results": [
+                        { "logId": secret_log_id_1, "status": "deleted", "updatedAt": 1_700_000_000_001_i64 },
+                        { "logId": secret_log_id_2, "status": "alreadyDeleted", "updatedAt": 1_700_000_000_000_i64 }
+                    ],
+                    "deletedCount": 1,
+                    "alreadyDeletedCount": 1
+                }),
+                Some(&ok_obs),
+            );
+            ok_obs.response_prepared(&ok_resp);
+
+            let invalid_obs = Observation::new(observer.clone(), &Method::POST);
+            invalid_obs.request("tools/call", Some("batch_delete_food_log"));
+            let invalid_resp = super::super::tool_failure(
+                json!(secret_rpc_id),
+                crate::shared::error::AppError::BadRequest(format!(
+                    "Duplicate {secret_log_id_1} for {secret_user_marker} with {secret_bearer}"
+                )),
+                Some(&invalid_obs),
+            );
+            invalid_obs.response_prepared(&invalid_resp);
+
+            let not_found_obs = Observation::new(observer.clone(), &Method::POST);
+            not_found_obs.request("tools/call", Some("batch_delete_food_log"));
+            let not_found_resp = super::super::tool_failure(
+                json!(secret_rpc_id),
+                crate::shared::error::AppError::NotFound("Consumption not found".into()),
+                Some(&not_found_obs),
+            );
+            not_found_obs.response_prepared(&not_found_resp);
+
+            let budget = observer.budget.lock().unwrap();
+            assert_eq!(budget.admitted[EventClass::KnownToolSuccess as usize], 1);
+            assert_eq!(budget.admitted[EventClass::ToolError as usize], 2);
+        });
+
+        let output = capture.text();
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"batch_delete_food_log\"",
+                "outcome=\"tool_success\"",
+                "first_text_json=\"matches\"",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"batch_delete_food_log\"",
+                "outcome=\"tool_error\"",
+                "error_class=\"invalid_arguments\"",
+            ],
+        );
+        assert_event(
+            &output,
+            &[
+                "event=\"tool_result_prepared\"",
+                "tool=\"batch_delete_food_log\"",
+                "outcome=\"tool_error\"",
+                "error_class=\"not_found\"",
+            ],
+        );
+        assert!(!output.contains(secret_log_id_1));
+        assert!(!output.contains(secret_log_id_2));
+        assert!(!output.contains(secret_rpc_id));
+        assert!(!output.contains(secret_bearer));
+        assert!(!output.contains(secret_user_marker));
+        assert!(!output.contains("1700000000001"));
+    }
 }
 
 async fn observe_request(

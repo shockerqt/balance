@@ -11,6 +11,30 @@ pub const FOOD_SCHEMA_VERSION: i32 = 2;
 pub const MCP_RECEIPT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_BRAND_CHARS: usize = 120;
 pub const MAX_DUPLICATE_PERSONAL_FOOD_CANDIDATES: usize = 3;
+pub const MAX_BATCH_DELETE_FOOD_LOG_IDS: usize = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BatchDeleteFoodLogStatus {
+    Deleted,
+    AlreadyDeleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDeleteFoodLogItem {
+    pub log_id: Uuid,
+    pub status: BatchDeleteFoodLogStatus,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDeleteFoodLogResult {
+    pub results: Vec<BatchDeleteFoodLogItem>,
+    pub deleted_count: usize,
+    pub already_deleted_count: usize,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -2613,6 +2637,159 @@ impl SyncDatasource {
         consumption_from_row(row)
     }
 
+    pub async fn batch_soft_delete_consumptions(
+        &self,
+        user_id: i32,
+        log_ids: &[Uuid],
+    ) -> Result<BatchDeleteFoodLogResult, AppError> {
+        self.batch_soft_delete_consumptions_impl(
+            user_id,
+            log_ids,
+            #[cfg(test)]
+            None,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    async fn batch_soft_delete_consumptions_with_hook(
+        &self,
+        user_id: i32,
+        log_ids: &[Uuid],
+        after_lock: Option<AsyncTestHook>,
+    ) -> Result<BatchDeleteFoodLogResult, AppError> {
+        self.batch_soft_delete_consumptions_impl(user_id, log_ids, after_lock)
+            .await
+    }
+
+    async fn batch_soft_delete_consumptions_impl(
+        &self,
+        user_id: i32,
+        log_ids: &[Uuid],
+        #[cfg(test)] after_lock: Option<AsyncTestHook>,
+    ) -> Result<BatchDeleteFoodLogResult, AppError> {
+        use std::collections::{HashMap, HashSet};
+
+        if log_ids.is_empty() || log_ids.len() > MAX_BATCH_DELETE_FOOD_LOG_IDS {
+            return Err(AppError::BadRequest(
+                "logIds must contain between 1 and 30 items".into(),
+            ));
+        }
+
+        let mut seen = HashSet::with_capacity(log_ids.len());
+        for id in log_ids {
+            if !seen.insert(*id) {
+                return Err(AppError::BadRequest(
+                    "logIds must not contain duplicate IDs".into(),
+                ));
+            }
+        }
+
+        let mut sorted_ids = log_ids.to_vec();
+        sorted_ids.sort_unstable();
+
+        let mut tx = self.pool.begin().await?;
+
+        // Lock owned rows in deterministic ascending UUID order using a narrow projection so
+        // deletion never fails on historical nutrition_snapshot / entry_snapshot decoding.
+        let locked_rows: Vec<(Uuid, i64, Option<i64>)> = sqlx::query_as(
+            r#"
+            SELECT id, updated_at, deleted_at
+            FROM meal_logs
+            WHERE user_id = $1 AND id = ANY($2)
+            ORDER BY id ASC
+            FOR UPDATE
+            "#,
+        )
+        .bind(user_id)
+        .bind(&sorted_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        #[cfg(test)]
+        if let Some(hook) = after_lock {
+            hook.await;
+        }
+
+        if locked_rows.len() != sorted_ids.len() {
+            return Err(AppError::NotFound("Consumption not found".into()));
+        }
+
+        let mut active_ids = Vec::with_capacity(locked_rows.len());
+        let mut persisted: HashMap<Uuid, (BatchDeleteFoodLogStatus, i64)> =
+            HashMap::with_capacity(locked_rows.len());
+
+        for (id, updated_at, deleted_at) in locked_rows {
+            if deleted_at.is_some() {
+                persisted.insert(id, (BatchDeleteFoodLogStatus::AlreadyDeleted, updated_at));
+            } else {
+                active_ids.push(id);
+            }
+        }
+
+        if !active_ids.is_empty() {
+            // Unlike single soft_delete_consumption (which uses wall-clock ms directly),
+            // advance each active row's revision monotonically via GREATEST(now_ms, updated_at + 1)
+            // so same-millisecond or future-dated rows remain visible to pull_meal_logs cursors.
+            let updated_rows: Vec<(Uuid, i64, Option<i64>)> = sqlx::query_as(
+                r#"
+                WITH now_ms AS (
+                    SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS ts
+                )
+                UPDATE meal_logs
+                SET deleted_at = GREATEST(now_ms.ts, meal_logs.updated_at + 1),
+                    updated_at = GREATEST(now_ms.ts, meal_logs.updated_at + 1)
+                FROM now_ms
+                WHERE meal_logs.user_id = $1
+                  AND meal_logs.id = ANY($2)
+                  AND meal_logs.deleted_at IS NULL
+                RETURNING meal_logs.id, meal_logs.updated_at, meal_logs.deleted_at
+                "#,
+            )
+            .bind(user_id)
+            .bind(&active_ids)
+            .fetch_all(&mut *tx)
+            .await?;
+
+            if updated_rows.len() != active_ids.len() {
+                return Err(AppError::Internal(
+                    "Batch delete updated an unexpected number of rows".into(),
+                ));
+            }
+
+            for (id, updated_at, _deleted_at) in updated_rows {
+                persisted.insert(id, (BatchDeleteFoodLogStatus::Deleted, updated_at));
+            }
+        }
+
+        tx.commit().await?;
+
+        let mut deleted_count = 0usize;
+        let mut already_deleted_count = 0usize;
+        let mut results = Vec::with_capacity(log_ids.len());
+
+        for id in log_ids {
+            let (status, updated_at) = persisted.get(id).copied().ok_or_else(|| {
+                AppError::Internal("Batch delete result missing locked row".into())
+            })?;
+            match status {
+                BatchDeleteFoodLogStatus::Deleted => deleted_count += 1,
+                BatchDeleteFoodLogStatus::AlreadyDeleted => already_deleted_count += 1,
+            }
+            results.push(BatchDeleteFoodLogItem {
+                log_id: *id,
+                status,
+                updated_at,
+            });
+        }
+
+        Ok(BatchDeleteFoodLogResult {
+            results,
+            deleted_count,
+            already_deleted_count,
+        })
+    }
+
     pub async fn current_santiago_date(&self) -> Result<String, AppError> {
         let date = sqlx::query_scalar::<_, String>(
             "SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD')",
@@ -5069,6 +5246,393 @@ mod copy_tests {
             .unwrap();
         assert!(broken_already_2);
         assert_eq!(broken_ts_2, broken_ts);
+
+        cleanup_identity_test_database(&db, &schema).await;
+    }
+
+    #[tokio::test]
+    async fn batch_delete_food_log_datasource_postgres() {
+        use crate::connectors::user::NewUser;
+        use std::time::Duration;
+        use tokio::sync::oneshot;
+
+        let Some((db, schema)) = isolated_identity_test_database().await else {
+            return;
+        };
+
+        let user_a = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal104-sync-user-a",
+                &NewUser {
+                    email: "sync-bdfl-a@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+        let user_b = db
+            .user
+            .provision_identity(
+                "https://issuer.example.invalid",
+                "bal104-sync-user-b",
+                &NewUser {
+                    email: "sync-bdfl-b@test.invalid".into(),
+                    name: None,
+                    given_name: None,
+                    family_name: None,
+                    picture: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Defensive validation rejects empty, > 30, and duplicate IDs.
+        assert!(matches!(
+            db.sync.batch_soft_delete_consumptions(user_a.id, &[]).await,
+            Err(AppError::BadRequest(_))
+        ));
+        let too_many: Vec<Uuid> = (0..=MAX_BATCH_DELETE_FOOD_LOG_IDS)
+            .map(|_| Uuid::new_v4())
+            .collect();
+        assert!(matches!(
+            db.sync
+                .batch_soft_delete_consumptions(user_a.id, &too_many)
+                .await,
+            Err(AppError::BadRequest(_))
+        ));
+        let dup_id = Uuid::new_v4();
+        assert!(matches!(
+            db.sync
+                .batch_soft_delete_consumptions(user_a.id, &[dup_id, dup_id])
+                .await,
+            Err(AppError::BadRequest(_))
+        ));
+
+        let insert_log = |pool: PgPool,
+                          id: Uuid,
+                          user_id: i32,
+                          updated_at: i64,
+                          deleted_at: Option<i64>,
+                          broken_json: bool| async move {
+            let nutrition = if broken_json {
+                serde_json::json!({ "broken": true })
+            } else {
+                serde_json::json!({
+                    "calories": 100.0,
+                    "protein": 5.0,
+                    "carbs": 10.0,
+                    "fat": 2.0
+                })
+            };
+            let entry = if broken_json {
+                serde_json::json!({ "invalidEntry": 123 })
+            } else {
+                serde_json::json!({
+                    "mode": "canonical",
+                    "canonicalUnit": "g"
+                })
+            };
+            sqlx::query(
+                "INSERT INTO meal_logs (id, user_id, template_id, name_snapshot, nutrition_snapshot, canonical_quantity, entry_snapshot, consumed_at, updated_at, deleted_at) \
+                 VALUES ($1, $2, NULL, 'Test Log', $3, 100.0, $4, 1700000000000, $5, $6)",
+            )
+            .bind(id)
+            .bind(user_id)
+            .bind(nutrition)
+            .bind(entry)
+            .bind(updated_at)
+            .bind(deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+
+        // 1-item boundary.
+        let single_id = Uuid::new_v4();
+        insert_log(
+            db.sync.pool.clone(),
+            single_id,
+            user_a.id,
+            1000,
+            None,
+            false,
+        )
+        .await;
+        let single_res = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &[single_id])
+            .await
+            .unwrap();
+        assert_eq!(single_res.deleted_count, 1);
+        assert_eq!(single_res.already_deleted_count, 0);
+        assert_eq!(single_res.results.len(), 1);
+        assert_eq!(single_res.results[0].log_id, single_id);
+        assert_eq!(
+            single_res.results[0].status,
+            BatchDeleteFoodLogStatus::Deleted
+        );
+        assert!(single_res.results[0].updated_at > 1000);
+
+        // Mixed active (including future-dated and malformed historical JSON) + already-deleted row.
+        let active_normal = Uuid::new_v4();
+        let active_future = Uuid::new_v4();
+        let active_broken = Uuid::new_v4();
+        let pre_tombstoned = Uuid::new_v4();
+        let future_ts = i64::MAX / 4;
+        let checkpoint_before = 5_000_i64;
+        insert_log(
+            db.sync.pool.clone(),
+            active_normal,
+            user_a.id,
+            checkpoint_before,
+            None,
+            false,
+        )
+        .await;
+        insert_log(
+            db.sync.pool.clone(),
+            active_future,
+            user_a.id,
+            future_ts,
+            None,
+            false,
+        )
+        .await;
+        insert_log(
+            db.sync.pool.clone(),
+            active_broken,
+            user_a.id,
+            checkpoint_before,
+            None,
+            true,
+        )
+        .await;
+        insert_log(
+            db.sync.pool.clone(),
+            pre_tombstoned,
+            user_a.id,
+            4200,
+            Some(4200),
+            false,
+        )
+        .await;
+
+        let request_order = vec![active_broken, pre_tombstoned, active_future, active_normal];
+        let mixed = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &request_order)
+            .await
+            .unwrap();
+        assert_eq!(mixed.deleted_count, 3);
+        assert_eq!(mixed.already_deleted_count, 1);
+        let returned_ids: Vec<Uuid> = mixed.results.iter().map(|r| r.log_id).collect();
+        assert_eq!(returned_ids, request_order);
+        assert_eq!(mixed.results[0].status, BatchDeleteFoodLogStatus::Deleted);
+        assert!(mixed.results[0].updated_at > checkpoint_before);
+        assert_eq!(
+            mixed.results[1].status,
+            BatchDeleteFoodLogStatus::AlreadyDeleted
+        );
+        assert_eq!(mixed.results[1].updated_at, 4200);
+        assert_eq!(mixed.results[2].status, BatchDeleteFoodLogStatus::Deleted);
+        assert_eq!(mixed.results[2].updated_at, future_ts + 1);
+        assert_eq!(mixed.results[3].status, BatchDeleteFoodLogStatus::Deleted);
+        assert!(mixed.results[3].updated_at > checkpoint_before);
+
+        // Verify deleted_at == updated_at on active rows and unchanged on already-deleted row.
+        for item in &mixed.results {
+            let (u_at, d_at): (i64, Option<i64>) =
+                sqlx::query_as("SELECT updated_at, deleted_at FROM meal_logs WHERE id = $1")
+                    .bind(item.log_id)
+                    .fetch_one(&db.sync.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(u_at, item.updated_at);
+            assert_eq!(d_at, Some(item.updated_at));
+        }
+
+        // Sync visibility via pull_meal_logs from checkpoint_before includes all newly deleted rows.
+        let pulled = db
+            .sync
+            .pull_meal_logs(user_a.id, checkpoint_before, None, 50)
+            .await
+            .unwrap();
+        for id in [active_normal, active_future, active_broken] {
+            let row = pulled
+                .iter()
+                .find(|r| r.id == id)
+                .expect("deleted row must be pulled");
+            assert_eq!(row.deleted_at, Some(row.updated_at));
+        }
+
+        // Idempotent replay returns all alreadyDeleted with identical updated_at.
+        let replay = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &request_order)
+            .await
+            .unwrap();
+        assert_eq!(replay.deleted_count, 0);
+        assert_eq!(replay.already_deleted_count, 4);
+        for (before, after) in mixed.results.iter().zip(replay.results.iter()) {
+            assert_eq!(after.log_id, before.log_id);
+            assert_eq!(after.status, BatchDeleteFoodLogStatus::AlreadyDeleted);
+            assert_eq!(after.updated_at, before.updated_at);
+        }
+
+        // Missing ID or foreign-user ID mixed with valid active ID rolls back atomically with identical generic NotFound.
+        let untouched_a = Uuid::new_v4();
+        let foreign_b = Uuid::new_v4();
+        let missing_id = Uuid::new_v4();
+        insert_log(
+            db.sync.pool.clone(),
+            untouched_a,
+            user_a.id,
+            6000,
+            None,
+            false,
+        )
+        .await;
+        insert_log(
+            db.sync.pool.clone(),
+            foreign_b,
+            user_b.id,
+            6000,
+            None,
+            false,
+        )
+        .await;
+
+        let err_missing = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &[untouched_a, missing_id])
+            .await
+            .unwrap_err();
+        let err_foreign = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &[untouched_a, foreign_b])
+            .await
+            .unwrap_err();
+        match (&err_missing, &err_foreign) {
+            (AppError::NotFound(m1), AppError::NotFound(m2)) => {
+                assert_eq!(m1, "Consumption not found");
+                assert_eq!(m1, m2);
+            }
+            other => panic!("expected identical NotFound errors, got {other:?}"),
+        }
+        let (u_a, d_a): (i64, Option<i64>) =
+            sqlx::query_as("SELECT updated_at, deleted_at FROM meal_logs WHERE id = $1")
+                .bind(untouched_a)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(u_a, 6000);
+        assert_eq!(d_a, None);
+        let (u_b, d_b): (i64, Option<i64>) =
+            sqlx::query_as("SELECT updated_at, deleted_at FROM meal_logs WHERE id = $1")
+                .bind(foreign_b)
+                .fetch_one(&db.sync.pool)
+                .await
+                .unwrap();
+        assert_eq!(u_b, 6000);
+        assert_eq!(d_b, None);
+
+        // 30-item boundary.
+        let mut thirty_ids = Vec::with_capacity(MAX_BATCH_DELETE_FOOD_LOG_IDS);
+        for _ in 0..MAX_BATCH_DELETE_FOOD_LOG_IDS {
+            let id = Uuid::new_v4();
+            insert_log(db.sync.pool.clone(), id, user_a.id, 7000, None, false).await;
+            thirty_ids.push(id);
+        }
+        let thirty_res = db
+            .sync
+            .batch_soft_delete_consumptions(user_a.id, &thirty_ids)
+            .await
+            .unwrap();
+        assert_eq!(thirty_res.deleted_count, MAX_BATCH_DELETE_FOOD_LOG_IDS);
+        assert_eq!(thirty_res.already_deleted_count, 0);
+        assert_eq!(
+            thirty_res
+                .results
+                .iter()
+                .map(|r| r.log_id)
+                .collect::<Vec<_>>(),
+            thirty_ids
+        );
+
+        // Deterministic overlapping concurrent batches with opposite input orders: no deadlock,
+        // and the waiting batch observes the committed tombstones under its row locks.
+        let mut overlap = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        overlap.sort_unstable();
+        let [id_low, id_mid, id_high] = overlap;
+        for id in overlap {
+            insert_log(db.sync.pool.clone(), id, user_a.id, 8000, None, false).await;
+        }
+
+        let (locked_tx, locked_rx) = oneshot::channel::<()>();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+
+        let sync_1 = db.sync.clone();
+        let task_1 = tokio::spawn(async move {
+            sync_1
+                .batch_soft_delete_consumptions_with_hook(
+                    user_a.id,
+                    &[id_mid, id_low],
+                    Some(Box::pin(async move {
+                        let _ = locked_tx.send(());
+                        let _ = tokio::time::timeout(Duration::from_secs(5), release_rx).await;
+                    })),
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), locked_rx)
+            .await
+            .expect("first batch should acquire row locks")
+            .unwrap();
+
+        let sync_2 = db.sync.clone();
+        let task_2 = tokio::spawn(async move {
+            sync_2
+                .batch_soft_delete_consumptions(user_a.id, &[id_high, id_mid, id_low])
+                .await
+        });
+
+        // Wait briefly so task_2 blocks on the row lock held by task_1, then release task_1.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let _ = release_tx.send(());
+
+        let res_1 = tokio::time::timeout(Duration::from_secs(5), task_1)
+            .await
+            .expect("task_1 should finish without deadlock")
+            .unwrap()
+            .unwrap();
+        let res_2 = tokio::time::timeout(Duration::from_secs(5), task_2)
+            .await
+            .expect("task_2 should finish without deadlock")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(res_1.deleted_count, 2);
+        assert_eq!(res_1.already_deleted_count, 0);
+        assert_eq!(res_2.deleted_count, 1);
+        assert_eq!(res_2.already_deleted_count, 2);
+        assert_eq!(res_2.results[0].log_id, id_high);
+        assert_eq!(res_2.results[0].status, BatchDeleteFoodLogStatus::Deleted);
+        assert_eq!(res_2.results[1].log_id, id_mid);
+        assert_eq!(
+            res_2.results[1].status,
+            BatchDeleteFoodLogStatus::AlreadyDeleted
+        );
+        assert_eq!(res_2.results[2].log_id, id_low);
+        assert_eq!(
+            res_2.results[2].status,
+            BatchDeleteFoodLogStatus::AlreadyDeleted
+        );
 
         cleanup_identity_test_database(&db, &schema).await;
     }
