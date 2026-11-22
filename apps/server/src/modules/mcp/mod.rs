@@ -4753,7 +4753,15 @@ mod tests {
             {"id": 17, "name": "Palta"},
             {"id": 18, "name": "Paltas"},
             {"id": 19, "name": "Aguacates"},
-            {"id": 20, "name": "Chicken stock"}
+            {"id": 20, "name": "Chicken stock"},
+            {"id": 21, "name": "Carrots, raw"},
+            {"id": 22, "name": "Egg, whole"},
+            {"id": 23, "name": "Corn"},
+            {"id": 24, "name": "Strawberries"},
+            {"id": 25, "name": "Zanahoria rallada"},
+            {"id": 26, "name": "Popcorn"},
+            {"id": 27, "name": "Eggplant"},
+            {"id": 28, "name": "Banana, raw"}
         ]))
         .await
         else {
@@ -4771,6 +4779,14 @@ mod tests {
             ("palta", vec![17, 15, 19, 16, 18]),
             ("avocado", vec![15, 19, 16, 17, 18]),
             ("aguacates", vec![19, 15, 16, 17, 18]),
+            ("zanahoria", vec![21, 25]),
+            ("carrot", vec![21, 25]),
+            ("huevo", vec![22]),
+            ("choclo", vec![23]),
+            ("frutilla", vec![24]),
+            ("  Maíz  ", vec![23]),
+            ("  Plátano  ", vec![28]),
+            ("quinoa", vec![]),
         ] {
             let payload = fixture
                 .success("search_foods", json!({"query": query}))
