@@ -576,8 +576,16 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
     const projected = store.createMealDayProjector()(app.stores.meals.mealDocuments);
     const projectionMs = performance.now() - projectionStart;
     const projectionIntl = metricDelta(app.metrics, beforeProjection);
+    assert.equal(projectionIntl.displayCalculations, 0, 'lazy projection performs 0 document conversions before reading a date');
+    assert.ok(Object.keys(projected).length >= 706, 'all historical date keys are enumerable');
+    assert.equal(app.metrics.displayCalculations - beforeProjection.displayCalculations, 0, 'Object.keys triggers 0 document conversions');
     const day = projected[targetDate];
     assert.ok(day && day.foods && day.foods.length > 0, 'Most recent day has foods');
+    assert.equal(
+      app.metrics.displayCalculations - beforeProjection.displayCalculations,
+      day.foods.length,
+      'reading one date converts only that date documents rather than all 12,000'
+    );
 
     writes.length = 0;
     const mutationStart = performance.now();

@@ -78,3 +78,76 @@ test('actual provider isolates date subscriptions, stable actions and account re
   assert.ok(seen.filter(value => value.account === 2).every(value => value.foods.length === 0));
   await act(() => tree.unmount());
 });
+
+test('provider hydration with useMealDay converts only mounted date documents', async () => {
+  const cache = new Map();
+  let conversions = 0;
+  const sync = { registerCollection: () => () => {}, pendingDocuments: async () => [] };
+  const datesMod = (() => {
+    const filename = path.join(root, 'src/lib/dates.ts');
+    const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+      fileName: filename,
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    }).outputText;
+    const mod = { exports: {} };
+    vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename })(local, mod, mod.exports);
+    return mod.exports;
+  })();
+  const hydratedDocs = Array.from({ length: 100 }, (_, i) => {
+    const day = String(1 + Math.floor(i / 10)).padStart(2, '0');
+    return {
+      id: `doc-${i}`,
+      templateId: null,
+      nameSnapshot: `Food ${i}`,
+      nutritionSnapshot: { schemaVersion: 2, canonicalUnit: 'g', nutritionPer100: { calories: 100, protein: 2, carbs: 20, fat: 1 } },
+      canonicalQuantity: 100,
+      entry: { enteredQuantity: 100 },
+      consumedAt: datesMod.epochForChileDateTime(`2026-11-${day}`, '08:00'),
+      updatedAt: 1,
+      _deleted: false,
+    };
+  });
+  function load(filename) {
+    if (cache.has(filename)) return cache.get(filename).exports;
+    const module = { exports: {} }; cache.set(filename, module);
+    const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { fileName: filename,
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    }).outputText;
+    const requireLocal = name => {
+      if (name === '@/services/config') return { API_BASE_URL: 'https://fixture.invalid/api' };
+      if (name === './use-auth') return { useAuth: () => ({ user: { id: 1 } }) };
+      if (name === '@/services/storage') return { storage: { getItem: async () => JSON.stringify(hydratedDocs), isDurableItem: () => true } };
+      if (name === '@/services/import/guest-import') return { recoverGuestImport: async () => {} };
+      if (name === '@/services/sync/sync-client') return { syncClient: sync, collectionStorageKey: (namespace, collection) => `${namespace}:${collection}` };
+      if (name.startsWith('.') || name.startsWith('@/')) {
+        const base = name.startsWith('@/') ? path.join(root, 'src', name.slice(2)) : path.resolve(path.dirname(filename), name);
+        const resolved = [base, `${base}.ts`, `${base}.tsx`].find(p => fs.existsSync(p) && fs.statSync(p).isFile());
+        if (resolved) return load(resolved);
+      }
+      return local(name);
+    };
+    vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename })(requireLocal, module, module.exports);
+    if (filename.endsWith('/sync/adapters.ts')) {
+      const original = module.exports.logToLoggedFood;
+      module.exports.logToLoggedFood = (...args) => {
+        conversions++;
+        return original(...args);
+      };
+    }
+    return module.exports;
+  }
+  const store = load(path.join(root, 'src/hooks/use-meal-store.tsx'));
+  let observedDay = null;
+  function VisibleDay() {
+    observedDay = store.useMealDay('2026-11-06');
+    return null;
+  }
+  let tree;
+  await act(async () => {
+    tree = create(React.createElement(store.MealStoreProvider, null, React.createElement(VisibleDay)));
+    await new Promise(resolve => setImmediate(resolve));
+  });
+  assert.equal(observedDay.foods.length, 10);
+  assert.equal(conversions, 10, 'only the 10 documents for the mounted useMealDay date are converted on hydration');
+  await act(() => tree.unmount());
+});

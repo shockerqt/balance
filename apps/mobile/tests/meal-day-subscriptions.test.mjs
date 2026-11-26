@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { createMealDayProjector, createMealDaySubscriptions, emptyDayLog } from '../src/lib/meal-day-projection.ts';
 import { epochForChileDateTime } from '../src/lib/dates.ts';
 
@@ -75,4 +80,70 @@ test('replacing the account adapter exposes no prior account data', () => {
   const next = createMealDaySubscriptions();
   assert.equal(old.get('2026-11-06').foods.length, 1);
   assert.equal(next.get('2026-11-06').foods.length, 0);
+});
+
+test('createMealDayProjector converts documents lazily per read date and isolates retained snapshots', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const local = createRequire(path.join(root, 'package.json'));
+  const ts = local('typescript');
+  let conversions = 0;
+  const cache = new Map();
+  function load(filename) {
+    if (cache.has(filename)) return cache.get(filename).exports;
+    const module = { exports: {} };
+    cache.set(filename, module);
+    const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+      fileName: filename,
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+    }).outputText;
+    const requireLocal = name => {
+      if (name.startsWith('.')) {
+        const base = path.resolve(path.dirname(filename), name);
+        const resolved = [base, `${base}.ts`, `${base}.tsx`].find(p => fs.existsSync(p) && fs.statSync(p).isFile());
+        if (resolved) return load(resolved);
+      }
+      return local(name);
+    };
+    vm.runInThisContext(`(function(require,module,exports){${source}\n})`, { filename })(requireLocal, module, module.exports);
+    if (filename.endsWith('/sync/adapters.ts')) {
+      const original = module.exports.logToLoggedFood;
+      module.exports.logToLoggedFood = (...args) => {
+        conversions++;
+        return original(...args);
+      };
+    }
+    return module.exports;
+  }
+  const projection = load(path.join(root, 'src/lib/meal-day-projection.ts'));
+  const project = projection.createMealDayProjector();
+  const a = meal('a', '2026-11-06');
+  const b = meal('b', '2026-11-06');
+  const c = meal('c', '2026-11-05');
+  const d = meal('d', '2026-11-04');
+
+  const s1 = project([a, b, c, d]);
+  assert.equal(conversions, 0, 'projecting does not convert any document eagerly');
+  assert.deepEqual(Object.keys(s1), ['2026-11-06', '2026-11-05', '2026-11-04']);
+  assert.equal(conversions, 0, 'Object.keys does not trigger lazy conversion');
+
+  const day6 = s1['2026-11-06'];
+  assert.equal(conversions, 2, 'reading one date converts only its documents');
+  assert.equal(s1['2026-11-06'], day6, 'repeated reads return the cached DayLog reference');
+  assert.equal(conversions, 2);
+
+  // Retain s1 without reading s1['2026-11-05'], then project an update to 2026-11-05.
+  const store = projection.createMealDaySubscriptions(s1);
+  store.subscribe('2026-11-06', () => {});
+  const s2 = project([a, b, { ...c, nameSnapshot: 'Updated c', updatedAt: 2 }, d]);
+  store.publish(s2);
+  assert.equal(conversions, 2, 'publishing to a single-date subscriber does not convert other changed or unread dates');
+  assert.equal(s2['2026-11-06'], day6, 'unchanged date keeps exact DayLog reference');
+  assert.equal(conversions, 2);
+
+  assert.equal(s1['2026-11-05'].foods[0].name, 'c', 'retained snapshot preserves its point-in-time documents');
+  assert.equal(conversions, 3);
+  assert.equal(s2['2026-11-05'].foods[0].name, 'Updated c');
+  assert.equal(conversions, 4);
+  // Unread date 2026-11-04 was never converted.
+  assert.equal(conversions, 4);
 });
