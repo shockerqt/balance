@@ -1,10 +1,10 @@
 import { storage } from '../storage';
+import { replaceMealLogShards } from '../storage/meal-log-shards';
 import { collectionStorageKey } from '../sync/sync-client';
 import { MealLogDoc, MealTemplateDoc, isMealLogDoc, isMealTemplateDoc } from '../sync/types';
 
 const JOURNAL_KEY = '@balance_import_journal_v1:guest';
 const TEMPLATE_KEY = collectionStorageKey('guest', 'mealTemplates');
-const LOG_KEY = collectionStorageKey('guest', 'mealLogs');
 
 export interface GuestImportSnapshot {
   templates: MealTemplateDoc[];
@@ -14,10 +14,8 @@ export interface GuestImportSnapshot {
 export async function commitGuestImport(snapshot: GuestImportSnapshot): Promise<void> {
   const serialized = JSON.stringify(snapshot);
   await storage.setItem(JOURNAL_KEY, serialized);
-  await storage.multiSet([
-    [TEMPLATE_KEY, JSON.stringify(snapshot.templates)],
-    [LOG_KEY, JSON.stringify(snapshot.logs)],
-  ]);
+  await storage.setItem(TEMPLATE_KEY, JSON.stringify(snapshot.templates));
+  await replaceMealLogShards('guest', snapshot.logs);
   await storage.removeItem(JOURNAL_KEY);
 }
 

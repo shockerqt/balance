@@ -1,6 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { readDurableItem, writeDurableItem } from './storage/durable-file-storage';
+import {
+  deleteDurableItem,
+  readDurableItem,
+  readDurableJson,
+  writeDurableItem,
+  writeDurableJson,
+} from './storage/durable-file-storage';
 
 /* ============================================================
    Almacenamiento local con degradacion.
@@ -15,9 +21,10 @@ import { readDurableItem, writeDurableItem } from './storage/durable-file-storag
 const memory = new Map<string, string>();
 const durableKeys = new Set<string>();
 const operations = new Map<string, Promise<void>>();
+const isShardKey = (key: string) => key.startsWith('@balance_sync_meal_shards_v1:');
 const isSyncKey = (key: string) => key.startsWith('@balance_sync_collection_v2:') ||
-  key.startsWith('@balance_sync_checkpoint_v2:') || key.startsWith('@balance_sync_outbox_v2:');
-const isCollectionKey = (key: string) => key.startsWith('@balance_sync_collection_v2:');
+  key.startsWith('@balance_sync_checkpoint_v2:') || key.startsWith('@balance_sync_outbox_v2:') || isShardKey(key);
+const isCollectionKey = (key: string) => key.startsWith('@balance_sync_collection_v2:') || isShardKey(key);
 
 function ordered<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const result = (operations.get(key) ?? Promise.resolve()).then(operation);
@@ -148,5 +155,68 @@ export const storage = {
     }
     const web = webStorage();
     if (web) for (const [key, value] of entries) web.setItem(key, value);
+  },
+
+  async getJsonItem<T>(key: string): Promise<T | null> {
+    return ordered(key, async () => {
+      durableKeys.delete(key);
+      try {
+        if (Platform.OS === 'web') {
+          const web = webStorage();
+          if (!web) throw new Error('SYNC_STORAGE_UNAVAILABLE');
+          const raw = web.getItem(key);
+          if (raw === null) return null;
+          const parsed = JSON.parse(raw) as T | null;
+          durableKeys.add(key);
+          return parsed;
+        }
+        const saved = await readDurableJson<T>(key);
+        if (saved.exists) {
+          durableKeys.add(key);
+          return saved.value;
+        }
+        return null;
+      } catch {
+        durableKeys.delete(key);
+        if (isCollectionKey(key)) return null;
+        throw new Error('SYNC_STORAGE_READ_FAILED');
+      }
+    });
+  },
+
+  async setJsonItem<T>(key: string, value: T): Promise<void> {
+    return ordered(key, async () => {
+      try {
+        if (Platform.OS === 'web') {
+          const web = webStorage();
+          if (!web) throw new Error('SYNC_STORAGE_UNAVAILABLE');
+          web.setItem(key, JSON.stringify(value));
+        } else {
+          await writeDurableJson(key, value);
+        }
+        durableKeys.add(key);
+      } catch {
+        durableKeys.delete(key);
+        throw new Error('SYNC_STORAGE_WRITE_FAILED');
+      }
+    });
+  },
+
+  async removeJsonItem(key: string): Promise<void> {
+    return ordered(key, async () => {
+      try {
+        if (Platform.OS === 'web') {
+          const web = webStorage();
+          if (!web) throw new Error('SYNC_STORAGE_UNAVAILABLE');
+          web.removeItem(key);
+        } else {
+          await deleteDurableItem(key);
+        }
+        durableKeys.add(key);
+      } catch {
+        durableKeys.delete(key);
+        throw new Error('SYNC_STORAGE_WRITE_FAILED');
+      }
+    });
   },
 };

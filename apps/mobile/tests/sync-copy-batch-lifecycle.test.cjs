@@ -269,15 +269,15 @@ test('a large-history copy batch commits one outbox and one complete cache overl
   const f = await fixture({ documents: history });
   try {
     const copies = Array.from({ length: 12 }, (_, i) => ({ ...meal(13000 + i, fixedNow), copySource: { id: uuid(i + 1), updatedAt: fixedNow - 1000 } }));
-    const outboxFile = file(f.outboxKey(f.namespace)), cacheFile = file(f.cacheKey(f.namespace));
+    const outboxFile = file(f.outboxKey(f.namespace)), shardFile = file(`@balance_sync_meal_shards_v1:${f.namespace}:month:2026-10`);
     f.physical.moves.length = 0;
     await renderer.act(async () => { await f.store.registerMealLogs(copies); });
     assert.equal(f.physical.moves.filter(p => p === outboxFile).length, 1);
     assert.equal(f.store.mealDocuments.length, history.length, 'receipt precedes full-history overlay work');
     await f.settle(8);
     assert.equal(f.store.mealDocuments.length, history.length + copies.length);
-    assert.equal(f.physical.moves.filter(p => p === cacheFile).length, 1);
-    const stored = contents(f.physical, cacheFile);
+    assert.equal(f.physical.moves.filter(p => p === shardFile).length, 1);
+    const stored = JSON.parse(f.physical.files.get(shardFile)).documents;
     assert.equal(stored.length, 12012); assert.deepEqual(stored.slice(0, history.length), history);
   } finally { await f.close(); }
 });
