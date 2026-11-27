@@ -5,6 +5,7 @@ import { storage } from '@/services/storage';
 import {
   loadPriorityMealLogShards,
   loadRemainingMealLogShards,
+  mealLogMonth,
   mealShardManifestKey,
   persistDirtyMealLogShards,
 } from '@/services/storage/meal-log-shards';
@@ -53,6 +54,31 @@ function uuid(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function hasMonthBucketDiff(a: readonly MealLogDoc[], b: readonly MealLogDoc[]): boolean {
+  if (a === b) return false;
+  const group = (docs: readonly MealLogDoc[]) => {
+    const byMonth = new Map<string, MealLogDoc[]>();
+    for (const doc of docs) {
+      const month = mealLogMonth(doc.consumedAt);
+      const bucket = byMonth.get(month);
+      if (bucket) bucket.push(doc);
+      else byMonth.set(month, [doc]);
+    }
+    return byMonth;
+  };
+  const mapA = group(a);
+  const mapB = group(b);
+  if (mapA.size !== mapB.size) return true;
+  for (const [month, listA] of mapA) {
+    const listB = mapB.get(month);
+    if (!listB || listA.length !== listB.length) return true;
+    for (let i = 0; i < listA.length; i += 1) {
+      if (listA[i] !== listB[i]) return true;
+    }
+  }
+  return false;
 }
 
 function mergeLogs(previous: MealLogDoc[], incoming: SyncDocument[], keepCurrentRevision = false): MealLogDoc[] {
@@ -140,6 +166,8 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const namespace = user ? authDataNamespace(API_BASE_URL, user.id) : 'guest';
   const scope = useMemo(() => ({ active: true }), [namespace]);
   const readyRef = useRef<Promise<void>>(Promise.resolve());
+  const phase1Ref = useRef<Promise<void>>(Promise.resolve());
+  const storeEpochRef = useRef(0);
   const currentNamespace = useRef(namespace);
   currentNamespace.current = namespace;
   const [logs, setLogs] = useState<MealLogDoc[]>([]);
@@ -150,123 +178,238 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const persistChainRef = useRef<Promise<void>>(Promise.resolve());
   const loadedMonthsRef = useRef<Set<string>>(new Set());
   const backgroundCompleteRef = useRef(false);
+  const persistenceFailedRef = useRef(false);
   const logsNamespace = useRef(namespace);
   const cacheValid = useRef(false);
-  const updateLogs = useCallback((update: (previous: MealLogDoc[]) => MealLogDoc[]) => {
-    if (currentNamespace.current !== namespace) return Promise.resolve();
+  const updateLogs = useCallback((
+    update: (previous: MealLogDoc[]) => MealLogDoc[],
+    options?: { durable?: boolean },
+  ) => {
+    if (!scope.active || currentNamespace.current !== namespace) return Promise.resolve();
+    const epoch = storeEpochRef.current;
     const next = update(logsRef.current);
     logsRef.current = next;
     setLogs(next);
-    const trusted = cacheValid.current && typeof storage.isDurableItem === 'function' && storage.isDurableItem(mealShardManifestKey(namespace));
-    const loadedMonths = backgroundCompleteRef.current ? undefined : loadedMonthsRef.current;
     const persisted = persistChainRef.current.catch(() => undefined).then(async () => {
-      if (currentNamespace.current !== namespace) return;
-      if (!trusted) await syncClient.invalidateCollectionCheckpoint('mealLogs', namespace);
-      await persistDirtyMealLogShards(namespace, persistedDocsRef.current, next, {
-        loadedMonths,
-      });
-      if (currentNamespace.current === namespace) {
-        persistedDocsRef.current = next;
+      if (!scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+      await phase1Ref.current;
+      if (!scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+      const targetDocs = logsRef.current;
+      const loadedMonths = backgroundCompleteRef.current ? undefined : new Set(loadedMonthsRef.current);
+      const trusted =
+        cacheValid.current &&
+        typeof storage.isDurableItem === 'function' &&
+        storage.isDurableItem(mealShardManifestKey(namespace));
+      try {
+        if (!trusted) {
+          await syncClient.invalidateCollectionCheckpoint?.('mealLogs', namespace);
+        }
+        if (!scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+        await persistDirtyMealLogShards(namespace, persistedDocsRef.current, targetDocs, {
+          loadedMonths,
+          durable: options?.durable ?? (backgroundCompleteRef.current ? cacheValid.current : undefined),
+        });
+        if (!scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+        if (!loadedMonths) {
+          persistedDocsRef.current = targetDocs;
+        } else {
+          persistedDocsRef.current = [
+            ...persistedDocsRef.current.filter((doc) => !loadedMonths.has(mealLogMonth(doc.consumedAt))),
+            ...targetDocs.filter((doc) => loadedMonths.has(mealLogMonth(doc.consumedAt))),
+          ];
+        }
+        if (options?.durable === true) {
+          persistenceFailedRef.current = false;
+          cacheValid.current = true;
+        }
+      } catch (err) {
+        if (scope.active && currentNamespace.current === namespace && storeEpochRef.current === epoch) {
+          persistenceFailedRef.current = true;
+          cacheValid.current = false;
+        }
+        throw err;
       }
     });
     persistChainRef.current = persisted;
-    void persisted.catch(() => {
-      if (currentNamespace.current === namespace) syncClient.reportLocalPersistenceError('mealLogs');
+    void persisted.catch(async () => {
+      if (scope.active && currentNamespace.current === namespace && storeEpochRef.current === epoch) {
+        await syncClient.invalidateCollectionCheckpoint?.('mealLogs', namespace).catch(() => undefined);
+        if (scope.active && currentNamespace.current === namespace && storeEpochRef.current === epoch) {
+          syncClient.reportLocalPersistenceError?.('mealLogs');
+        }
+      }
     });
     return persisted;
-  }, [namespace]);
+  }, [namespace, scope]);
 
   useEffect(() => {
     let cancelled = false;
     scope.active = true;
+    storeEpochRef.current += 1;
+    const epoch = storeEpochRef.current;
     logsRef.current = [];
     persistedDocsRef.current = [];
     loadedMonthsRef.current = new Set();
     backgroundCompleteRef.current = false;
+    persistenceFailedRef.current = false;
     logsNamespace.current = namespace;
     cacheValid.current = false;
     setLogs([]);
-    const ready = (async () => {
+    setHydratedNamespace(null);
+    const phase1 = (async () => {
       if (namespace === 'guest') await recoverGuestImport().catch(() => null);
-      const priority = await loadPriorityMealLogShards(namespace, getPriorityMonths());
-      if (cancelled) return;
+      let priority: Awaited<ReturnType<typeof loadPriorityMealLogShards>> | null = null;
+      let priorityFailed = false;
+      try {
+        priority = await loadPriorityMealLogShards(namespace, getPriorityMonths());
+      } catch {
+        priorityFailed = true;
+      }
+      if (cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
       // Durable outbox recovery is independent of cache validity, including a
       // process interrupted after enqueue but before its first cache commit.
       const pending = await syncClient.pendingDocuments('mealLogs', namespace).catch(() => []);
-      if (cancelled) return;
+      if (cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
       const pendingRevisions = new Set(
         pending.filter(isMealLogDoc).map(doc => `${doc.id}:${doc.updatedAt}`),
       );
+      const priorityDocs = priority?.documents ?? [];
       // A canonical conflict can be committed before outbox retirement fails
       // or the process stops. Keep that durable revision on equal timestamps;
       // pending/optimistic overlays still supply missing and newer documents.
-      const next = mergeLogs(mergeLogs(priority.documents, pending, true), logsRef.current, true);
-      persistedDocsRef.current = priority.documents;
-      for (const month of priority.loadedMonths) loadedMonthsRef.current.add(month);
+      const next = mergeLogs(mergeLogs(priorityDocs, pending, true), logsRef.current, true);
+      persistedDocsRef.current = priorityDocs;
+      if (priority) {
+        for (const month of priority.loadedMonths) loadedMonthsRef.current.add(month);
+      }
+      if (priorityFailed) {
+        persistenceFailedRef.current = true;
+        cacheValid.current = false;
+        syncClient.reportLocalPersistenceError?.('mealLogs');
+      }
       logsRef.current = next;
       setLogs(next);
       setHydratedNamespace(namespace);
+      return { priority, priorityFailed, pendingRevisions };
+    })();
+    phase1Ref.current = phase1.then(() => undefined, () => undefined);
 
-      if (!priority.complete && priority.manifest && priority.remainingMonths.length > 0) {
-        const remaining = await loadRemainingMealLogShards(namespace, priority.remainingMonths);
-        if (cancelled) return;
-        persistedDocsRef.current = mergeLogs(persistedDocsRef.current, remaining.documents, true);
-        for (const month of priority.remainingMonths) loadedMonthsRef.current.add(month);
-        backgroundCompleteRef.current = true;
-        cacheValid.current = priority.durable && remaining.valid && remaining.durable;
-        if (remaining.documents.length > 0) {
-          // Preserve existing MealLogDoc references for already-hydrated visible days
-          // so BAL-053 day projection does not recompute unchanged days, while still
-          // letting a durable canonical revision beat an unretired outbox entry at equal updatedAt.
-          const byId = new Map(logsRef.current.map(doc => [doc.id, doc]));
-          for (const doc of remaining.documents) {
-            const current = byId.get(doc.id);
-            if (!current || doc.updatedAt > current.updatedAt ||
-                (doc.updatedAt === current.updatedAt && pendingRevisions.has(`${current.id}:${current.updatedAt}`))) {
-              byId.set(doc.id, doc);
+    const ready = (async () => {
+      const phase1Result = await phase1;
+      if (!phase1Result || cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+      const { priority, priorityFailed, pendingRevisions } = phase1Result;
+
+      if (priority && !priority.complete && priority.manifest && priority.remainingMonths.length > 0) {
+        let remaining: Awaited<ReturnType<typeof loadRemainingMealLogShards>> = {
+          documents: [],
+          valid: false,
+          durable: false,
+        };
+        let remainingFailed = false;
+        try {
+          remaining = await loadRemainingMealLogShards(namespace, priority.remainingMonths);
+        } catch {
+          remainingFailed = true;
+        }
+        if (cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+
+        const phase2Commit = persistChainRef.current.catch(() => undefined).then(async () => {
+          if (cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+          persistedDocsRef.current = mergeLogs(persistedDocsRef.current, remaining.documents, true);
+          for (const month of priority.remainingMonths) loadedMonthsRef.current.add(month);
+          backgroundCompleteRef.current = true;
+          if (remainingFailed) persistenceFailedRef.current = true;
+          cacheValid.current =
+            !priorityFailed &&
+            !remainingFailed &&
+            priority.durable &&
+            remaining.valid &&
+            remaining.durable &&
+            !persistenceFailedRef.current;
+
+          let merged = logsRef.current;
+          if (remaining.documents.length > 0) {
+            // Preserve existing MealLogDoc references for already-hydrated visible days
+            // so BAL-053 day projection does not recompute unchanged days, while still
+            // letting a durable canonical revision beat an unretired outbox entry at equal updatedAt.
+            const byId = new Map(logsRef.current.map(doc => [doc.id, doc]));
+            for (const doc of remaining.documents) {
+              const current = byId.get(doc.id);
+              if (!current || doc.updatedAt > current.updatedAt ||
+                  (doc.updatedAt === current.updatedAt && pendingRevisions.has(`${current.id}:${current.updatedAt}`))) {
+                byId.set(doc.id, doc);
+              }
+            }
+            merged = Array.from(byId.values());
+            logsRef.current = merged;
+            setLogs(merged);
+          }
+
+          const mergedDiffersFromPersisted = hasMonthBucketDiff(persistedDocsRef.current, merged);
+          if (mergedDiffersFromPersisted || (priority.manifest?.durable ?? false) !== cacheValid.current) {
+            try {
+              await persistDirtyMealLogShards(namespace, persistedDocsRef.current, merged, {
+                durable: cacheValid.current,
+              });
+              if (!cancelled && scope.active && currentNamespace.current === namespace && storeEpochRef.current === epoch) {
+                persistedDocsRef.current = merged;
+              }
+            } catch {
+              if (!cancelled && scope.active && currentNamespace.current === namespace && storeEpochRef.current === epoch) {
+                persistenceFailedRef.current = true;
+                cacheValid.current = false;
+                syncClient.reportLocalPersistenceError?.('mealLogs');
+              }
             }
           }
-          const merged = Array.from(byId.values());
-          logsRef.current = merged;
-          setLogs(merged);
-        }
+        });
+        persistChainRef.current = phase2Commit;
+        await phase2Commit;
       } else {
-        backgroundCompleteRef.current = true;
-        cacheValid.current = priority.durable;
+        const phase2Commit = persistChainRef.current.catch(() => undefined).then(async () => {
+          if (cancelled || !scope.active || currentNamespace.current !== namespace || storeEpochRef.current !== epoch) return;
+          backgroundCompleteRef.current = true;
+          cacheValid.current =
+            !priorityFailed &&
+            Boolean(priority?.durable) &&
+            !persistenceFailedRef.current;
+        });
+        persistChainRef.current = phase2Commit;
+        await phase2Commit;
       }
     })();
     readyRef.current = ready;
     const unregister = syncClient.registerCollection('mealLogs', {
-      canResume: () => !cancelled && backgroundCompleteRef.current && cacheValid.current && typeof storage.isDurableItem === 'function' && storage.isDurableItem(mealShardManifestKey(namespace)),
+      canResume: () => !cancelled && scope.active && backgroundCompleteRef.current && cacheValid.current && typeof storage.isDurableItem === 'function' && storage.isDurableItem(mealShardManifestKey(namespace)),
       onDocuments: async (documents, _result, options) => {
-        if (cancelled || currentNamespace.current !== namespace) return;
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
         if (options?.deferPersistence) {
           logsRef.current = mergeLogs(logsRef.current, documents);
           return;
         }
-        await updateLogs(previous => mergeLogs(previous, documents));
-        if (!cancelled && currentNamespace.current === namespace) cacheValid.current = true;
+        await updateLogs(previous => mergeLogs(previous, documents), { durable: true });
       },
       flush: async () => {
-        if (cancelled || currentNamespace.current !== namespace) return;
-        await updateLogs(previous => previous);
-        if (!cancelled && currentNamespace.current === namespace) {
-          cacheValid.current = true;
-        }
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
+        await updateLogs(previous => previous, { durable: true });
       },
       onPushConflicts: async (documents) => {
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
         // Even a conflict-free ACK must consolidate outbox-only saves before
         // SyncClient can retire their durable queue entries.
         await ready;
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
         const pending = await syncClient.pendingDocuments('mealLogs', namespace);
-        if (cancelled) return;
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
         await updateLogs(previous => mergeLogs(mergeLogs(previous, pending), documents));
       },
-      onPushRejected: (rejections) => {
+      onPushRejected: async (rejections) => {
         const rejectedRevisions = new Map(
           rejections.filter((value) => isMealLogDoc(value.document)).map((value) => [value.document.id, value.document.updatedAt])
         );
-        if (cancelled || !rejectedRevisions.size) return;
+        if (cancelled || !scope.active || currentNamespace.current !== namespace || !rejectedRevisions.size) return;
+        await ready;
+        if (cancelled || !scope.active || currentNamespace.current !== namespace) return;
         const persisted = updateLogs(previous => previous.filter(doc => {
           const rejectedAt = rejectedRevisions.get(doc.id);
           // An answer belongs to its sent revision, not an edit queued while
@@ -320,19 +463,21 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const registerMealLog = useCallback((document: MealLogDoc) => registerMealLogs([document]), [registerMealLogs]);
 
   const addFood = useCallback((dateId: string, food: Omit<LoggedFoodItem, 'id'>) => {
+    if (!scope.active || currentNamespace.current !== namespace) return;
     const doc = docFromFood(dateId, food, uuid());
     if (!doc) return;
     void updateLogs(previous => mergeLogs(previous, [doc]));
     void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
-  }, [namespace, updateLogs]);
+  }, [namespace, scope, updateLogs]);
 
   const addMultipleFoods = useCallback((dateId: string, foods: Omit<LoggedFoodItem, 'id'>[]) => {
+    if (!scope.active || currentNamespace.current !== namespace) return;
     if (!foods.length) return;
     const docs = foods.map((food) => docFromFood(dateId, food, uuid())).filter((doc): doc is MealLogDoc => doc !== null);
     if (!docs.length) return;
     void updateLogs(previous => mergeLogs(previous, docs));
     for (const doc of docs) void syncClient.enqueue('mealLogs', doc).catch(() => undefined);
-  }, [namespace, updateLogs]);
+  }, [namespace, scope, updateLogs]);
 
   const updateFood = useCallback((dateId: string, foodId: string, updated: Partial<MealLogEditableFields>) => {
     void updateLogs((previous) => {
@@ -402,9 +547,19 @@ export const MealStoreProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useLayoutEffect(() => { daySubscriptions.publish(dayLogs); }, [daySubscriptions, dayLogs]);
 
   const replaceMealDocuments = useCallback((documents: MealLogDoc[]) => {
+    if (!scope.active || currentNamespace.current !== namespace) return;
+    storeEpochRef.current += 1;
+    persistenceFailedRef.current = false;
     logsRef.current = documents;
+    persistedDocsRef.current = documents;
+    loadedMonthsRef.current = new Set(documents.map((doc) => mealLogMonth(doc.consumedAt)));
+    backgroundCompleteRef.current = true;
+    cacheValid.current =
+      typeof storage.isDurableItem === 'function' &&
+      storage.isDurableItem(mealShardManifestKey(namespace));
     setLogs(documents);
-  }, []);
+    setHydratedNamespace(currentNamespace.current);
+  }, [namespace, scope]);
   const value = useMemo<MealStoreContextType>(() => ({
     dayLogs,
     mealDocuments: logs,

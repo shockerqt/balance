@@ -238,3 +238,111 @@ test('AsyncStorage-only legacy cache migrates with durable=false provenance so c
   assert.equal(loaded.durable, false, 'non-durable AsyncStorage origin must not certify durable=true');
   assert.equal(await h.storage.getItem(legacyKey), null, 'durable null tombstone blocks AsyncStorage resurrection');
 });
+
+test('single-shard corruption or missing file degrades validity/durability while preserving intact shards', async () => {
+  const h = createHarness('ios');
+  const ns = 'user:1';
+  const jan = meal('m-jan', h.dates.epochForChileDateTime('2026-01-10', '10:00'));
+  const feb = meal('m-feb', h.dates.epochForChileDateTime('2026-02-10', '10:00'));
+  const mar = meal('m-mar', h.dates.epochForChileDateTime('2026-03-10', '10:00'));
+  await h.shards.persistDirtyMealLogShards(ns, [], [jan, feb, mar]);
+
+  // Corrupt February shard and delete January shard
+  h.files.set(filePath(h.shards.mealShardMonthKey(ns, '2026-02')), '{corrupt-json');
+  h.files.delete(filePath(h.shards.mealShardMonthKey(ns, '2026-01')));
+
+  const priority = await h.shards.loadPriorityMealLogShards(ns, ['2026-03', '2026-02']);
+  assert.equal(priority.durable, false);
+  assert.deepEqual(plain(priority.documents.map(d => d.id)), ['m-mar']);
+  assert.deepEqual(plain(priority.remainingMonths), ['2026-01']);
+
+  const remaining = await h.shards.loadRemainingMealLogShards(ns, priority.remainingMonths);
+  assert.equal(remaining.valid, false);
+  assert.equal(remaining.durable, false);
+  assert.deepEqual(plain(remaining.documents), []);
+});
+
+test('replaceMealLogShards replaces shards, removes stale months, and tombstones legacy key', async () => {
+  const h = createHarness('ios');
+  const ns = 'user:1';
+  const legacyKey = h.syncClient.collectionStorageKey(ns, 'mealLogs');
+  const jan = meal('m-jan', h.dates.epochForChileDateTime('2026-01-10', '10:00'));
+  const feb = meal('m-feb', h.dates.epochForChileDateTime('2026-02-10', '10:00'));
+  const mar = meal('m-mar', h.dates.epochForChileDateTime('2026-03-10', '10:00'));
+  await h.storage.setItem(legacyKey, JSON.stringify([jan]));
+  await h.shards.persistDirtyMealLogShards(ns, [], [jan, feb]);
+
+  await h.shards.replaceMealLogShards(ns, [mar]);
+  assert.equal(h.files.has(filePath(h.shards.mealShardMonthKey(ns, '2026-01'))), false);
+  assert.equal(h.files.has(filePath(h.shards.mealShardMonthKey(ns, '2026-02'))), false);
+  assert.equal(h.files.has(filePath(h.shards.mealShardMonthKey(ns, '2026-03'))), true);
+  assert.equal(await h.storage.getItem(legacyKey), null);
+
+  const loaded = await h.shards.loadPriorityMealLogShards(ns, ['2026-03']);
+  assert.deepEqual(plain(loaded.manifest.months), ['2026-03']);
+  assert.deepEqual(plain(loaded.documents.map(d => d.id)), ['m-mar']);
+  assert.equal(loaded.durable, true);
+});
+
+test('web localStorage backend supports shard persistence and two-phase loading', async () => {
+  const h = createHarness('web');
+  const ns = 'user:web';
+  const jan = meal('w-jan', h.dates.epochForChileDateTime('2026-01-10', '10:00'));
+  const mar = meal('w-mar', h.dates.epochForChileDateTime('2026-03-10', '10:00'));
+  await h.shards.persistDirtyMealLogShards(ns, [], [jan, mar]);
+
+  assert.ok(h.web.has(h.shards.mealShardManifestKey(ns)));
+  const priority = await h.shards.loadPriorityMealLogShards(ns, ['2026-03']);
+  assert.deepEqual(plain(priority.documents.map(d => d.id)), ['w-mar']);
+  const remaining = await h.shards.loadRemainingMealLogShards(ns, priority.remainingMonths);
+  assert.deepEqual(plain(remaining.documents.map(d => d.id)), ['w-jan']);
+});
+
+test('post-manifest tombstone crash window removes leftover legacy key on next load', async () => {
+  const h = createHarness('ios');
+  const ns = 'user:1';
+  const legacyKey = h.syncClient.collectionStorageKey(ns, 'mealLogs');
+  const jan = meal('m-jan', h.dates.epochForChileDateTime('2026-01-10', '10:00'));
+  await h.storage.setItem(legacyKey, JSON.stringify([jan]));
+
+  // Simulate crash right after writing complete manifest, before removeItem(legacyKey)
+  await h.storage.setJsonItem(h.shards.mealShardMonthKey(ns, '2026-01'), {
+    version: 1,
+    month: '2026-01',
+    documents: [jan],
+  });
+  await h.storage.setJsonItem(h.shards.mealShardManifestKey(ns), {
+    version: 1,
+    complete: true,
+    durable: true,
+    months: ['2026-01'],
+    migration: { status: 'complete', legacyKey, legacyDurable: true },
+  });
+  assert.ok(await h.storage.getItem(legacyKey));
+
+  const loaded = await h.shards.loadPriorityMealLogShards(ns, ['2026-01']);
+  assert.equal(loaded.documents.length, 1);
+  assert.equal(await h.storage.getItem(legacyKey), null, 'leftover legacy key is cleaned up');
+});
+
+test('partial loadedMonths protects unloaded shards and preserves manifest durability', async () => {
+  const h = createHarness('ios');
+  const ns = 'user:1';
+  const jan = meal('m-jan', h.dates.epochForChileDateTime('2026-01-10', '10:00'));
+  const mar = meal('m-mar', h.dates.epochForChileDateTime('2026-03-10', '10:00'));
+  const mar2 = meal('m-mar-2', h.dates.epochForChileDateTime('2026-03-11', '12:00'));
+  const febUnloaded = meal('m-feb', h.dates.epochForChileDateTime('2026-02-10', '10:00'));
+  await h.shards.persistDirtyMealLogShards(ns, [], [jan, mar], { durable: false });
+  h.writes.length = 0;
+  h.deletes.length = 0;
+
+  const res = await h.shards.persistDirtyMealLogShards(ns, [mar], [mar, mar2, febUnloaded], {
+    loadedMonths: new Set(['2026-03']),
+  });
+  assert.deepEqual(plain(res.writtenMonths), ['2026-03']);
+  assert.equal(h.files.has(filePath(h.shards.mealShardMonthKey(ns, '2026-01'))), true);
+  assert.equal(h.files.has(filePath(h.shards.mealShardMonthKey(ns, '2026-02'))), false, 'unloaded month not written');
+  const manifest = await h.storage.getJsonItem(h.shards.mealShardManifestKey(ns));
+  assert.deepEqual(plain(manifest.months), ['2026-01', '2026-03']);
+  assert.equal(manifest.durable, false, 'existing manifest durability preserved when omitted');
+});

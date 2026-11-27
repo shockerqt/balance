@@ -144,6 +144,12 @@ async function ensureMigratedOrLoadManifest(namespace: string): Promise<{
   const manifestKey = mealShardManifestKey(namespace);
   const existing = await readJson<MealShardManifest>(manifestKey).catch(() => null);
   if (isMealShardManifest(existing) && existing.complete) {
+    if (existing.migration?.legacyKey && typeof storage.getItem === 'function' && typeof storage.removeItem === 'function') {
+      const leftover = await storage.getItem(existing.migration.legacyKey).catch(() => null);
+      if (leftover !== null) {
+        await storage.removeItem(existing.migration.legacyKey).catch(() => undefined);
+      }
+    }
     return {
       manifest: existing,
       manifestDurable: isDurable(manifestKey),
@@ -311,7 +317,7 @@ export async function persistDirtyMealLogShards(
   namespace: string,
   previousDocs: readonly MealLogDoc[],
   nextDocs: readonly MealLogDoc[],
-  options?: { loadedMonths?: ReadonlySet<string>; forceAll?: boolean },
+  options?: { loadedMonths?: ReadonlySet<string>; forceAll?: boolean; durable?: boolean },
 ): Promise<{ writtenMonths: string[]; durable: boolean }> {
   const manifestKey = mealShardManifestKey(namespace);
   const prevByMonth = groupByMonth(previousDocs);
@@ -320,6 +326,7 @@ export async function persistDirtyMealLogShards(
   const candidateMonths = new Set<string>([...prevByMonth.keys(), ...nextByMonth.keys()]);
   const dirtyMonths: string[] = [];
   for (const month of candidateMonths) {
+    if (options?.loadedMonths && !options.loadedMonths.has(month)) continue;
     if (options?.forceAll || listsDiffer(prevByMonth.get(month), nextByMonth.get(month))) {
       dirtyMonths.push(month);
     }
@@ -330,16 +337,24 @@ export async function persistDirtyMealLogShards(
   let nextMonths: string[];
   if (options?.loadedMonths && isMealShardManifest(existingManifest) && existingManifest.complete) {
     const merged = new Set(existingManifest.months.filter((month) => !options.loadedMonths!.has(month)));
-    for (const month of nextByMonth.keys()) merged.add(month);
+    for (const month of nextByMonth.keys()) {
+      if (options.loadedMonths.has(month)) merged.add(month);
+    }
     nextMonths = Array.from(merged).sort();
   } else {
-    nextMonths = Array.from(nextByMonth.keys()).sort();
+    nextMonths = Array.from(nextByMonth.keys())
+      .filter((month) => !options?.loadedMonths || options.loadedMonths.has(month))
+      .sort();
   }
+
+  const targetDurable =
+    options?.durable ??
+    (options?.loadedMonths && isMealShardManifest(existingManifest) ? existingManifest.durable : true);
 
   const manifestNeedsWrite =
     !isMealShardManifest(existingManifest) ||
     !existingManifest.complete ||
-    !existingManifest.durable ||
+    existingManifest.durable !== targetDurable ||
     existingManifest.months.length !== nextMonths.length ||
     existingManifest.months.some((month, index) => month !== nextMonths[index]);
 
@@ -361,7 +376,7 @@ export async function persistDirtyMealLogShards(
     await writeJson<MealShardManifest>(manifestKey, {
       version: 1,
       complete: true,
-      durable: true,
+      durable: targetDurable,
       months: nextMonths,
     });
   }
