@@ -35,11 +35,10 @@ export async function readDurableItem(key: string): Promise<{ exists: boolean; v
   return { exists: true, value: envelope.value };
 }
 
-export async function writeDurableItem(key: string, value: string | null): Promise<void> {
+async function writeEncodedFile(key: string, encoded: string): Promise<void> {
   const path = await itemPath(key);
   const directory = path.slice(0, path.lastIndexOf('/') + 1);
   await ensureDirectory(directory);
-  const encoded = JSON.stringify({ version: 1, value });
   if (Platform.OS === 'ios') {
     // SDK57's installed iOS legacy writer uses Data.write(options: .atomic).
     // Its moveAsync deletes the destination first, so do not use that route.
@@ -54,4 +53,25 @@ export async function writeDurableItem(key: string, value: string | null): Promi
   } finally {
     await FileSystem.deleteAsync(temporary, { idempotent: true }).catch(() => undefined);
   }
+}
+
+export async function writeDurableItem(key: string, value: string | null): Promise<void> {
+  await writeEncodedFile(key, JSON.stringify({ version: 1, value }));
+}
+
+export async function readDurableJson<T>(key: string): Promise<{ exists: boolean; value: T | null }> {
+  const path = await itemPath(key);
+  const info = await FileSystem.getInfoAsync(path);
+  if (!info.exists) return { exists: false, value: null };
+  const parsed: unknown = JSON.parse(await FileSystem.readAsStringAsync(path));
+  return { exists: true, value: (parsed ?? null) as T | null };
+}
+
+export async function writeDurableJson<T>(key: string, value: T | null): Promise<void> {
+  await writeEncodedFile(key, JSON.stringify(value));
+}
+
+export async function deleteDurableItem(key: string): Promise<void> {
+  const path = await itemPath(key);
+  await FileSystem.deleteAsync(path, { idempotent: true });
 }

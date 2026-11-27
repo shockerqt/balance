@@ -56,7 +56,11 @@ function createHarness(initialToday = '2026-11-15') {
         return {
           storage: {
             getItem: key => new Promise(resolve => pendingReads.push({ key, resolve })),
+            getJsonItem: key => new Promise(resolve => pendingReads.push({ key, resolve })),
             setItem: async () => {},
+            setJsonItem: async () => {},
+            removeItem: async () => {},
+            removeJsonItem: async () => {},
             isDurableItem: () => true,
           },
         };
@@ -166,9 +170,13 @@ test('diary shows loading skeleton until meal store hydrates, then renders empty
     assert.equal(tree.root.findAllByType('MealGroupFeed').length, 0);
     assert.equal(textContent(tree.toJSON()).includes('Sin registros este día'), false);
 
-    // Resolve cache as empty -> AC-2: empty day shows empty state
+    // Resolve manifest + legacy as empty -> AC-2: empty day shows empty state
     await act(async () => {
-      h.pendingReads.shift().resolve('[]');
+      h.pendingReads.shift().resolve(null);
+      await new Promise(resolve => setImmediate(resolve));
+    });
+    await act(async () => {
+      h.pendingReads.shift().resolve(null);
       await new Promise(resolve => setImmediate(resolve));
     });
 
@@ -203,19 +211,52 @@ test('diary shows loading skeleton until meal store hydrates, then renders empty
       updatedAt: 1,
       _deleted: false,
     };
+    const historicalMeal = {
+      ...meal,
+      id: 'meal-old',
+      nameSnapshot: 'Almuerzo histórico',
+      consumedAt: dates.epochForChileDateTime('2025-10-10', '13:00'),
+    };
 
+    // Resolve manifest for account 2 with current month (2026-11) + historical month (2025-10)
     await act(async () => {
-      h.pendingReads.shift().resolve(JSON.stringify([meal]));
+      h.pendingReads.shift().resolve({
+        version: 1,
+        complete: true,
+        durable: true,
+        months: ['2025-10', '2026-11'],
+      });
+      await new Promise(resolve => setImmediate(resolve));
+    });
+
+    // Resolve only the visible-window shard (2026-11) -> diary hydrates & renders immediately
+    // even while the historical shard (2025-10) is still pending!
+    assert.equal(h.pendingReads.length, 1);
+    assert.ok(h.pendingReads[0].key.endsWith(':month:2026-11'));
+    await act(async () => {
+      h.pendingReads.shift().resolve({ version: 1, month: '2026-11', documents: [meal] });
       await new Promise(resolve => setImmediate(resolve));
     });
 
     assert.equal(snapshot.hydrated, true);
     assert.equal(hydratedFlag, true);
+    const visibleDocRef = snapshot.mealDocuments.find(d => d.id === 'meal-1');
+    assert.ok(visibleDocRef);
     const headers = tree.root.findAllByType('StickyMacroHeader');
     assert.equal(headers.length, 2);
     assert.equal(headers[0].props.foods.length, 1);
     assert.equal(headers[0].props.foods[0].name, 'Avena');
     assert.equal(textContent(tree.toJSON()).includes('Sin registros este día'), false);
+
+    // Historical shard loads in background without replacing visible-window MealLogDoc reference
+    assert.equal(h.pendingReads.length, 1);
+    assert.ok(h.pendingReads[0].key.endsWith(':month:2025-10'));
+    await act(async () => {
+      h.pendingReads.shift().resolve({ version: 1, month: '2025-10', documents: [historicalMeal] });
+      await new Promise(resolve => setImmediate(resolve));
+    });
+    assert.equal(snapshot.mealDocuments.length, 2);
+    assert.equal(snapshot.mealDocuments.find(d => d.id === 'meal-1'), visibleDocRef);
   } finally {
     await act(async () => tree.unmount());
   }

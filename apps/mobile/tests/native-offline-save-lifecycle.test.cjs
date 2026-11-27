@@ -250,7 +250,11 @@ test('blocked history hydration cannot retain a locally durable native save rece
     await act(() => pending);
     assert.equal(app.stores.meals.mealDocuments.length, 2, 'late history merges with the accepted local record');
     assert.equal(app.stores.meals.mealDocuments.some(doc => doc.id === meal(1).id), true);
-    const cached = JSON.parse(await app.storage.getItem(cacheKey));
+    const manifest = await app.storage.getJsonItem(`@balance_sync_meal_shards_v1:${namespace}:manifest`);
+    const cached = [];
+    for (const month of manifest.months) {
+      cached.push(...(await app.storage.getJsonItem(`@balance_sync_meal_shards_v1:${namespace}:month:${month}`)).documents);
+    }
     assert.deepEqual(new Set(cached.map(doc => doc.id)), new Set([meal(1).id, app.data().draftId]),
       'durable consolidation preserves both unread history and the accepted pending record');
   } finally {
@@ -288,11 +292,12 @@ test('outbox atomic-commit gate withholds success and repeated native callbacks 
 test('native success is observable before deferred collection-snapshot work starts', async () => {
   const physical = disk(), app = launch(physical);
   const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+  const targetShardKey = `@balance_sync_meal_shards_v1:${namespace}:month:2026-10`;
   let cacheWrites = 0;
   // Seed actual cache hydration; writing this seed is outside the save action.
   physical.legacy.set(cacheKey, JSON.stringify(Array.from({ length: 20 }, (_, i) => meal(i + 1))));
   physical.controls.beforeWrite = uri => {
-    if (uri.startsWith(filePath(cacheKey))) cacheWrites++;
+    if (uri.startsWith(filePath(targetShardKey))) cacheWrites++;
   };
   try {
     await app.mount();
@@ -304,7 +309,12 @@ test('native success is observable before deferred collection-snapshot work star
     assert.equal((await queued(app)).length, 1);
     await app.runDeferred();
     assert.ok(cacheWrites > 0, 'deferred durable consolidation still runs');
-    assert.equal(JSON.parse(await app.storage.getItem(cacheKey)).length, 21);
+    const manifest = await app.storage.getJsonItem(`@balance_sync_meal_shards_v1:${namespace}:manifest`);
+    const allDocs = [];
+    for (const month of manifest.months) {
+      allDocs.push(...(await app.storage.getJsonItem(`@balance_sync_meal_shards_v1:${namespace}:month:${month}`)).documents);
+    }
+    assert.equal(allDocs.length, 21);
   } finally { await app.close(); }
 });
 
@@ -397,10 +407,10 @@ test('account change during local commit cannot publish or navigate the previous
 
 test('empty-conflict server ACK cannot drain the outbox before collection-cache commit', async () => {
   const physical = disk(), app = launch(physical), gate = defer();
-  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+  const targetShardKey = `@balance_sync_meal_shards_v1:${namespace}:month:2026-10`;
   let committing = false;
   physical.controls.beforeMove = (_, destination) => {
-    if (destination === filePath(cacheKey)) { committing = true; return gate.promise; }
+    if (destination === filePath(targetShardKey)) { committing = true; return gate.promise; }
   };
   try {
     await app.mount();
@@ -417,11 +427,11 @@ test('empty-conflict server ACK cannot drain the outbox before collection-cache 
       socket.receive({ event: 'push_response', requestId: push.requestId, collection: 'mealLogs', conflicts: [], rejections: [] });
     });
     assert.equal((await queued(app)).length, 1, 'remote ACK alone cannot retire the last durable local copy');
-    assert.equal(physical.files.has(filePath(cacheKey)), false);
+    assert.equal(physical.files.has(filePath(targetShardKey)), false);
     gate.resolve();
     for (let turn = 0; turn < 4; turn++) await act(tick);
     assert.equal((await queued(app)).length, 0);
-    const cached = JSON.parse(await app.storage.getItem(cacheKey));
+    const cached = (await app.storage.getJsonItem(targetShardKey)).documents;
     assert.equal(cached.filter(doc => doc.id === app.data().draftId).length, 1);
   } finally { gate.resolve(); await act(tick); await app.close(); }
 });

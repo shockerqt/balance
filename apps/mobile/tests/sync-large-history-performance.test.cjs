@@ -18,6 +18,28 @@ const api = 'https://fixture.invalid/api';
 const identity = local('./src/services/auth/session-state.ts');
 const namespace = identity.authDataNamespace(api, 1);
 const outboxKey = `@balance_sync_outbox_v2:${namespace}`;
+const shardManifestKey = (ns = namespace) => `@balance_sync_meal_shards_v1:${ns}:manifest`;
+const shardMonthKey = (month, ns = namespace) => `@balance_sync_meal_shards_v1:${ns}:month:${month}`;
+async function readAllShardedMeals(app, ns = namespace) {
+  const manifest = await app.storage.getJsonItem(shardManifestKey(ns));
+  if (!manifest || !Array.isArray(manifest.months)) return [];
+  const docs = [];
+  for (const month of manifest.months) {
+    const shard = await app.storage.getJsonItem(shardMonthKey(month, ns));
+    if (shard && Array.isArray(shard.documents)) docs.push(...shard.documents);
+  }
+  return docs;
+}
+async function shardedMealBytes(app, ns = namespace) {
+  const manifest = await app.storage.getJsonItem(shardManifestKey(ns));
+  if (!manifest || !Array.isArray(manifest.months)) return 0;
+  let bytes = Buffer.byteLength(JSON.stringify(manifest));
+  for (const month of manifest.months) {
+    const shard = await app.storage.getJsonItem(shardMonthKey(month, ns));
+    if (shard) bytes += Buffer.byteLength(JSON.stringify(shard));
+  }
+  return bytes;
+}
 const filePath = key => `file:///documents/balance-sync-v1/${crypto.createHash('sha256').update(key).digest('hex')}.json`;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const defer = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
@@ -313,9 +335,9 @@ test('a late local projection cannot overwrite an already applied canonical conf
     await app.mount(); await app.connect(); await app.pump();
     await act(() => app.save());
     const pending = (await queued(app))[0].document;
-    const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+    const targetShardKey = shardMonthKey('2026-10');
     physical.controls.beforeMove = async (from, to) => {
-      if (to === filePath(cacheKey) && physical.files.get(from)?.includes('Canonical conflict')) {
+      if (to === filePath(targetShardKey) && physical.files.get(from)?.includes('Canonical conflict')) {
         committing = true;
         await gate.promise;
       }
@@ -332,7 +354,7 @@ test('a late local projection cannot overwrite an already applied canonical conf
     assert.equal((await queued(app)).length, 1, 'ACK retains the queue while consolidation is blocked');
     await act(() => gate.resolve());
     assert.equal((await queued(app)).length, 0);
-    assert.equal(JSON.parse(await app.storage.getItem(cacheKey))[0].nameSnapshot, 'Canonical conflict');
+    assert.equal((await app.storage.getJsonItem(targetShardKey)).documents[0].nameSnapshot, 'Canonical conflict');
   } finally { gate.resolve(); await app.close(); }
 });
 
@@ -352,8 +374,7 @@ test('cold restart retains a durable canonical conflict when outbox retirement f
     assert.ok(request);
     await act(() => socket.receive({ event: 'push_response', requestId: request.requestId, collection: 'mealLogs',
       conflicts: [canonical], rejections: [] }));
-    const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
-    assert.equal(JSON.parse(await app.storage.getItem(cacheKey))[0].nameSnapshot, canonical.nameSnapshot);
+    assert.equal((await app.storage.getJsonItem(shardMonthKey('2026-10'))).documents[0].nameSnapshot, canonical.nameSnapshot);
     assert.equal((await queued(app))[0].document.nameSnapshot, input.name, 'original queue bytes survive failed retirement');
     assert.equal(app.client.getStatusSnapshot().error, 'local');
   } finally { await app.close(); }
@@ -421,7 +442,6 @@ test('incremental complete-day projection is equivalent across edits, weights, t
 
 test('12k history advances 240 unique pages with actual owners and a retained native diary; local receipt precedes history work', { timeout: 180000 }, async t => {
   const physical = disk(), history = representativeHistory(), app = launch(physical, history);
-  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
   const start = performance.now();
   try {
     await app.mount();
@@ -450,7 +470,7 @@ test('12k history advances 240 unique pages with actual owners and a retained na
     await app.runDeferred();
     await app.pump();
     assert.equal(app.stores.meals.mealDocuments.length, 12001);
-    assert.equal(JSON.parse(await app.storage.getItem(cacheKey)).length, 12001);
+    assert.equal((await readAllShardedMeals(app)).length, 12001);
     assert.equal((await queued(app)).length, 0);
     assert.equal(app.dailyProps().data, hiddenData, 'blurred host retains its data prop, including after local save');
     assert.equal(app.metrics.nativeSerializations, hiddenSerializations, 'blurred host performs zero payload serializations');
@@ -470,7 +490,7 @@ test('12k history advances 240 unique pages with actual owners and a retained na
     const elapsed = performance.now() - start;
     assert.ok(elapsed < 120000, `Node/ARM synthetic lifecycle ${elapsed.toFixed(1)}ms exceeds 120s budget`);
     t.diagnostic(JSON.stringify({ runtime: process.version, arch: process.arch, documents: 12001, pages: frames.length,
-      days: Object.keys(data.days).length, cacheBytes: Buffer.byteLength(await app.storage.getItem(cacheKey)),
+      days: Object.keys(data.days).length, cacheBytes: await shardedMealBytes(app),
       nativeBytes: Buffer.byteLength(app.dailyProps().data), localReceiptMs, elapsedMs: elapsed, ...app.metrics,
       limits: 'Node React renderer; simulated native FS/socket/host; no Hermes/Kotlin/phone paint or radio timing' }));
     const complete = app.server.mealLogs;
@@ -615,9 +635,7 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
     assert.ok(hydrateMs < 60000, `Node/ARM hydration ${hydrateMs.toFixed(1)}ms exceeds 60s budget`);
     assert.ok(mutationMs < 30000, `Node/ARM mutation ${mutationMs.toFixed(1)}ms exceeds 30s budget`);
 
-    const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
-    const cacheVal = await app.storage.getItem(cacheKey);
-    const cacheBytes = Buffer.byteLength(cacheVal ?? '');
+    const cacheBytes = await shardedMealBytes(app);
 
     t.diagnostic(JSON.stringify({
       runtime: process.version,
@@ -639,8 +657,7 @@ test('cold start from a 12k durable cache: hydration, first day and one local mu
 
 test('AC-1: a full 12k pull writes the meal log cache at most 6 times', { timeout: 180000 }, async () => {
   const physical = disk(), history = representativeHistory(), app = launch(physical, history);
-  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
-  const targetUri = filePath(cacheKey);
+  const targetUri = filePath(shardManifestKey());
   let cacheWrites = 0;
   physical.controls.beforeWrite = async (uri) => {
     if (uri.startsWith(targetUri)) cacheWrites++;
@@ -651,8 +668,8 @@ test('AC-1: a full 12k pull writes the meal log cache at most 6 times', { timeou
     await app.pump();
     assert.equal(app.stores.meals.mealDocuments.length, 12000);
     assert.equal(app.client.getStatusSnapshot().phase, 'synced');
-    assert.ok(cacheWrites <= 6, `cache writes (${cacheWrites}) exceeded 6`);
-    assert.ok(cacheWrites > 0, `cache writes (${cacheWrites}) should be > 0`);
+    assert.ok(cacheWrites <= 6, `manifest writes (${cacheWrites}) exceeded 6`);
+    assert.ok(cacheWrites > 0, `manifest writes (${cacheWrites}) should be > 0`);
   } finally {
     await app.close();
   }
@@ -736,16 +753,16 @@ test('AC-6: after one flush window, call resetCollection mid-window; assert chec
 test('AC-7: switch user mid-window; assert user 1 cache and checkpoint are unchanged by later events and user 2 has no user 1 documents', { timeout: 180000 }, async () => {
   const physical = disk(), history = representativeHistory(), app = launch(physical, history);
   const user1Namespace = namespace;
-  const user1CacheKey = app.owner.collectionStorageKey(user1Namespace, 'mealLogs');
+  const user1ManifestKey = shardManifestKey(user1Namespace);
   const user1CheckpointKey = `@balance_sync_checkpoint_v2:${user1Namespace}:mealLogs`;
   try {
     await app.mount();
     await app.connect();
     // Pump past window 1 (50 pages = 2500 documents)
     await app.pump(() => app.client.getStatusSnapshot().receivedDocuments >= 2500);
-    const user1CacheSnapshot = await app.storage.getItem(user1CacheKey);
+    const user1CacheSnapshot = JSON.stringify(await app.storage.getJsonItem(user1ManifestKey));
     const user1CheckpointSnapshot = await app.storage.getItem(user1CheckpointKey);
-    assert.ok(user1CacheSnapshot);
+    assert.ok(user1CacheSnapshot && user1CacheSnapshot !== 'null');
     assert.ok(user1CheckpointSnapshot);
 
     // Pump into window 2 mid-window (2600 documents)
@@ -759,7 +776,7 @@ test('AC-7: switch user mid-window; assert user 1 cache and checkpoint are uncha
     await app.pump();
 
     // Assert user 1 cache and checkpoint are unchanged by later events
-    assert.equal(await app.storage.getItem(user1CacheKey), user1CacheSnapshot);
+    assert.equal(JSON.stringify(await app.storage.getJsonItem(user1ManifestKey)), user1CacheSnapshot);
     assert.equal(await app.storage.getItem(user1CheckpointKey), user1CheckpointSnapshot);
 
     // Assert user 2 has no user 1 documents
@@ -771,7 +788,6 @@ test('AC-7: switch user mid-window; assert user 1 cache and checkpoint are uncha
 
 test('AC-8: make a pull fail mid-window, stop answering and let request time out; assert downloaded documents visible and persisted, no checkpoint written for partial window', { timeout: 180000 }, async () => {
   const physical = disk(), history = representativeHistory(), app = launch(physical, history);
-  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
   const checkpointKey = `@balance_sync_checkpoint_v2:${namespace}:mealLogs`;
   let mealPulls = 0;
   physical.controls.onPull = (frame) => {
@@ -796,7 +812,7 @@ test('AC-8: make a pull fail mid-window, stop answering and let request time out
 
     // Assert the downloaded documents are visible in mealDocuments and persisted in cache
     assert.equal(app.stores.meals.mealDocuments.length, 100);
-    const persisted = JSON.parse(await app.storage.getItem(cacheKey) || '[]');
+    const persisted = await readAllShardedMeals(app);
     assert.equal(persisted.length, 100);
 
     // Assert no checkpoint was written for that partial window
