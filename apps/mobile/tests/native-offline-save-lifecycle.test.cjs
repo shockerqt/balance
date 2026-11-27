@@ -438,9 +438,12 @@ test('empty-conflict server ACK cannot drain the outbox before collection-cache 
 
 test('accepted outbox-only save is visible after cold restart offline and uploads once after reconnect', async () => {
   const physical = disk(), app = launch(physical);
-  const cacheKey = app.owner.collectionStorageKey(namespace, 'mealLogs');
+  const targetShardKey = `@balance_sync_meal_shards_v1:${namespace}:month:2026-10`;
+  const manifestKey = `@balance_sync_meal_shards_v1:${namespace}:manifest`;
   physical.controls.beforeMove = (_, destination) => {
-    if (destination === filePath(cacheKey)) throw Error('Synthetic interrupted collection-cache commit');
+    if (destination === filePath(targetShardKey) || destination === filePath(manifestKey)) {
+      throw Error('Synthetic interrupted collection-cache commit');
+    }
   };
   let draft;
   try {
@@ -449,7 +452,9 @@ test('accepted outbox-only save is visible after cold restart offline and upload
     await act(() => app.save());
     assert.equal(app.backs, 1);
     assert.equal((await queued(app)).length, 1);
-    assert.equal(physical.files.has(filePath(cacheKey)), false, 'restart must not rely on a collection snapshot');
+    await app.runDeferred();
+    assert.equal(physical.files.has(filePath(targetShardKey)), false, 'restart must not rely on a shard snapshot');
+    assert.equal(physical.files.has(filePath(manifestKey)), false, 'restart must not rely on a manifest snapshot');
   } finally { await app.close(); }
   physical.controls.beforeMove = undefined;
   const restarted = launch(physical);

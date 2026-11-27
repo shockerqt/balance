@@ -822,3 +822,250 @@ test('AC-8: make a pull fail mid-window, stop answering and let request time out
     await app.close();
   }
 });
+
+test('AC-1 BAL-109: direct UI mutation during phase-2 background loading preserves unloaded historical shards', async () => {
+  const physical = disk();
+  const setup = launch(physical);
+  const dates = setup.load(path.join(root, 'src/lib/dates.ts'));
+  const shards = setup.load(path.join(root, 'src/services/storage/meal-log-shards.ts'));
+  const today = dates.todayId();
+  const janDoc = { ...meal(1), consumedAt: dates.epochForChileDateTime('2025-01-15', '12:00') };
+  const todayDoc = { ...meal(2), consumedAt: dates.epochForChileDateTime(today, '12:00') };
+  try {
+    await setup.mount();
+    await shards.persistDirtyMealLogShards(namespace, [], [janDoc, todayDoc]);
+  } finally {
+    await setup.close();
+  }
+
+  const janUri = filePath(shardMonthKey('2025-01'));
+  const gate = defer();
+  let janReads = 0;
+  physical.controls.beforeRead = async (uri) => {
+    if (uri === janUri) {
+      janReads += 1;
+      await gate.promise;
+    }
+  };
+
+  const app = launch(physical);
+  try {
+    await app.mount();
+    assert.equal(app.stores.meals.hydrated, true, 'phase 1 hydrates immediately');
+    assert.equal(janReads, 1, 'phase 2 is paused reading historical shard');
+    assert.equal(app.stores.meals.mealDocuments.length, 1);
+
+    await act(() => {
+      app.stores.meals.addFood(today, {
+        name: 'Phase 2 concurrent add',
+        portion: '100g',
+        calories: 200,
+        protein: 10,
+        carbs: 20,
+        fat: 5,
+        time: '13:00',
+      });
+    });
+    await tick();
+
+    assert.equal(physical.files.has(janUri), true, 'unloaded historical shard must not be deleted');
+    gate.resolve();
+    for (let i = 0; i < 6; i++) await act(tick);
+
+    assert.equal(app.stores.meals.mealDocuments.length, 3);
+    const persisted = await readAllShardedMeals(app);
+    assert.equal(persisted.length, 3);
+    assert.ok(persisted.some(doc => doc.id === janDoc.id), 'historical doc preserved on disk');
+    assert.ok(persisted.some(doc => doc.nameSnapshot === 'Phase 2 concurrent add'), 'new doc persisted on disk');
+  } finally {
+    gate.resolve();
+    await app.close();
+  }
+});
+
+test('AC-2 BAL-109: startup legacy migration write failure still recovers outbox and marks hydrated', async () => {
+  const physical = disk();
+  const setup = launch(physical);
+  const legacyKey = setup.owner.collectionStorageKey(namespace, 'mealLogs');
+  const legacyDoc = meal(1);
+  const pendingDoc = meal(2, 2000);
+  physical.legacy.set(legacyKey, JSON.stringify([legacyDoc]));
+  physical.legacy.set(outboxKey, JSON.stringify([{ collection: 'mealLogs', document: pendingDoc, queuedAt: 1 }]));
+  await setup.close();
+
+  const manifestUri = filePath(shardManifestKey());
+  physical.controls.beforeWrite = (uri) => {
+    if (uri.startsWith(manifestUri)) throw new Error('Simulated startup write error');
+  };
+
+  const app = launch(physical);
+  let reportedError = null;
+  const origReport = app.client.reportLocalPersistenceError;
+  app.client.reportLocalPersistenceError = (collection) => {
+    reportedError = collection;
+    origReport(collection);
+  };
+  try {
+    await app.mount();
+    assert.equal(app.stores.meals.hydrated, true, 'UI is not stuck in loading skeleton');
+    assert.equal(app.stores.meals.mealDocuments.some(doc => doc.id === pendingDoc.id), true, 'outbox doc recovered');
+    assert.equal(reportedError, 'mealLogs', 'local persistence error reported to syncClient');
+  } finally {
+    await app.close();
+  }
+});
+
+test('AC-3 BAL-109: rapid A -> B -> A account switch guards stale hydration and resets hydratedNamespace', async () => {
+  const physical = disk();
+  const setup = launch(physical);
+  const dates = setup.load(path.join(root, 'src/lib/dates.ts'));
+  const shards = setup.load(path.join(root, 'src/services/storage/meal-log-shards.ts'));
+  const today = dates.todayId();
+  const ns1 = identity.authDataNamespace(api, 1);
+  const ns2 = identity.authDataNamespace(api, 2);
+  const doc1 = { ...meal(1), consumedAt: dates.epochForChileDateTime(today, '12:00') };
+  const doc2 = { ...meal(2), consumedAt: dates.epochForChileDateTime(today, '13:00') };
+  try {
+    await setup.mount();
+    await shards.persistDirtyMealLogShards(ns1, [], [doc1]);
+    await shards.persistDirtyMealLogShards(ns2, [], [doc2]);
+  } finally {
+    await setup.close();
+  }
+
+  const gate = defer();
+  let holdFirstNs1 = true;
+  const ns1ManifestUri = filePath(shardManifestKey(ns1));
+  physical.controls.beforeRead = async (uri) => {
+    if (holdFirstNs1 && uri === ns1ManifestUri) {
+      holdFirstNs1 = false;
+      await gate.promise;
+    }
+  };
+
+  const app = launch(physical);
+  try {
+    await app.mount();
+    assert.equal(app.stores.meals.hydrated, false, 'ns1 is still waiting on blocked read');
+    await app.setUser(2);
+    assert.equal(app.stores.meals.hydrated, true, 'ns2 hydrated cleanly');
+    assert.equal(JSON.stringify(app.stores.meals.mealDocuments.map(d => d.id)), JSON.stringify([doc2.id]));
+    await app.setUser(1);
+    assert.equal(app.stores.meals.hydrated, false, 'hydratedNamespace resets while ns1 read is queued');
+
+    gate.resolve();
+    for (let i = 0; i < 6; i++) await act(tick);
+    assert.equal(app.stores.meals.hydrated, true, 'ns1 second mount hydrated after gate resolves');
+    assert.equal(JSON.stringify(app.stores.meals.mealDocuments.map(d => d.id)), JSON.stringify([doc1.id]));
+  } finally {
+    gate.resolve();
+    await app.close();
+  }
+});
+
+test('AC-4 BAL-109: replaceMealDocuments synchronizes internal refs so subsequent mutations preserve imported docs', async () => {
+  const physical = disk();
+  const app = launch(physical);
+  const dates = app.load(path.join(root, 'src/lib/dates.ts'));
+  const shards = app.load(path.join(root, 'src/services/storage/meal-log-shards.ts'));
+  const importedDoc = { ...meal(50), consumedAt: dates.epochForChileDateTime('2026-10-29', '09:00') };
+  try {
+    await app.mount();
+    await shards.replaceMealLogShards(namespace, [importedDoc]);
+    await act(() => {
+      app.stores.meals.replaceMealDocuments([importedDoc]);
+    });
+    await act(() => {
+      app.stores.meals.addFood('2026-10-29', {
+        name: 'Post-import food',
+        portion: '100g',
+        calories: 150,
+        protein: 8,
+        carbs: 15,
+        fat: 4,
+        time: '12:00',
+      });
+    });
+    for (let i = 0; i < 6; i++) await act(tick);
+
+    assert.equal(app.stores.meals.mealDocuments.length, 2);
+    const persisted = await readAllShardedMeals(app);
+    assert.equal(persisted.length, 2);
+    assert.ok(persisted.some(d => d.id === importedDoc.id));
+    assert.ok(persisted.some(d => d.nameSnapshot === 'Post-import food'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('12k already-sharded cold start: hydration, first day and one local mutation', { timeout: 180000 }, async t => {
+  const history = representativeHistory();
+  const physical = disk();
+  const setup = launch(physical);
+  try {
+    await setup.mount();
+    const shards = setup.load(path.join(root, 'src/services/storage/meal-log-shards.ts'));
+    await shards.persistDirtyMealLogShards(namespace, [], history);
+  } finally {
+    await setup.close();
+  }
+
+  const writes = [];
+  physical.controls.beforeWrite = async (_uri, value) => {
+    writes.push(Buffer.byteLength(value));
+  };
+
+  const app = launch(physical);
+  try {
+    const hydrateStart = performance.now();
+    await app.mount();
+    let hydrateIterations = 0;
+    while (app.stores.meals.mealDocuments.length !== 12000) {
+      if (++hydrateIterations > 200) {
+        assert.fail(`Sharded hydration did not complete within 200 iterations (documents: ${app.stores.meals.mealDocuments.length})`);
+      }
+      await app.runDeferred();
+    }
+    const hydrateMs = performance.now() - hydrateStart;
+    assert.equal(app.stores.meals.mealDocuments.length, 12000);
+    assert.equal(writes.length, 0, 'clean already-sharded cold start performs 0 disk writes');
+
+    const dates = app.load(path.join(root, 'src/lib/dates.ts'));
+    const mostRecentDoc = history.reduce((latest, doc) => (doc.consumedAt > latest.consumedAt ? doc : latest), history[0]);
+    const targetDate = dates.toDateId(new Date(mostRecentDoc.consumedAt));
+
+    const mutationStart = performance.now();
+    await act(() => {
+      app.stores.meals.addFood(targetDate, {
+        name: 'Sharded cold-start add',
+        portion: '100g',
+        calories: 100,
+        protein: 2,
+        carbs: 20,
+        fat: 1,
+        time: '12:30',
+      });
+    });
+    let mutationIterations = 0;
+    while (writes.length === 0) {
+      if (++mutationIterations > 50) {
+        assert.fail('Cache write did not happen within 50 iterations');
+      }
+      await app.runDeferred();
+    }
+    const mutationMs = performance.now() - mutationStart;
+    assert.equal(app.stores.meals.mealDocuments.length, 12001);
+    assert.ok(hydrateMs < 60000, `Node/ARM sharded hydration ${hydrateMs.toFixed(1)}ms exceeds 60s budget`);
+    assert.ok(mutationMs < 30000, `Node/ARM sharded mutation ${mutationMs.toFixed(1)}ms exceeds 30s budget`);
+
+    t.diagnostic(JSON.stringify({
+      scenario: 'already-sharded-12k-cold-start',
+      documents: 12000,
+      hydrateMs,
+      mutationMs,
+      mutationWriteBytes: writes.reduce((sum, b) => sum + b, 0),
+    }));
+  } finally {
+    await app.close();
+  }
+});
